@@ -1,0 +1,22 @@
+{
+  "name": "tn-connect-gatekeeper",
+  "version": "1.0.0",
+  "description": "WhatsApp automation gatekeeper for TN CONNECT GROUP",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "automation",
+    "baileys",
+    "nodejs"
+  ],
+  "author": "Manus AI",
+  "license": "ISC",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.2",
+    "@hapi/boom": "^10.0.1",
+    "pino": "^8.21.0"
+  }
+}
