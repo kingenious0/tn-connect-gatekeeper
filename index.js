@@ -1,6 +1,39 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
+const http = require('http');
+
+// ==========================================
+// 🌐 RENDER DEPLOY & KEEP-ALIVE SYSTEM
+// ==========================================
+const PORT = process.env.PORT || 10000;
+const server = http.createServer((req, res) => {
+    if (req.url === '/' || req.url === '/ping') {
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('🚀 TN Connect Gatekeeper is live and running 24/7 on Render Free Web Service!');
+    } else {
+        res.writeHead(404);
+        res.end('Not Found');
+    }
+});
+
+server.listen(PORT, () => {
+    console.log(`📡 Mini health-check status web server listening on port ${PORT}`);
+});
+
+// Self-ping loop to prevent Render Free Tier container from spinning down (sleeping)
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
+if (RENDER_EXTERNAL_URL) {
+    console.log(`⏱️ Keep-alive self-ping initialized for: ${RENDER_EXTERNAL_URL}`);
+    setInterval(() => {
+        http.get(`${RENDER_EXTERNAL_URL}/ping`, (res) => {
+            console.log(`💓 Keep-alive self-ping sent. Status code: ${res.statusCode}`);
+        }).on('error', (err) => {
+            console.error('❌ Keep-alive self-ping failed:', err.message);
+        });
+    }, 10 * 60 * 1000); // Self-ping every 10 minutes
+}
+// ==========================================
 
 // 📋 Verified Management Copy Block with live Channel Verification Link
 const GATEKEEPER_MESSAGE = `🚨ACTION REQUIRED OR APPLICATION CANCELLED🚨
