@@ -1,7 +1,8 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, delay } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
 const http = require('http');
+const qrcode = require('qrcode-terminal');
 
 // ==========================================
 // 🌐 RENDER DEPLOY & KEEP-ALIVE SYSTEM
@@ -62,15 +63,27 @@ const startBot = async () => {
     // Saves auth handshakes inside the persistent instance storage
     const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
 
+    // Fetch the latest WhatsApp Web version to resolve connection 405 errors
+    const { version, isLatest } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1017578297], isLatest: false }));
+    console.log(`🤖 Using WhatsApp Web version: ${version.join('.')}, isLatest: ${isLatest}`);
+
     const sock = makeWASocket({
+        version,
         logger: P({ level: 'silent' }),
-        printQRInTerminal: true,
+        printQRInTerminal: false,
         auth: state,
         browser: ["TN Gatekeeper", "Chrome", "1.0.0"]
     });
 
     sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, qr } = update;
+        
+        // Render the QR code in the console logs
+        if (qr) {
+            console.log('✨ NEW INSTANCE QR CODE GENERATED BELOW! SCAN QUICKLY: ✨');
+            qrcode.generate(qr, { small: true });
+        }
+
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect.error instanceof Boom) 
                 ? lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut 
