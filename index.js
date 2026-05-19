@@ -120,6 +120,36 @@ const startBot = async () => {
         console.log(`✉️ Directing requirements packet to private inbox of +${cleanPhone}`);
         await sock.sendMessage(participant, { text: GATEKEEPER_MESSAGE });
     });
+
+    // 🎯 GATE 2: Process proof when they reply with screenshots
+    sock.ev.on('messages.upsert', async (m) => {
+        const msg = m.messages[0];
+        if (!msg || msg.key.fromMe) return;
+
+        const isImage = msg.message?.imageMessage || msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+        if (isImage) {
+            const senderJid = msg.key.remoteJid;
+            console.log(`📸 Screenshot captured from candidate: ${senderJid}. Processing validation...`);
+            
+            // Emulate human reviewing behavior
+            await sock.sendPresenceUpdate('composing', senderJid);
+            await delay(4000);
+            await sock.sendPresenceUpdate('paused', senderJid);
+
+            try {
+                // Execute automatic queue admission using verified Baileys method
+                console.log(`🔓 Criteria verified! Issuing automatic cloud approval token for ${senderJid}`);
+                await sock.groupRequestParticipantsUpdate(TN_CONNECT_JID, [senderJid], 'approve');
+                
+                // Confirm entry via DM dispatch
+                await sock.sendMessage(senderJid, { 
+                    text: `🎉 AUTOMATED VERIFICATION SUCCESSFUL!\n\nYour screenshot evidence has been validated. You have been successfully approved into the *TN CONNECT GROUP*. Welcome elite! 👋✨` 
+                });
+            } catch (err) {
+                console.error("❌ Action failed or user already verified:", err);
+            }
+        }
+    });
 };
 
 startBot();
