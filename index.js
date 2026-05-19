@@ -109,6 +109,10 @@ const startBot = async () => {
         if (request.id !== TN_CONNECT_JID) return;
 
         const participant = request.participant;
+        
+        // 🛡️ Filter out LID events (only process standard JID requests)
+        if (participant.endsWith('@lid')) return;
+
         const cleanPhone = participant.replace('@s.whatsapp.net', '');
         console.log(`📡 Pending queue request captured for user: +${cleanPhone}`);
 
