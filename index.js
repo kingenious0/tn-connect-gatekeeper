@@ -2,6 +2,7 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
 const http = require('http');
+const https = require('https');
 const qrcode = require('qrcode-terminal');
 
 // ==========================================
@@ -27,7 +28,7 @@ const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 if (RENDER_EXTERNAL_URL) {
     console.log(`⏱️ Keep-alive self-ping initialized for: ${RENDER_EXTERNAL_URL}`);
     setInterval(() => {
-        http.get(`${RENDER_EXTERNAL_URL}/ping`, (res) => {
+        https.get(`${RENDER_EXTERNAL_URL}/ping`, (res) => {
             console.log(`💓 Keep-alive self-ping sent. Status code: ${res.statusCode}`);
         }).on('error', (err) => {
             console.error('❌ Keep-alive self-ping failed:', err.message);
