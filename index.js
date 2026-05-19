@@ -129,14 +129,7 @@ const startBot = async () => {
 
     // 🎯 GATE 2: Process proof when they reply with screenshots
     sock.ev.on('messages.upsert', async (m) => {
-        const msg = m.messages[0];
-        if (!msg || msg.key.fromMe) return;
-
-        const senderJid = msg.key.remoteJid;
-        if (!senderJid) return;
-
-        // 🛡️ SECURITY FIRST: Strictly ignore all group messages (@g.us) and LIDs (@lid). ONLY process standard private individual DMs (@s.whatsapp.net).
-        if (!senderJid.endsWith('@s.whatsapp.net')) return;
+        if (!m.messages || m.messages.length === 0) return;
 
         // Helper function to send a reminder nudge if they only sent 1 screenshot
         const sendReminderNudge = async (jid) => {
@@ -173,54 +166,65 @@ const startBot = async () => {
             }
         };
 
-        const isImage = msg.message?.imageMessage || msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
-        if (isImage) {
-            // 🧠 Deduplicate using message ID to prevent double triggers for the exact same file
-            const msgId = msg.key.id;
-            if (processedMessageIds.has(msgId)) return;
-            processedMessageIds.add(msgId);
-            
-            // Limit cache size to 1000 items to keep RAM usage extremely low
-            if (processedMessageIds.size > 1000) {
-                const firstKey = processedMessageIds.values().next().value;
-                processedMessageIds.delete(firstKey);
-            }
+        // 🔄 BATCH LOOP: Process all incoming messages in the update packet
+        for (const msg of m.messages) {
+            if (!msg || msg.key.fromMe) continue;
 
-            console.log(`📸 Screenshot captured from candidate: ${senderJid}`);
+            const senderJid = msg.key.remoteJid;
+            if (!senderJid) continue;
 
-            // ⏳ SCREENSHOT AGGREGATION PIPELINE WITH THRESHOLD CHECK
-            if (pendingApprovals.has(senderJid)) {
-                const pending = pendingApprovals.get(senderJid);
-                pending.screenshotCount += 1;
-                clearTimeout(pending.timer);
+            // 🛡️ SECURITY FIRST: Strictly ignore all group messages (@g.us) and LIDs (@lid). ONLY process standard private individual DMs (@s.whatsapp.net).
+            if (!senderJid.endsWith('@s.whatsapp.net')) continue;
 
-                // If they have now reached the minimum required screenshots (2)
-                if (pending.screenshotCount >= 2) {
-                    console.log(`➕ Added screenshot for user: ${senderJid} (Total: ${pending.screenshotCount}). Met minimum requirement (>=2). Starting short 12s buffer for extra files.`);
-                    
-                    pending.timer = setTimeout(async () => {
-                        pendingApprovals.delete(senderJid);
-                        await executeApproval(senderJid, pending.screenshotCount);
-                    }, 12000); // 12 seconds buffer for any additional screenshots
-                } else {
-                    // Fallback to nudge window (should not be hit, but safe-keep)
-                    pending.timer = setTimeout(async () => {
-                        pending.timer = null;
-                        await sendReminderNudge(senderJid);
-                    }, 45000);
+            const isImage = msg.message?.imageMessage || msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+            if (isImage) {
+                // 🧠 Deduplicate using message ID to prevent double triggers for the exact same file
+                const msgId = msg.key.id;
+                if (processedMessageIds.has(msgId)) continue;
+                processedMessageIds.add(msgId);
+                
+                // Limit cache size to 1000 items to keep RAM usage extremely low
+                if (processedMessageIds.size > 1000) {
+                    const firstKey = processedMessageIds.values().next().value;
+                    processedMessageIds.delete(firstKey);
                 }
-            } else {
-                // First screenshot: start the 45-second candidate window
-                console.log(`🆕 First screenshot captured for user: ${senderJid}. Starting 45s window to receive remaining proofs.`);
-                
-                const entry = { screenshotCount: 1, timer: null };
-                pendingApprovals.set(senderJid, entry);
-                
-                entry.timer = setTimeout(async () => {
-                    // Do NOT delete their entry, just null the timer so we remember their count!
-                    entry.timer = null;
-                    await sendReminderNudge(senderJid);
-                }, 45000); // Give them 45 seconds to upload the second screenshot
+
+                console.log(`📸 Screenshot captured from candidate: ${senderJid}`);
+
+                // ⏳ SCREENSHOT AGGREGATION PIPELINE WITH THRESHOLD CHECK
+                if (pendingApprovals.has(senderJid)) {
+                    const pending = pendingApprovals.get(senderJid);
+                    pending.screenshotCount += 1;
+                    clearTimeout(pending.timer);
+
+                    // If they have now reached the minimum required screenshots (2)
+                    if (pending.screenshotCount >= 2) {
+                        console.log(`➕ Added screenshot for user: ${senderJid} (Total: ${pending.screenshotCount}). Met minimum requirement (>=2). Starting short 12s buffer for extra files.`);
+                        
+                        pending.timer = setTimeout(async () => {
+                            pendingApprovals.delete(senderJid);
+                            await executeApproval(senderJid, pending.screenshotCount);
+                        }, 12000); // 12 seconds buffer for any additional screenshots
+                    } else {
+                        // Fallback to nudge window (should not be hit, but safe-keep)
+                        pending.timer = setTimeout(async () => {
+                            pending.timer = null;
+                            await sendReminderNudge(senderJid);
+                        }, 45000);
+                    }
+                } else {
+                    // First screenshot: start the 45-second candidate window
+                    console.log(`🆕 First screenshot captured for user: ${senderJid}. Starting 45s window to receive remaining proofs.`);
+                    
+                    const entry = { screenshotCount: 1, timer: null };
+                    pendingApprovals.set(senderJid, entry);
+                    
+                    entry.timer = setTimeout(async () => {
+                        // Do NOT delete their entry, just null the timer so we remember their count!
+                        entry.timer = null;
+                        await sendReminderNudge(senderJid);
+                    }, 45000); // Give them 45 seconds to upload the second screenshot
+                }
             }
         }
     });
