@@ -99,10 +99,10 @@ const startBot = async () => {
     sock.ev.on('creds.update', saveCreds);
 
     // 🛡️ NATIVE INTERCEPTION: Capture requests inside the Admin Review Pending Queue
-    sock.ev.on('group-request.join', async (request) => {
-        if (request.jid !== TN_CONNECT_JID) return;
+    sock.ev.on('group.join-request', async (request) => {
+        if (request.id !== TN_CONNECT_JID) return;
 
-        const participant = request.userJid;
+        const participant = request.participant;
         const cleanPhone = participant.replace('@s.whatsapp.net', '');
         console.log(`📡 Pending queue request captured for user: +${cleanPhone}`);
 
