@@ -112,14 +112,14 @@ const startBot = async () => {
         const cleanPhone = participant.replace('@s.whatsapp.net', '');
         console.log(`📡 Pending queue request captured for user: +${cleanPhone}`);
 
-        // 🛡️ ANTI-BAN EMULATION: 15 to 40 seconds randomized pacing delays
-        const randomDelay = Math.floor(Math.random() * (40 - 15 + 1) + 15) * 1000;
-        console.log(`⏳ Delaying text pipeline for ${randomDelay / 1000}s to mimic human intervals...`);
+        // 🛡️ SAFE QUICK pacing delays: 3 to 7 seconds randomized intervals
+        const randomDelay = Math.floor(Math.random() * (7 - 3 + 1) + 3) * 1000;
+        console.log(`⏳ Snappy delay for ${randomDelay / 1000}s...`);
         await delay(randomDelay);
 
-        // ✍️ NATIVE EMULATION: Trigger human "typing..." presence update on phone
+        // ✍️ NATIVE EMULATION: Trigger brief human "typing..." presence update on phone
         await sock.sendPresenceUpdate('composing', participant);
-        await delay(6000); // Maintain typing status loop for 6 seconds
+        await delay(2000); // Maintain typing status loop for 2 seconds
         await sock.sendPresenceUpdate('paused', participant);
 
         // 🚀 FIRE DISPATCH
@@ -149,7 +149,7 @@ const startBot = async () => {
             
             // Emulate human reviewing behavior
             await sock.sendPresenceUpdate('composing', jid);
-            await delay(6000); // 6s typing emulation to mimic reviewing
+            await delay(1500); // Snappy 1.5s typing emulation
             await sock.sendPresenceUpdate('paused', jid);
 
             try {
@@ -176,7 +176,25 @@ const startBot = async () => {
             // 🛡️ SECURITY FIRST: Strictly ignore all group messages (@g.us) and LIDs (@lid). ONLY process standard private individual DMs (@s.whatsapp.net).
             if (!senderJid.endsWith('@s.whatsapp.net')) continue;
 
-            const isImage = msg.message?.imageMessage || msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+            // 🔓 Extract message content, unwrapping ephemeral or view-once wrappers if present
+            let messageContent = msg.message;
+            if (messageContent?.ephemeralMessage) {
+                messageContent = messageContent.ephemeralMessage.message;
+            }
+            if (messageContent?.viewOnceMessage) {
+                messageContent = messageContent.viewOnceMessage.message;
+            }
+            if (messageContent?.viewOnceMessageV2) {
+                messageContent = messageContent.viewOnceMessageV2.message;
+            }
+            if (messageContent?.documentWithCaptionMessage) {
+                messageContent = messageContent.documentWithCaptionMessage.message;
+            }
+
+            const isImage = messageContent?.imageMessage || 
+                            messageContent?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage ||
+                            (messageContent?.documentMessage && messageContent.documentMessage.mimetype?.startsWith('image/'));
+
             if (isImage) {
                 // 🧠 Deduplicate using message ID to prevent double triggers for the exact same file
                 const msgId = msg.key.id;
@@ -199,22 +217,22 @@ const startBot = async () => {
 
                     // If they have now reached the minimum required screenshots (2)
                     if (pending.screenshotCount >= 2) {
-                        console.log(`➕ Added screenshot for user: ${senderJid} (Total: ${pending.screenshotCount}). Met minimum requirement (>=2). Starting short 12s buffer for extra files.`);
+                        console.log(`➕ Added screenshot for user: ${senderJid} (Total: ${pending.screenshotCount}). Met minimum requirement (>=2). Starting short 2s buffer for extra files.`);
                         
                         pending.timer = setTimeout(async () => {
                             pendingApprovals.delete(senderJid);
                             await executeApproval(senderJid, pending.screenshotCount);
-                        }, 12000); // 12 seconds buffer for any additional screenshots
+                        }, 2000); // Snappy 2 seconds buffer for any additional screenshots
                     } else {
                         // Fallback to nudge window (should not be hit, but safe-keep)
                         pending.timer = setTimeout(async () => {
                             pending.timer = null;
                             await sendReminderNudge(senderJid);
-                        }, 45000);
+                        }, 25000);
                     }
                 } else {
-                    // First screenshot: start the 45-second candidate window
-                    console.log(`🆕 First screenshot captured for user: ${senderJid}. Starting 45s window to receive remaining proofs.`);
+                    // First screenshot: start the 25-second candidate window
+                    console.log(`🆕 First screenshot captured for user: ${senderJid}. Starting 25s window to receive remaining proofs.`);
                     
                     const entry = { screenshotCount: 1, timer: null };
                     pendingApprovals.set(senderJid, entry);
@@ -223,7 +241,7 @@ const startBot = async () => {
                         // Do NOT delete their entry, just null the timer so we remember their count!
                         entry.timer = null;
                         await sendReminderNudge(senderJid);
-                    }, 45000); // Give them 45 seconds to upload the second screenshot
+                    }, 25000); // Give them 25 seconds to upload the second screenshot
                 }
             }
         }
