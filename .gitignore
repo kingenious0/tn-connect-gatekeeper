@@ -1,8 +1,6 @@
 # Dependency directories
 node_modules/
 
-# WhatsApp session info (contains sensitive auth keys)
-baileys_auth_info/
 
 # Environment variables & secrets
 .env
