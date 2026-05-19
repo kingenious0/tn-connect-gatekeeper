@@ -135,8 +135,8 @@ const startBot = async () => {
         const senderJid = msg.key.remoteJid;
         if (!senderJid) return;
 
-        // 🛡️ Filter out LID duplicates and only process standard individual chats
-        if (senderJid.endsWith('@lid')) return;
+        // 🛡️ SECURITY FIRST: Strictly ignore all group messages (@g.us) and LIDs (@lid). ONLY process standard private individual DMs (@s.whatsapp.net).
+        if (!senderJid.endsWith('@s.whatsapp.net')) return;
 
         // Helper function to send a reminder nudge if they only sent 1 screenshot
         const sendReminderNudge = async (jid) => {
