@@ -81,8 +81,8 @@ const startBot = async () => {
         
         // Render the QR code in the console logs
         if (qr) {
-            console.log('✨ NEW INSTANCE QR CODE GENERATED BELOW! SCAN QUICKLY: ✨');
-            qrcode.generate(qr, { small: true });
+            console.log('\n✨ NEW INSTANCE QR CODE GENERATED BELOW! SCAN QUICKLY: ✨\n');
+            qrcode.generate(qr, { small: false });
         }
 
         if (connection === 'close') {
