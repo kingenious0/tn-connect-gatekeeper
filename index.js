@@ -60,6 +60,12 @@ We are viewing chats before approving. If we get to your chat twice and you’ve
 // 🎯 YOUR OFFICIAL GRABBED GROUP JID
 const TN_CONNECT_JID = "120363428438604848@g.us"; 
 
+// 🧠 MEMORY-SAFE SLIDING DEDUPLICATION CACHE (Prevents duplicate message triggers)
+const processedMessageIds = new Set();
+
+// ⏳ USER SCREENSHOT AGGREGATION SYSTEM (Buffers multiple screenshots within a short window)
+const pendingApprovals = new Map();
+
 const startBot = async () => {
     // Saves auth handshakes inside the persistent instance storage
     const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
@@ -126,27 +132,95 @@ const startBot = async () => {
         const msg = m.messages[0];
         if (!msg || msg.key.fromMe) return;
 
-        const isImage = msg.message?.imageMessage || msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
-        if (isImage) {
-            const senderJid = msg.key.remoteJid;
-            console.log(`📸 Screenshot captured from candidate: ${senderJid}. Processing validation...`);
+        const senderJid = msg.key.remoteJid;
+        if (!senderJid) return;
+
+        // 🛡️ Filter out LID duplicates and only process standard individual chats
+        if (senderJid.endsWith('@lid')) return;
+
+        // Helper function to send a reminder nudge if they only sent 1 screenshot
+        const sendReminderNudge = async (jid) => {
+            console.log(`⚠️ User +${jid.replace('@s.whatsapp.net', '')} only submitted 1 proof. Sending reminder nudge.`);
+            try {
+                await sock.sendMessage(jid, {
+                    text: `⚠️ *GATEKEEPER NOTICE* ⚠️\n\nWe received 1 screenshot, but we require at least **2 screenshots** to verify all tasks (TikTok follow, Facebook/Instagram follow, and WhatsApp Channel join).\n\nPlease send the remaining screenshot(s) so we can automatically approve you! 📸✨`
+                });
+            } catch (err) {
+                console.error("❌ Failed to send reminder:", err);
+            }
+        };
+
+        // Helper function to execute the single, unified group approval
+        const executeApproval = async (jid, count) => {
+            console.log(`🚀 Executing single unified approval for ${jid} after receiving ${count} screenshot(s)!`);
             
             // Emulate human reviewing behavior
-            await sock.sendPresenceUpdate('composing', senderJid);
-            await delay(4000);
-            await sock.sendPresenceUpdate('paused', senderJid);
+            await sock.sendPresenceUpdate('composing', jid);
+            await delay(6000); // 6s typing emulation to mimic reviewing
+            await sock.sendPresenceUpdate('paused', jid);
 
             try {
                 // Execute automatic queue admission using verified Baileys method
-                console.log(`🔓 Criteria verified! Issuing automatic cloud approval token for ${senderJid}`);
-                await sock.groupRequestParticipantsUpdate(TN_CONNECT_JID, [senderJid], 'approve');
+                console.log(`🔓 Criteria verified! Issuing single automatic cloud approval token for ${jid}`);
+                await sock.groupRequestParticipantsUpdate(TN_CONNECT_JID, [jid], 'approve');
                 
-                // Confirm entry via DM dispatch
-                await sock.sendMessage(senderJid, { 
+                // Confirm entry via a single, beautiful DM dispatch
+                await sock.sendMessage(jid, { 
                     text: `🎉 AUTOMATED VERIFICATION SUCCESSFUL!\n\nYour screenshot evidence has been validated. You have been successfully approved into the *TN CONNECT GROUP*. Welcome elite! 👋✨` 
                 });
             } catch (err) {
                 console.error("❌ Action failed or user already verified:", err);
+            }
+        };
+
+        const isImage = msg.message?.imageMessage || msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+        if (isImage) {
+            // 🧠 Deduplicate using message ID to prevent double triggers for the exact same file
+            const msgId = msg.key.id;
+            if (processedMessageIds.has(msgId)) return;
+            processedMessageIds.add(msgId);
+            
+            // Limit cache size to 1000 items to keep RAM usage extremely low
+            if (processedMessageIds.size > 1000) {
+                const firstKey = processedMessageIds.values().next().value;
+                processedMessageIds.delete(firstKey);
+            }
+
+            console.log(`📸 Screenshot captured from candidate: ${senderJid}`);
+
+            // ⏳ SCREENSHOT AGGREGATION PIPELINE WITH THRESHOLD CHECK
+            if (pendingApprovals.has(senderJid)) {
+                const pending = pendingApprovals.get(senderJid);
+                pending.screenshotCount += 1;
+                clearTimeout(pending.timer);
+
+                // If they have now reached the minimum required screenshots (2)
+                if (pending.screenshotCount >= 2) {
+                    console.log(`➕ Added screenshot for user: ${senderJid} (Total: ${pending.screenshotCount}). Met minimum requirement (>=2). Starting short 12s buffer for extra files.`);
+                    
+                    pending.timer = setTimeout(async () => {
+                        pendingApprovals.delete(senderJid);
+                        await executeApproval(senderJid, pending.screenshotCount);
+                    }, 12000); // 12 seconds buffer for any additional screenshots
+                } else {
+                    // Fallback to nudge window (should not be hit, but safe-keep)
+                    pending.timer = setTimeout(async () => {
+                        pending.timer = null;
+                        await sendReminderNudge(senderJid);
+                    }, 45000);
+                }
+            } else {
+                // First screenshot: start the 45-second candidate window
+                console.log(`🆕 First screenshot captured for user: ${senderJid}. Starting 45s window to receive remaining proofs.`);
+                
+                const entry = { screenshotCount: 1, timer: null };
+                pendingApprovals.set(senderJid, entry);
+                
+                entry.timer = setTimeout(async () => {
+                    // Do NOT delete their entry, just null the timer so we remember their count!
+                    entry.timer = null;
+                    await sendReminderNudge(senderJid);
+                }, 45000); // Give them 45 seconds to upload the second screenshot
             }
         }
     });
