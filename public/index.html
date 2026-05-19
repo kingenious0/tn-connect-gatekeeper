@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TN Connect Gatekeeper Hub 🛡️</title>
+    <!-- Google Fonts Outfit -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Space+Mono:wght@700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #25D366;
+            --primary-glow: rgba(37, 211, 102, 0.3);
+            --dark-bg: #0b0f19;
+            --card-bg: rgba(17, 24, 39, 0.6);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --accent: #3b82f6;
+            --danger: #ef4444;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--dark-bg);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(37, 211, 102, 0.1) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(59, 130, 246, 0.1) 0px, transparent 50%);
+            background-attachment: fixed;
+            color: var(--text-main);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        /* Header Style */
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+            animation: fadeInDown 0.8s ease-out;
+        }
+
+        header h1 {
+            font-size: 2.8rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #25D366 0%, #3b82f6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+            letter-spacing: -1px;
+        }
+
+        header p {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            font-weight: 300;
+        }
+
+        /* Grid Layout */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 1.8fr;
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+
+        @media (max-width: 900px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Glassmorphic Cards */
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        .card-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 15px;
+        }
+
+        .card-title span {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 800;
+        }
+
+        /* Form Controls */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 14px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            color: var(--text-main);
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 10px var(--primary-glow);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        /* Custom Checkbox Grid */
+        .checkbox-container {
+            label: "CHOOSE YOUR NICHE GROUPS:";
+        }
+
+        .checkbox-scroll {
+            max-height: 250px;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.2);
+            margin-bottom: 25px;
+        }
+
+        .checkbox-scroll::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .checkbox-scroll::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 8px;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: background 0.2s;
+            font-size: 0.9rem;
+            line-height: 1.4;
+        }
+
+        .checkbox-item:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border: 2px solid var(--text-muted);
+            border-radius: 4px;
+            background: transparent;
+            cursor: pointer;
+            display: grid;
+            place-content: center;
+            transition: all 0.2s;
+        }
+
+        .checkbox-item input[type="checkbox"]::before {
+            content: "";
+            width: 10px;
+            height: 10px;
+            transform: scale(0);
+            transition: 120ms transform ease-in-out;
+            box-shadow: inset 1em 1em var(--dark-bg);
+            background-color: var(--dark-bg);
+            transform-origin: center;
+            clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+        }
+
+        .checkbox-item input[type="checkbox"]:checked {
+            background-color: var(--primary);
+            border-color: var(--primary);
+        }
+
+        .checkbox-item input[type="checkbox"]:checked::before {
+            transform: scale(1);
+        }
+
+        /* Buttons */
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, var(--primary) 0%, #1db854 100%);
+            border: none;
+            border-radius: 10px;
+            color: #fff;
+            font-weight: 700;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(37, 211, 102, 0.2);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(37, 211, 102, 0.4);
+        }
+
+        .btn:disabled {
+            background: var(--text-muted);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        /* OTP Code Box */
+        .otp-box {
+            margin-top: 30px;
+            padding: 25px;
+            background: rgba(59, 130, 246, 0.08);
+            border: 1px dashed var(--accent);
+            border-radius: 15px;
+            text-align: center;
+            display: none;
+            animation: pulse 2s infinite;
+        }
+
+        .otp-title {
+            font-size: 0.95rem;
+            color: var(--accent);
+            margin-bottom: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .otp-code {
+            font-family: 'Space Mono', monospace;
+            font-size: 2.5rem;
+            letter-spacing: 6px;
+            color: #fff;
+            margin: 10px 0;
+            font-weight: 700;
+            text-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.2s ease;
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 8px;
+        }
+
+        .otp-code:hover {
+            color: #60a5fa;
+            background: rgba(255, 255, 255, 0.04);
+            text-shadow: 0 0 15px rgba(59, 130, 246, 0.85);
+        }
+
+
+        .otp-steps {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+            text-align: left;
+            padding-left: 10px;
+            border-left: 3px solid var(--accent);
+        }
+
+        /* Active Sessions Table */
+        .sessions-list {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .session-node {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 15px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            transition: all 0.3s;
+        }
+
+        .session-node:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .node-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .node-info h4 {
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .node-info p {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .status-badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-connected {
+            background: rgba(37, 211, 102, 0.15);
+            color: var(--primary);
+            border: 1px solid var(--primary);
+        }
+
+        .status-offline {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+            border: 1px solid var(--danger);
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: currentColor;
+            display: inline-block;
+        }
+
+        /* Dynamic Groups List */
+        .node-groups-title {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .node-groups {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .group-tag {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .empty-sessions {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 40px 0;
+            font-weight: 300;
+            font-size: 1rem;
+        }
+
+        /* Keyframes */
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>TN Connect Gatekeeper Hub 🛡️</h1>
+            <p>High-Performance Multi-Admin Community Onboarding Platform</p>
+        </header>
+
+        <div class="dashboard-grid">
+            <!-- Panel 1: Pairing Auth Link -->
+            <div class="card">
+                <h3 class="card-title">🔗 Setup <span>New Admin Node</span></h3>
+                <form id="authForm">
+                    <div class="form-group">
+                        <label for="adminName">Admin Username</label>
+                        <input type="text" id="adminName" class="form-control" placeholder="e.g. Ken" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="adminPhone">WhatsApp Phone Number</label>
+                        <input type="text" id="adminPhone" class="form-control" placeholder="e.g. 233240000000" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label style="display: block; font-size: 0.9rem; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">SELECT THE GROUPS YOU MONITOR</label>
+                        <div class="checkbox-scroll" id="groupsChecklist">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+
+                    <button type="submit" id="submitBtn" class="btn">CONNECT MY LINE</button>
+                </form>
+
+                <!-- Monospace OTP Panel -->
+                <div class="otp-box" id="otpPanel">
+                    <p class="otp-title">🔑 PAIRING CODE GENERATED</p>
+                    <div class="otp-code" id="pairingCode" title="Tap to Copy">---- ----</div>
+                    <p style="font-size: 0.75rem; color: rgba(255, 255, 255, 0.45); margin: -5px 0 15px 0; font-weight: 500; text-align: center;">📋 Tap the code above to copy instantly!</p>
+
+                    <div class="otp-steps">
+                        1. Open <b>WhatsApp</b> on your phone.<br>
+                        2. Go to <b>Linked Devices</b> ➡️ <b>Link a Device</b>.<br>
+                        3. Choose <b>Link with phone number instead</b>.<br>
+                        4. Enter the 8-digit verification key displayed above!
+                    </div>
+                    <button type="button" id="regenerateCodeBtn" style="margin-top: 15px; background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.4); color: #93c5fd; font-size: 0.85rem; padding: 10px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.3s; display: block; width: 100%; text-align: center;" onmouseover="this.style.background='rgba(59, 130, 246, 0.35)'; this.style.color='#bfdbfe';" onmouseout="this.style.background='rgba(59, 130, 246, 0.15)'; this.style.color='#93c5fd';">
+                        🔄 GENERATE NEW CODE
+                    </button>
+                </div>
+            </div>
+
+
+            <!-- Panel 2: Live Management Nodes -->
+            <div class="card">
+                <h3 class="card-title">⚙️ Active <span>Management Nodes</span></h3>
+                <div class="sessions-list" id="sessionsContainer">
+                    <div class="empty-sessions">📡 Loading active server sessions...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const OFFICIAL_NICHE_GROUPS = [
+            "1️⃣ Corporate Events & Protocol Personnel",
+            "2️⃣ Marketing, Publicity & Brand Awareness Personnel",
+            "3️⃣ Healthcare, Wellness & Safety Personnel",
+            "4️⃣ Technical, Engineering & IT Support",
+            "5️⃣ Media Production & Post-Production Personnel",
+            "6️⃣ Professional Grooming & Aesthetics Personnel",
+            "7️⃣ Enterprise, Leadership & Business Strategy Personnel",
+            "8️⃣ Voice & Audio Branding Personnel",
+            "9️⃣ Field Sales & Market Activations Personnel",
+            "🔟 Performance & Commercial Talent Personnel"
+        ];
+
+        // 📋 Build Checklist Dynamically on Page Load
+        const checklist = document.getElementById('groupsChecklist');
+        OFFICIAL_NICHE_GROUPS.forEach((group, index) => {
+            const item = document.createElement('label');
+            item.className = 'checkbox-item';
+            
+            // For first onboarding demo, use clean subject name as identifier
+            item.innerHTML = `
+                <input type="checkbox" name="nicheGroups" value="${group}">
+                <span>${group}</span>
+            `;
+
+            checklist.appendChild(item);
+        });
+
+        // 📡 API Client integration
+        const authForm = document.getElementById('authForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const otpPanel = document.getElementById('otpPanel');
+        const pairingCode = document.getElementById('pairingCode');
+        let currentLinkingPhone = null;
+
+        authForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const name = document.getElementById('adminName').value.trim();
+            const rawPhone = document.getElementById('adminPhone').value.trim();
+            
+            // Clean phone number
+            let phone = rawPhone.replace(/[^0-9]/g, '');
+            
+            // Automatically force country code 233 (Ghana)
+            if (phone.startsWith('0')) {
+                phone = '233' + phone.substring(1);
+            } else if (!phone.startsWith('233')) {
+                phone = '233' + phone;
+            }
+            
+            // Visually format the input field so they see the adjustment
+            document.getElementById('adminPhone').value = '+' + phone;
+            
+            const selectedCheckboxes = document.querySelectorAll('input[name="nicheGroups"]:checked');
+            const selectedGroups = Array.from(selectedCheckboxes).map(cb => cb.value);
+
+            if (!name || !phone) {
+                alert("Please fill in both name and phone fields!");
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Generating Connection Handshake...';
+            otpPanel.style.display = 'none';
+            
+            // Save state to poll in real-time
+            currentLinkingPhone = phone;
+
+            try {
+                const response = await fetch('/api/auth/request-code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ adminName: name, adminPhone: phone, selectedGroups })
+                });
+
+                const data = await response.json();
+
+                if (data.pairingCode) {
+                    // Inject and display OTP pairing code
+                    let formattedCode = data.pairingCode;
+                    if (formattedCode.length === 8) {
+                        formattedCode = `${formattedCode.substring(0, 4)} - ${formattedCode.substring(4)}`;
+                    }
+                    pairingCode.textContent = formattedCode;
+                    otpPanel.style.display = 'block';
+                    submitBtn.textContent = 'Awaiting WhatsApp Verification...';
+                } else if (data.status === 'CONNECTED') {
+                    alert('🎉 Account is already connected and authenticated!');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'CONNECT MY LINE';
+                    currentLinkingPhone = null;
+                } else {
+                    alert('❌ Error: ' + (data.error || 'Unknown response from cluster.'));
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'CONNECT MY LINE';
+                    currentLinkingPhone = null;
+                }
+            } catch (err) {
+                console.error("API error:", err);
+                alert("❌ Failed to contact background server container!");
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'CONNECT MY LINE';
+                currentLinkingPhone = null;
+            }
+        });
+
+        // 🔄 Live Dashboard Status Polling
+        const sessionsContainer = document.getElementById('sessionsContainer');
+
+        const pollSessions = async () => {
+            try {
+                const response = await fetch('/api/sessions');
+                const sessions = await response.json();
+
+                // Real-time link check: if our current target phone has successfully connected, reload page
+                if (currentLinkingPhone) {
+                    const linkedSession = sessions.find(s => s.phone === currentLinkingPhone && s.connected);
+                    if (linkedSession) {
+                        currentLinkingPhone = null;
+                        alert(`🎉 SUCCESS!\n\nAdmin Node for ${linkedSession.name} (+${linkedSession.phone}) has been linked successfully and is now ACTIVE!`);
+                        window.location.reload();
+                    }
+                }
+
+
+                if (sessions.length === 0) {
+                    sessionsContainer.innerHTML = `
+                        <div class="empty-sessions">
+                            📡 No active admin nodes connected to the server.<br>
+                            Link a WhatsApp line above to activate the automated Gatekeeper!
+                        </div>
+                    `;
+                    return;
+                }
+
+                sessionsContainer.innerHTML = '';
+                sessions.forEach(session => {
+                    const node = document.createElement('div');
+                    node.className = 'session-node';
+
+                    // Prepare dynamically discovered groups HTML tags
+                    let groupsHtml = '<span class="group-tag">Zero active groups detected</span>';
+                    if (session.discoveredGroups && session.discoveredGroups.length > 0) {
+                        groupsHtml = session.discoveredGroups.map(g => `
+                            <span class="group-tag">🌐 ${g.subject}</span>
+                        `).join('');
+                    }
+
+                    node.innerHTML = `
+                        <div class="node-header">
+                            <div class="node-info">
+                                <h4>👑 ${session.name}</h4>
+                                <p>📞 +${session.phone}</p>
+                            </div>
+                            <span class="status-badge ${session.connected ? 'status-connected' : 'status-offline'}">
+                                <span class="dot"></span>
+                                ${session.connected ? 'Active' : 'Disconnected'}
+                            </span>
+                        </div>
+                        <div>
+                            <div class="node-groups-title">Auto-Monitored Group Assets:</div>
+                            <div class="node-groups">
+                                ${groupsHtml}
+                            </div>
+                        </div>
+                        <div style="margin-top: 15px; display: flex; justify-content: flex-end; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 15px;">
+                            <button class="btn-disconnect" onclick="disconnectSession('${session.phone}')" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; padding: 6px 12px; font-size: 0.8rem; font-weight: 600; border-radius: 6px; cursor: pointer; transition: all 0.3s; display: inline-flex; align-items: center; gap: 6px;" onmouseover="this.style.background='rgba(239, 68, 68, 0.35)'; this.style.color='#fca5a5'; this.style.borderColor='rgba(239, 68, 68, 0.6)';" onmouseout="this.style.background='rgba(239, 68, 68, 0.15)'; this.style.color='#f87171'; this.style.borderColor='rgba(239, 68, 68, 0.4)';">
+                                ⚠️ DISCONNECT NODE
+                            </button>
+                        </div>
+                    `;
+                    sessionsContainer.appendChild(node);
+                });
+            } catch (err) {
+                console.error("Failed to sync status:", err);
+            }
+        };
+
+        const disconnectSession = async (phone) => {
+            if (!confirm(`⚠️ Are you sure you want to disconnect, logout, and completely delete the session for +${phone}?\nThis will clear it from the Supabase cloud backup as well.`)) return;
+            
+            try {
+                const button = event?.target || document.querySelector(`button[onclick*="${phone}"]`);
+                if (button) {
+                    button.disabled = true;
+                    button.textContent = "Disconnecting...";
+                }
+
+                const response = await fetch(`/api/sessions/${phone}/disconnect`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    pollSessions();
+                } else {
+                    alert("❌ Failed to disconnect session: " + (result.error || "Unknown error"));
+                    if (button) {
+                        button.disabled = false;
+                        button.textContent = "⚠️ DISCONNECT NODE";
+                    }
+                }
+            } catch (err) {
+                console.error("Disconnect API error:", err);
+                alert("❌ Connection error while trying to disconnect session.");
+            }
+        };
+        
+        // Regenerate Code Handler
+        document.getElementById('regenerateCodeBtn').addEventListener('click', () => {
+            const submitEvent = new Event('submit', { cancelable: true });
+            authForm.dispatchEvent(submitEvent);
+        });
+
+        // Click-to-Copy pairing code with premium visual feedback
+        document.getElementById('pairingCode').addEventListener('click', async () => {
+            const rawCode = document.getElementById('pairingCode').textContent;
+            const cleanCode = rawCode.replace(/[^A-Za-z0-9]/g, '');
+            if (!cleanCode || cleanCode === '--------') return;
+
+            try {
+                await navigator.clipboard.writeText(cleanCode);
+                
+                // Dynamic Visual Success State
+                document.getElementById('pairingCode').textContent = 'COPIED! 📋';
+                document.getElementById('pairingCode').style.color = '#34d399'; // Gorgeous emerald green
+                document.getElementById('pairingCode').style.textShadow = '0 0 15px rgba(52, 211, 153, 0.8)';
+                
+                setTimeout(() => {
+                    document.getElementById('pairingCode').textContent = rawCode;
+                    document.getElementById('pairingCode').style.color = ''; // Reset
+                    document.getElementById('pairingCode').style.textShadow = '';
+                }, 1500);
+            } catch (err) {
+                // Robust clipboard fallback for older mobile browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = cleanCode;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                
+                // Fallback Visual Success State
+                document.getElementById('pairingCode').textContent = 'COPIED! 📋';
+                document.getElementById('pairingCode').style.color = '#34d399';
+                setTimeout(() => {
+                    document.getElementById('pairingCode').textContent = rawCode;
+                    document.getElementById('pairingCode').style.color = '';
+                }, 1500);
+            }
+        });
+
+
+
+        // Poll sessions on page load and run intervals every 3 seconds
+        pollSessions();
+        setInterval(pollSessions, 3000);
+    </script>
+</body>
+</html>
+

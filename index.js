@@ -1,44 +1,53 @@
+require('dotenv').config();
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, delay } = require('@whiskeysockets/baileys');
+
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
-const http = require('http');
+const express = require('express');
+const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 const https = require('https');
-const qrcode = require('qrcode-terminal');
+const { createClient } = require('@supabase/supabase-js');
 
 // ==========================================
-// 🌐 RENDER DEPLOY & KEEP-ALIVE SYSTEM
+// 📡 SERVER CONFIGURATION & MIDDLEWARE
 // ==========================================
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
 const PORT = process.env.PORT || 10000;
-const server = http.createServer((req, res) => {
-    if (req.url === '/' || req.url === '/ping') {
-        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('🚀 TN Connect Gatekeeper is live and running 24/7 on Render Free Web Service!');
-    } else {
-        res.writeHead(404);
-        res.end('Not Found');
-    }
-});
+const SESSION_META_FILE = './sessions_meta.json';
+const REGISTRY_FILE = './registry.json';
 
-server.listen(PORT, () => {
-    console.log(`📡 Mini health-check status web server listening on port ${PORT}`);
-});
+// Global variables for active socket sessions and status
+const activeSessions = {};
+const activeQRs = {};
+const pendingApprovals = new Map(); // screenshot aggregation cache
 
-// Self-ping loop to prevent Render Free Tier container from spinning down (sleeping)
-const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
-if (RENDER_EXTERNAL_URL) {
-    console.log(`⏱️ Keep-alive self-ping initialized for: ${RENDER_EXTERNAL_URL}`);
-    setInterval(() => {
-        https.get(`${RENDER_EXTERNAL_URL}/ping`, (res) => {
-            console.log(`💓 Keep-alive self-ping sent. Status code: ${res.statusCode}`);
-        }).on('error', (err) => {
-            console.error('❌ Keep-alive self-ping failed:', err.message);
-        });
-    }, 10 * 60 * 1000); // Self-ping every 10 minutes
-}
+const uploadDebounces = {}; // debounces for Supabase credentials upload
+
 // ==========================================
+// 🗄️ SUPABASE DATABASE INITIALIZATION
+// ==========================================
+const supabaseUrl = process.env.SUPABASE_URL || process.env['Project URL'];
+const supabaseKey = process.env.SUPABASE_ANON_KEY || process.env['anon public key'];
+const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
-// 📋 Verified Management Copy Block with live Channel Verification Link
-const GATEKEEPER_MESSAGE = `🚨ACTION REQUIRED OR APPLICATION CANCELLED🚨
+
+if (supabase) {
+    console.log("💾 [Database] Supabase credentials detected! Cloud Backup Engine is ACTIVE.");
+} else {
+    console.log("⚠️ [Database] Supabase variables missing. Running in OFFLINE / Local File Mode.");
+}
+
+// ==========================================
+// 📋 OFFICIAL MESSAGES & GROUPS REFERENCE
+// ==========================================
+const GATEKEEPER_MESSAGE = `*hello, we just got your request to join our group*
+🚨ACTION REQUIRED🚨
 
 To be approved into the niche group first join one of the general market groups (tap links in channel to see all the links). 
 
@@ -50,215 +59,874 @@ We’ll view your chat before approving. If we get to your chat and you’ve not
 Facebook/Instagram: Follow *TN UNIVERSITIES CONNECT*
 
 WhatsApp Channel: Join our official update channel: https://whatsapp.com/channel/0029VbCNby81CYoPIpEQMD1D
-
 ⚠️ Delay = Cancellation. We are clearing the pending list. I
 
 Once you’ve followed all, send a DONE(with a screenshot). 
 
-We are viewing chats before approving. If we get to your chat twice and you’ve not done so we will cancel your request`;
+We are viewing chats before approving. If we get to your chat twice and you’ve not done so we will cancel your request
 
-// 🎯 YOUR OFFICIAL GRABBED GROUP JID
-const TN_CONNECT_JID = "120363428438604848@g.us"; 
+SEND ME SCREENSHOTS WHEN DONE`;
 
-// 🧠 MEMORY-SAFE SLIDING DEDUPLICATION CACHES
-const processedMessageIds = new Set();
-const processedJoinRequests = new Set();
+const OFFICIAL_NICHE_GROUPS = [
+    "1️⃣ Corporate Events & Protocol Personnel",
+    "2️⃣ Marketing, Publicity & Brand Awareness Personnel",
+    "3️⃣ Healthcare, Wellness & Safety Personnel",
+    "4️⃣ Technical, Engineering & IT Support",
+    "5️⃣ Media Production & Post-Production Personnel",
+    "6️⃣ Professional Grooming & Aesthetics Personnel",
+    "7️⃣ Enterprise, Leadership & Business Strategy Personnel",
+    "8️⃣ Voice & Audio Branding Personnel",
+    "9️⃣ Field Sales & Market Activations Personnel",
+    "🔟 Performance & Commercial Talent Personnel"
+];
 
-// ⏳ USER SCREENSHOT AGGREGATION SYSTEM (Buffers multiple screenshots within a short window)
-const pendingApprovals = new Map();
+// ==========================================
+// 💾 DATABASE UTILITIES & DIRECTORY SERIALIZER
+// ==========================================
 
-const startBot = async () => {
-    // Saves auth handshakes inside the persistent instance storage
-    const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
+// Encodes a directory of files as base64 to save in PostgreSQL
+const serializeDirectory = (dirPath) => {
+    const filesData = {};
+    if (!fs.existsSync(dirPath)) return filesData;
+    
+    try {
+        const files = fs.readdirSync(dirPath);
+        for (const file of files) {
+            const filePath = path.join(dirPath, file);
+            const stat = fs.statSync(filePath);
+            if (stat.isFile()) {
+                const content = fs.readFileSync(filePath);
+                filesData[file] = content.toString('base64');
+            }
+        }
+    } catch (e) {
+        console.error(`❌ Failed to serialize folder ${dirPath}:`, e);
+    }
+    return filesData;
+};
 
-    // Fetch the latest WhatsApp Web version to resolve connection 405 errors
-    const { version, isLatest } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1017578297], isLatest: false }));
-    console.log(`🤖 Using WhatsApp Web version: ${version.join('.')}, isLatest: ${isLatest}`);
+// Recreates a directory structure from base64 payloads
+const deserializeDirectory = (dirPath, filesData) => {
+    try {
+        if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
+        }
+        for (const [file, base64Content] of Object.entries(filesData)) {
+            const filePath = path.join(dirPath, file);
+            fs.writeFileSync(filePath, Buffer.from(base64Content, 'base64'));
+        }
+    } catch (e) {
+        console.error(`❌ Failed to deserialize folder ${dirPath}:`, e);
+    }
+};
+
+// Local storage fallbacks
+const loadSessionMeta = () => {
+    if (!fs.existsSync(SESSION_META_FILE)) return {};
+    try {
+        return JSON.parse(fs.readFileSync(SESSION_META_FILE, 'utf-8'));
+    } catch (e) {
+        return {};
+    }
+};
+
+const saveSessionMeta = (meta) => {
+    try {
+        fs.writeFileSync(SESSION_META_FILE, JSON.stringify(meta, null, 2));
+    } catch (e) {
+        console.error("❌ Failed to write sessions_meta.json:", e);
+    }
+};
+
+const loadRegistry = () => {
+    if (!fs.existsSync(REGISTRY_FILE)) return {};
+    try {
+        return JSON.parse(fs.readFileSync(REGISTRY_FILE, 'utf-8'));
+    } catch (e) {
+        return {};
+    }
+};
+
+const saveRegistry = (data) => {
+    try {
+        fs.writeFileSync(REGISTRY_FILE, JSON.stringify(data, null, 2));
+    } catch (e) {
+        console.error("❌ Failed to write registry.json:", e);
+    }
+};
+
+// Cloud registry sync wrapper
+const saveRegistryItem = async (key, item) => {
+    // 1. Update locally
+    const registry = loadRegistry();
+    registry[key] = item;
+    saveRegistry(registry);
+
+    // 2. Synchronize to Supabase
+    if (supabase) {
+        try {
+            const { error } = await supabase
+                .from('gatekeeper_registry')
+                .upsert({
+                    key,
+                    admin_name: item.admin,
+                    phone: item.phone,
+                    group_jid: item.groupJid,
+                    status: item.status,
+                    timestamp: item.timestamp
+                });
+            if (error) console.error("❌ [Supabase] Registry save failure:", error.message);
+        } catch (err) {
+            console.error("❌ [Supabase] Registry sync crash:", err);
+        }
+    }
+};
+
+// Debounced Cloud backup to protect API request limit bounds
+const triggerSessionBackup = (phone, adminName, selectedGroups, discoveredGroups) => {
+    if (!supabase) return;
+
+    if (uploadDebounces[phone]) {
+        clearTimeout(uploadDebounces[phone]);
+    }
+
+    uploadDebounces[phone] = setTimeout(async () => {
+        try {
+            const dirPath = `auth_session_${phone}`;
+            const files = serializeDirectory(dirPath);
+
+            console.log(`💾 [Supabase] Pushing backup for Admin node +${phone}...`);
+            const { error } = await supabase
+                .from('gatekeeper_sessions')
+                .upsert({
+                    phone,
+                    admin_name: adminName,
+                    selected_groups: selectedGroups,
+                    discovered_groups: discoveredGroups,
+                    files,
+                    updated_at: new Date().toISOString()
+                });
+
+            if (error) console.error(`❌ [Supabase] Backup error for +${phone}:`, error.message);
+            else console.log(`✅ [Supabase] Session data backed up successfully for +${phone}!`);
+        } catch (err) {
+            console.error(`❌ [Supabase] System error backing up session for +${phone}:`, err);
+        }
+    }, 5000); // 5 seconds debounce
+};
+
+// ==========================================
+// 🔍 PENDING REQUEST RESOLVER
+// ==========================================
+const findPendingRequest = (senderJid) => {
+    const registry = loadRegistry();
+    const cleanSender = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+    
+    for (const key of Object.keys(registry)) {
+        if (key.includes(cleanSender) && registry[key].status !== 'approved') {
+            return { key, ...registry[key] };
+        }
+    }
+    return null;
+};
+
+// ==========================================
+// 🤖 CORE WHATSAPP SOCKET ENGINE
+// ==========================================
+
+const discoverTNGroups = async (sock, phone) => {
+    try {
+        console.log(`🔍 [Admin +${phone}] Scanning groups for dynamic auto-discovery...`);
+        const groups = await sock.groupFetchAllParticipating();
+        const tnGroups = [];
+
+        const keywords = [
+            "corporate", "protocol", "events", "marketing", "publicity", "awareness", "brand",
+            "healthcare", "wellness", "safety", "technical", "engineering", "it support", "support",
+            "media", "production", "post-production", "grooming", "aesthetics", "enterprise", 
+            "leadership", "business", "strategy", "voice", "audio", "branding", "field", "sales", 
+            "activations", "performance", "commercial", "talent", "gatekeeper"
+        ];
+
+        for (const [jid, metadata] of Object.entries(groups)) {
+            const subject = metadata.subject || '';
+            const cleanSubject = subject.toLowerCase();
+            
+            // Match if it contains TN (with/without space, bracket, or dash) OR contains official niche keywords
+            const isTNOfficial = cleanSubject.includes('tn') || keywords.some(kw => cleanSubject.includes(kw));
+            
+            if (isTNOfficial) {
+                tnGroups.push({ jid, subject });
+            }
+        }
+
+
+        console.log(`🎯 [Admin +${phone}] Auto-discovered ${tnGroups.length} TN groups.`);
+        
+        // Update metadata & save
+        const sessionMeta = loadSessionMeta();
+        if (sessionMeta[phone]) {
+            sessionMeta[phone].discoveredGroups = tnGroups;
+            saveSessionMeta(sessionMeta);
+            
+            // Backup updated groups array to Cloud
+            triggerSessionBackup(phone, sessionMeta[phone].name, sessionMeta[phone].selectedGroups, tnGroups);
+        }
+
+        return tnGroups;
+    } catch (err) {
+        console.error(`❌ [Admin +${phone}] Group auto-discovery failed:`, err.message || err);
+        
+        // Auto-retry in 30 seconds to allow message history decryption sync to complete
+        if (!sock.discoveryRetryActive) {
+            sock.discoveryRetryActive = true;
+            console.log(`🔄 [Admin +${phone}] Scheduling group auto-discovery retry in 30 seconds...`);
+            setTimeout(async () => {
+                try {
+                    sock.discoveryRetryActive = false;
+                    if (activeSessions[phone]) {
+                        await discoverTNGroups(activeSessions[phone], phone);
+                    }
+                } catch (retryErr) {
+                    console.error("❌ Retry discovery error:", retryErr);
+                }
+            }, 30000);
+        }
+        return [];
+    }
+
+};
+
+const triggerDepartureNudge = async (sock, participant, groupName, adminName) => {
+    try {
+        // Humanized pacing delay (10 to 20 seconds before starting typing)
+        const delayMs = Math.floor(Math.random() * (20 - 10 + 1) + 10) * 1000;
+        console.log(`⏳ [Retention] Scheduling departure nudge to +${participant.replace(/[^0-9]/g, '')} in ${delayMs / 1000}s...`);
+        await delay(delayMs);
+        
+        // Dynamic time-of-day greeting
+        const hour = new Date().getHours();
+        let greeting = "Hello";
+        if (hour < 12) greeting = "Good morning";
+        else if (hour < 17) greeting = "Good afternoon";
+        else greeting = "Good evening";
+        
+        const messageText = `${greeting}, 😊\n\nI noticed you recently left our group *${groupName}*.\n\nWe completely understand that groups can sometimes get busy or that priorities change! We want to make sure we are continuously improving our community experience, so if you are comfortable sharing, could you let us know what prompted your decision to leave?\n\nYour feedback is highly valued and will be handled with absolute care. If there is anything we can do to support you better, please let us know! 🌸✨\n\nWarm regards,\n*${adminName}*`;
+        
+        // Typing status update (exactly 10 seconds)
+        await sock.sendPresenceUpdate('composing', participant);
+        await delay(10000);
+        await sock.sendPresenceUpdate('paused', participant);
+        
+        // Send the message
+        await sock.sendMessage(participant, { text: messageText });
+        console.log(`✉️ [Retention] Departure follow-up DM sent successfully to +${participant.replace(/[^0-9]/g, '')}`);
+    } catch (err) {
+        console.error("❌ [Retention] Failed to send departure nudge:", err);
+    }
+};
+
+
+const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    const sessionDir = `auth_session_${cleanPhone}`;
+    
+    // Close existing socket if already open to prevent memory leaks and duplicate connection loops
+    if (activeSessions[cleanPhone]) {
+        console.log(`🔌 [Admin: ${adminName}] Ending existing active connection loop for +${cleanPhone} to start fresh.`);
+        try {
+            activeSessions[cleanPhone].ev.removeAllListeners();
+            activeSessions[cleanPhone].end();
+        } catch (e) {
+            console.error("❌ Error closing active socket:", e);
+        }
+        delete activeSessions[cleanPhone];
+    }
+
+    console.log(`⚙️ [Admin: ${adminName}] Spawning connection loop for +${cleanPhone}`);
+    
+    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+
+    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1017578297] }));
 
     const sock = makeWASocket({
         version,
         logger: P({ level: 'silent' }),
-        printQRInTerminal: false,
         auth: state,
-        browser: ["TN Gatekeeper", "Chrome", "1.0.0"]
+        printQRInTerminal: false,
+        browser: ["Windows", "Chrome", "122.0.0.0"]
     });
 
-    sock.ev.on('connection.update', (update) => {
+
+    activeSessions[cleanPhone] = sock;
+
+    // Trigger backup on creds update
+    sock.ev.on('creds.update', async () => {
+        await saveCreds();
+        const meta = loadSessionMeta()[cleanPhone] || {};
+        triggerSessionBackup(cleanPhone, adminName, selectedGroups, meta.discoveredGroups || []);
+    });
+
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
-        
-        // Render the QR code in the console logs
+
         if (qr) {
-            console.log('\n✨ NEW INSTANCE QR CODE GENERATED BELOW! SCAN QUICKLY: ✨\n');
-            qrcode.generate(qr, { small: false });
+            console.log(`📡 [Admin: ${adminName}] Live QR Code captured for web dashboard scan!`);
+            activeQRs[cleanPhone] = qr;
         }
+
 
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error instanceof Boom) 
-                ? lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut 
-                : true;
-            console.log('🔄 Sockets closed. Running reconnection loop... Status:', shouldReconnect);
-            if (shouldReconnect) startBot();
+            const reason = lastDisconnect?.error?.output?.statusCode || 
+                           lastDisconnect?.error?.statusCode || 
+                           null;
+
+            
+            const shouldReconnect = reason !== DisconnectReason.loggedOut;
+            console.log(`🔌 [Admin: ${adminName}] Socket closed. Reason: ${reason}. Reconnecting: ${shouldReconnect}`);
+
+            if (reason === DisconnectReason.loggedOut) {
+                console.log(`🚨 [Admin: ${adminName}] Device logged out from phone. Cleaning database...`);
+                delete activeSessions[cleanPhone];
+                
+                const meta = loadSessionMeta();
+                delete meta[cleanPhone];
+                saveSessionMeta(meta);
+
+                // Delete from Supabase
+                if (supabase) {
+                    await supabase.from('gatekeeper_sessions').delete().eq('phone', cleanPhone);
+                }
+
+                fs.rm(sessionDir, { recursive: true, force: true }, (err) => {
+                    if (err) console.error(`❌ Failed to delete folder ${sessionDir}:`, err);
+                });
+            } else {
+                setTimeout(() => initializeAdminSocket(adminName, cleanPhone, selectedGroups), 5000);
+            }
         } else if (connection === 'open') {
-            console.log('🚀 TN Connect Gatekeeper is live and running 24/7 on cloud streams!');
+            console.log(`🚀 [Admin: ${adminName}] Authenticated successfully!`);
+            delete activeQRs[cleanPhone];
+            // Wait 10 seconds for WhatsApp group synchronization before scanning
+
+            setTimeout(async () => {
+                try {
+                    if (activeSessions[cleanPhone]) {
+                        await discoverTNGroups(activeSessions[cleanPhone], cleanPhone);
+                    }
+                } catch (e) {
+                    console.error("❌ Group discovery delayed error:", e);
+                }
+            }, 10000);
+        }
+
+    });
+
+    // 🚪 RETENTION PROTOCOL: Capture left/removed group members
+    sock.ev.on('group-participants.update', async (anu) => {
+        const groupJid = anu.id;
+        const action = anu.action;
+        
+        if (action === 'remove') {
+            const participants = anu.participants;
+            for (const participant of participants) {
+                // Ignore bot self-exit
+                const botJid = sock.user?.id ? (sock.user.id.split(':')[0] + '@s.whatsapp.net') : null;
+                if (botJid && participant === botJid) continue;
+                
+                // Ensure this group is monitored
+                const meta = loadSessionMeta()[cleanPhone] || {};
+                const isMonitoredGroup = selectedGroups.includes(groupJid) || 
+                                         (meta.discoveredGroups && meta.discoveredGroups.some(g => g.jid === groupJid));
+                if (!isMonitoredGroup) continue;
+                
+                // Find group name
+                let groupName = "our group";
+                if (meta.discoveredGroups) {
+                    const matchedGroup = meta.discoveredGroups.find(g => g.jid === groupJid);
+                    if (matchedGroup) groupName = matchedGroup.subject;
+                }
+                
+                console.log(`🚶 Member +${participant.replace(/[^0-9]/g, '')} left group ${groupName} (${groupJid})`);
+                
+                // Clear their approved/pending logs from registry & Supabase so they can re-join cleanly!
+                const registryKey = `${groupJid}_${participant.replace('@s.whatsapp.net', '').replace('@lid', '')}`;
+                const registry = loadRegistry();
+                if (registry[registryKey]) {
+                    console.log(`🗑️ [Retention] Wiping registry entry for +${participant.replace(/[^0-9]/g, '')} to reset re-join approval status.`);
+                    delete registry[registryKey];
+                    saveRegistry(registry);
+                    
+                    if (supabase) {
+                        try {
+                            await supabase.from('gatekeeper_registry').delete().eq('key', registryKey);
+                            console.log(`✅ [Supabase] Deleted cloud registry lock: ${registryKey}`);
+                        } catch (e) {
+                            console.error("❌ Failed to delete cloud registry key:", e);
+                        }
+                    }
+                }
+
+                // Trigger human-paced follow-up nudge in background
+                triggerDepartureNudge(sock, participant, groupName, adminName);
+            }
         }
     });
 
-    sock.ev.on('creds.update', saveCreds);
 
-    // 🛡️ NATIVE INTERCEPTION: Capture requests inside the Admin Review Pending Queue
+    // 🛡️ NATIVE INTERCEPTION: Capture join requests
     sock.ev.on('group.join-request', async (request) => {
-        if (request.id !== TN_CONNECT_JID) return;
-
+        const incomingGroupJID = request.id;
         const participant = request.participant;
         if (!participant) return;
 
-        // 🧠 Deduplicate join request events to prevent double-messaging
-        if (processedJoinRequests.has(participant)) return;
-        processedJoinRequests.add(participant);
+        const cleanSender = participant.replace('@s.whatsapp.net', '').replace('@lid', '');
+        const registryKey = `${incomingGroupJID}_${cleanSender}`;
 
-        // Limit deduplication cache size to 500 items
-        if (processedJoinRequests.size > 500) {
-            const firstKey = processedJoinRequests.values().next().value;
-            processedJoinRequests.delete(firstKey);
+        // Ensure this group is monitored
+        const meta = loadSessionMeta()[cleanPhone] || {};
+        const isMonitoredGroup = selectedGroups.includes(incomingGroupJID) || 
+                                 (meta.discoveredGroups && meta.discoveredGroups.some(g => g.jid === incomingGroupJID));
+
+        if (!isMonitoredGroup) return;
+
+        // Check registry for double-trigger lock (allow retry if status is 'pending' and lock is older than 2 minutes)
+        const registry = loadRegistry();
+        const existingRequest = registry[registryKey];
+        if (existingRequest) {
+            const lockTime = new Date(existingRequest.timestamp).getTime();
+            const timeElapsedMs = Date.now() - lockTime;
+            
+            // If they are already approved, skip them entirely
+            if (existingRequest.status === 'approved') {
+                console.log(`🛑 User +${cleanSender} is already APPROVED in group ${incomingGroupJID}. Skipping.`);
+                return;
+            }
+            
+            // If it is 'pending' but was created more than 2 minutes (120000ms) ago, allow a retry!
+            const isStaleLock = existingRequest.status === 'pending' && timeElapsedMs > 120000;
+            
+            if (!isStaleLock) {
+                console.log(`🛑 Request already active/processing by Admin ${existingRequest.admin}. Status: ${existingRequest.status}. Skipping duplicate trigger.`);
+                return;
+            } else {
+                console.log(`🔄 Stale pending lock detected for user +${cleanSender} (created ${Math.round(timeElapsedMs / 1000)}s ago). Re-triggering verification...`);
+            }
         }
 
-        const cleanPhone = participant.replace('@s.whatsapp.net', '').replace('@lid', '');
-        console.log(`📡 Pending queue request captured for user: +${cleanPhone} (${participant.includes('@lid') ? 'LID' : 'JID'})`);
 
-        // 🛡️ SAFE QUICK pacing delays: 3 to 7 seconds randomized intervals
-        const randomDelay = Math.floor(Math.random() * (7 - 3 + 1) + 3) * 1000;
-        console.log(`⏳ Snappy delay for ${randomDelay / 1000}s...`);
+        // Lock file
+        const item = {
+            admin: adminName,
+            phone: cleanPhone,
+            groupJid: incomingGroupJID,
+            status: 'pending',
+            timestamp: new Date().toISOString()
+        };
+        await saveRegistryItem(registryKey, item);
+        console.log(`🎯 [Admin: ${adminName}] Lock acquired for user +${cleanSender} in group ${incomingGroupJID}`);
+
+        // Pacing human simulation delays (15 to 40 seconds)
+        const randomDelay = Math.floor(Math.random() * (40 - 15 + 1) + 15) * 1000;
+        console.log(`⏳ [Admin: ${adminName}] Delaying messaging for ${randomDelay / 1000}s...`);
         await delay(randomDelay);
 
-        // ✍️ NATIVE EMULATION: Trigger brief human "typing..." presence update on phone
+        // Typing status update
         await sock.sendPresenceUpdate('composing', participant);
-        await delay(2000); // Maintain typing status loop for 2 seconds
+        await delay(6000);
         await sock.sendPresenceUpdate('paused', participant);
 
-        // 🚀 FIRE DISPATCH
-        console.log(`✉️ Directing requirements packet to private inbox of +${cleanPhone}`);
+        // Dispatch requirement copy block
+        console.log(`✉️ [Admin: ${adminName}] Requirement guidelines DM sent to +${cleanSender}`);
         await sock.sendMessage(participant, { text: GATEKEEPER_MESSAGE });
     });
 
-    // 🎯 GATE 2: Process proof when they reply with screenshots
+    // 🎯 SCREENSHOT VERIFICATION & TEXT TRIGGERS
     sock.ev.on('messages.upsert', async (m) => {
         if (!m.messages || m.messages.length === 0) return;
 
-        // Helper function to send a reminder nudge if they only sent 1 screenshot
+        // Helper: send reminder nudge if they sent only 1 screenshot
         const sendReminderNudge = async (jid) => {
-            console.log(`⚠️ User +${jid.replace('@s.whatsapp.net', '')} only submitted 1 proof. Sending reminder nudge.`);
+            console.log(`⚠️ User +${jid.replace('@s.whatsapp.net', '')} only submitted 1 proof. Sending nudge.`);
             try {
                 await sock.sendMessage(jid, {
                     text: `⚠️ *GATEKEEPER NOTICE* ⚠️\n\nWe received 1 screenshot, but we require at least **2 screenshots** to verify all tasks (TikTok follow, Facebook/Instagram follow, and WhatsApp Channel join).\n\nPlease send the remaining screenshot(s) so we can automatically approve you! 📸✨`
                 });
             } catch (err) {
-                console.error("❌ Failed to send reminder:", err);
+                console.error("❌ Failed to send reminder nudge:", err);
             }
         };
 
-        // Helper function to execute the single, unified group approval
-        const executeApproval = async (jid, count) => {
-            console.log(`🚀 Executing single unified approval for ${jid} after receiving ${count} screenshot(s)!`);
+        // Helper: execute dynamic entry approval
+        const executeApproval = async (jid, targetGroupJid, registryKey) => {
+            console.log(`🔓 Criteria verified! Approving ${jid} into group ${targetGroupJid}`);
             
-            // Emulate human reviewing behavior
             await sock.sendPresenceUpdate('composing', jid);
-            await delay(1500); // Snappy 1.5s typing emulation
+            await delay(2000);
             await sock.sendPresenceUpdate('paused', jid);
 
             try {
-                // Execute automatic queue admission using verified Baileys method
-                console.log(`🔓 Criteria verified! Issuing single automatic cloud approval token for ${jid}`);
-                await sock.groupRequestParticipantsUpdate(TN_CONNECT_JID, [jid], 'approve');
+                // Execute automatic cloud approval
+                await sock.groupRequestParticipantsUpdate(targetGroupJid, [jid], 'approve');
                 
-                // Confirm entry via a single, beautiful DM dispatch
+                // Confirm entry via DM
                 await sock.sendMessage(jid, { 
-                    text: `🎉 AUTOMATED VERIFICATION SUCCESSFUL!\n\nYour screenshot evidence has been validated. You have been successfully approved into the *TN CONNECT GROUP*. Welcome elite! 👋✨` 
+                    text: `🎉 AUTOMATED VERIFICATION SUCCESSFUL!\n\nYour screenshot evidence has been validated. You have been successfully approved into the group. Welcome elite! 👋✨` 
                 });
+
+                // Update registry status to approved
+                const registry = loadRegistry();
+                if (registry[registryKey]) {
+                    registry[registryKey].status = 'approved';
+                    await saveRegistryItem(registryKey, registry[registryKey]);
+                }
             } catch (err) {
-                console.error("❌ Action failed or user already verified:", err);
+                console.error("❌ Action failed or user already approved:", err);
             }
         };
 
-        // 🔄 BATCH LOOP: Process all incoming messages in the update packet
+        // Process message packets
         for (const msg of m.messages) {
             if (!msg || msg.key.fromMe) continue;
 
             const senderJid = msg.key.remoteJid;
-            if (!senderJid) continue;
+            if (!senderJid || (!senderJid.endsWith('@s.whatsapp.net') && !senderJid.endsWith('@lid'))) continue;
 
-            // 🛡️ SECURITY FIRST: Strictly ignore all group messages (@g.us). ONLY process standard private individual JIDs (@s.whatsapp.net) and LIDs (@lid).
-            if (!senderJid.endsWith('@s.whatsapp.net') && !senderJid.endsWith('@lid')) continue;
-
-            // 🔓 Extract message content, unwrapping ephemeral or view-once wrappers if present
+            // Extract content safely
             let messageContent = msg.message;
-            if (messageContent?.ephemeralMessage) {
-                messageContent = messageContent.ephemeralMessage.message;
-            }
-            if (messageContent?.viewOnceMessage) {
-                messageContent = messageContent.viewOnceMessage.message;
-            }
-            if (messageContent?.viewOnceMessageV2) {
-                messageContent = messageContent.viewOnceMessageV2.message;
-            }
-            if (messageContent?.documentWithCaptionMessage) {
-                messageContent = messageContent.documentWithCaptionMessage.message;
+            if (messageContent?.ephemeralMessage) messageContent = messageContent.ephemeralMessage.message;
+            if (messageContent?.viewOnceMessage) messageContent = messageContent.viewOnceMessage.message;
+            if (messageContent?.viewOnceMessageV2) messageContent = messageContent.viewOnceMessageV2.message;
+            if (messageContent?.documentWithCaptionMessage) messageContent = messageContent.documentWithCaptionMessage.message;
+
+            const textInput = messageContent?.conversation || 
+                              messageContent?.extendedTextMessage?.text || 
+                              messageContent?.imageMessage?.caption || 
+                              '';
+
+
+            // Admin Keyword Locking ("Ken")
+            if (textInput.toLowerCase().includes('ken')) {
+                console.log(`🔒 Keyword Match: Thread +${senderJid.replace('@s.whatsapp.net', '')} routed manually.`);
+                await sock.sendMessage(senderJid, {
+                    text: `⚙️ Verification File Locked. Assigned Admin: Ken. Please provide your verification screenshots below.`
+                });
+                continue;
             }
 
+            // Image message processing
             const isImage = messageContent?.imageMessage || 
                             messageContent?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage ||
                             (messageContent?.documentMessage && messageContent.documentMessage.mimetype?.startsWith('image/'));
 
             if (isImage) {
-                // 🧠 Deduplicate using message ID to prevent double triggers for the exact same file
-                const msgId = msg.key.id;
-                if (processedMessageIds.has(msgId)) continue;
-                processedMessageIds.add(msgId);
-                
-                // Limit cache size to 1000 items to keep RAM usage extremely low
-                if (processedMessageIds.size > 1000) {
-                    const firstKey = processedMessageIds.values().next().value;
-                    processedMessageIds.delete(firstKey);
-                }
+                // Find matching registration
+                const pendingRequest = findPendingRequest(senderJid);
+                if (!pendingRequest) continue;
 
-                console.log(`📸 Screenshot captured from candidate: ${senderJid}`);
+                console.log(`📸 Screenshot captured from candidate: ${senderJid} for group: ${pendingRequest.groupJid}`);
 
-                // ⏳ SCREENSHOT AGGREGATION PIPELINE WITH THRESHOLD CHECK
                 if (pendingApprovals.has(senderJid)) {
                     const pending = pendingApprovals.get(senderJid);
                     pending.screenshotCount += 1;
                     clearTimeout(pending.timer);
 
-                    // If they have now reached the minimum required screenshots (2)
                     if (pending.screenshotCount >= 2) {
-                        console.log(`➕ Added screenshot for user: ${senderJid} (Total: ${pending.screenshotCount}). Met minimum requirement (>=2). Starting short 2s buffer for extra files.`);
-                        
                         pending.timer = setTimeout(async () => {
                             pendingApprovals.delete(senderJid);
-                            await executeApproval(senderJid, pending.screenshotCount);
-                        }, 2000); // Snappy 2 seconds buffer for any additional screenshots
+                            await executeApproval(senderJid, pendingRequest.groupJid, pendingRequest.key);
+                        }, 2000); // 2 seconds safety buffer for additional files
                     } else {
-                        // Fallback to nudge window (should not be hit, but safe-keep)
                         pending.timer = setTimeout(async () => {
                             pending.timer = null;
                             await sendReminderNudge(senderJid);
                         }, 25000);
                     }
                 } else {
-                    // First screenshot: start the 25-second candidate window
-                    console.log(`🆕 First screenshot captured for user: ${senderJid}. Starting 25s window to receive remaining proofs.`);
-                    
                     const entry = { screenshotCount: 1, timer: null };
                     pendingApprovals.set(senderJid, entry);
-                    
                     entry.timer = setTimeout(async () => {
-                        // Do NOT delete their entry, just null the timer so we remember their count!
                         entry.timer = null;
                         await sendReminderNudge(senderJid);
-                    }, 25000); // Give them 25 seconds to upload the second screenshot
+                    }, 25000);
                 }
             }
         }
     });
+
+    return sock;
 };
 
-startBot();
+// ==========================================
+// 🔌 AUTO-SESSION RECOVERY ON SERVER BOOT
+// ==========================================
+
+const recoverAllSessions = async () => {
+    console.log("⏱️ Initiating system recovery sequence...");
+    
+    // 🧹 PRE-EMPTIVE CLEANUP: Completely wipe the test user's lock from Supabase cloud database
+    // BEFORE downloading registry and BEFORE launching connection loops! This completely prevents any race conditions!
+    if (supabase) {
+        console.log("🧹 [Startup Clean] Pre-emptively deleting test lock key from Supabase cloud database...");
+        try {
+            await supabase.from('gatekeeper_registry').delete().eq('key', '120363428438604848@g.us_271824470417590');
+            console.log("🧹 [Startup Clean] Cloud lock cleared successfully!");
+        } catch (e) {
+            console.error("❌ Pre-emptive cloud wipe failed:", e);
+        }
+    }
+    
+    // Clean local disk registry key too
+    const testKey = '120363428438604848@g.us_271824470417590';
+    let registry = loadRegistry();
+    if (registry[testKey]) {
+        console.log("🧹 [Startup Clean] Deleting test lock from local registry.json disk...");
+        delete registry[testKey];
+        saveRegistry(registry);
+    }
+
+    let meta = loadSessionMeta();
+
+    
+    if (supabase) {
+        console.log("📡 [Supabase] Synchronizing database backups to disk...");
+        try {
+            // Restore sessions
+            const { data: dbSessions, error: sessErr } = await supabase
+                .from('gatekeeper_sessions')
+                .select('*');
+            
+            if (sessErr) {
+                console.error("❌ [Supabase] Failed to fetch sessions from cloud:", sessErr.message);
+            } else if (dbSessions) {
+                console.log(`🤖 [Supabase] Restoring ${dbSessions.length} active sessions from database...`);
+                for (const session of dbSessions) {
+                    const phone = session.phone;
+                    const dirPath = `auth_session_${phone}`;
+                    
+                    // Recreate folder structures from backup ONLY if not present locally
+                    if (!fs.existsSync(dirPath)) {
+                        console.log(`📥 [Supabase] Restoring session backup for +${phone} from cloud...`);
+                        deserializeDirectory(dirPath, session.files);
+                    } else {
+                        console.log(`💾 [Supabase] Local session folder for +${phone} already exists. Skipping cloud restore to protect active keys.`);
+                    }
+                    
+                    // Sync local session metadata configuration
+                    meta[phone] = {
+                        name: session.admin_name,
+                        selectedGroups: session.selected_groups,
+                        discoveredGroups: session.discovered_groups,
+                        timestamp: session.updated_at
+                    };
+                }
+                saveSessionMeta(meta);
+
+            }
+
+            // Restore double-trigger registry logs
+            const { data: dbRegistry, error: regErr } = await supabase
+                .from('gatekeeper_registry')
+                .select('*');
+            
+            if (regErr) {
+                console.error("❌ [Supabase] Failed to fetch registry logs:", regErr.message);
+            } else if (dbRegistry) {
+                for (const reg of dbRegistry) {
+                    registry[reg.key] = {
+                        admin: reg.admin_name,
+                        phone: reg.phone,
+                        groupJid: reg.group_jid,
+                        status: reg.status,
+                        timestamp: reg.timestamp
+                    };
+                }
+                saveRegistry(registry);
+            }
+        } catch (err) {
+            console.error("❌ [Supabase] Error during synchronization:", err);
+        }
+    } else {
+        // Local directory fallback
+        const directories = fs.readdirSync('./');
+        const savedPhones = directories.filter(d => d.startsWith('auth_session_') && fs.lstatSync(d).isDirectory())
+                                       .map(d => d.replace('auth_session_', ''));
+        
+        for (const phone of savedPhones) {
+            if (!meta[phone]) {
+                meta[phone] = { name: "System Admin Recovery", selectedGroups: [] };
+            }
+        }
+    }
+    
+    // Trigger sockets connections
+    const activeAdminPhones = Object.keys(meta);
+    console.log(`🔌 Restoring connection loops for ${activeAdminPhones.length} verified admin nodes...`);
+    for (const phone of activeAdminPhones) {
+        const metadata = meta[phone];
+        await initializeAdminSocket(metadata.name, phone, metadata.selectedGroups);
+    }
+};
+
+// Trigger boot-up sync
+recoverAllSessions().catch(e => console.error("❌ Recovery sequence failed:", e));
+
+
+// ==========================================
+// 🌐 EXPRESS WEB PORTAL REST API
+// ==========================================
+
+app.get('/ping', (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('🚀 TN Connect Gatekeeper (v1.2 Central Server) is live and running 24/7!');
+});
+
+app.get('/api/sessions', (req, res) => {
+    const meta = loadSessionMeta();
+    const result = Object.keys(meta).map(phone => ({
+        phone,
+        name: meta[phone].name,
+        monitoredGroupsCount: meta[phone].selectedGroups?.length || 0,
+        discoveredGroups: meta[phone].discoveredGroups || [],
+        connected: !!activeSessions[phone] && !!activeSessions[phone].authState?.creds?.registered,
+        qr: activeQRs[phone] || null
+    }));
+    res.json(result);
+});
+
+
+
+app.post('/api/auth/request-code', async (req, res) => {
+    const { adminName, adminPhone, selectedGroups, method } = req.body;
+    if (!adminPhone || !adminName) {
+        return res.status(400).json({ error: "Admin Name and WhatsApp phone number required!" });
+    }
+
+    let cleanPhone = adminPhone.replace(/[^0-9]/g, '');
+    if (cleanPhone.startsWith('0')) {
+        cleanPhone = '233' + cleanPhone.substring(1);
+    } else if (!cleanPhone.startsWith('233')) {
+        cleanPhone = '233' + cleanPhone;
+    }
+
+    console.log(`📡 Spawning dynamic authentication process (${method || 'pairing-code'}) for +${cleanPhone}...`);
+
+
+    try {
+        // Save metadata configuration
+        const meta = loadSessionMeta();
+        meta[cleanPhone] = {
+            name: adminName,
+            selectedGroups: selectedGroups || [],
+            timestamp: new Date().toISOString()
+        };
+        saveSessionMeta(meta);
+
+        // Spawns connection
+        const sock = await initializeAdminSocket(adminName, cleanPhone, selectedGroups || []);
+
+        if (sock.authState.creds.registered) {
+            return res.json({ status: "CONNECTED", message: "Admin socket is already connected!" });
+        }
+
+        if (method === 'qr') {
+            return res.json({ status: "AWAITING_QR", message: "QR Code initialized. Scan to link!" });
+        }
+
+        // Default to pairing code
+        setTimeout(async () => {
+            try {
+                let code = await sock.requestPairingCode(cleanPhone);
+                return res.json({ pairingCode: code });
+            } catch (pairingError) {
+                console.error("❌ Failed to request pairing code:", pairingError);
+                return res.status(500).json({ error: "Pairing service timeout. Try again." });
+            }
+        }, 6000);
+    } catch (err) {
+
+
+        console.error("❌ Express request-code error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/sessions/:phone/disconnect', async (req, res) => {
+    const { phone } = req.params;
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    
+    console.log(`🔌 [Dashboard] Request to disconnect session +${cleanPhone}...`);
+    
+    // Close and remove socket connection
+    if (activeSessions[cleanPhone]) {
+        try {
+            await activeSessions[cleanPhone].logout();
+        } catch (e) {
+            console.log("⚠️ Session logout error (already closed?):", e.message);
+            try {
+                activeSessions[cleanPhone].end();
+            } catch (endErr) {}
+        }
+        delete activeSessions[cleanPhone];
+        delete activeQRs[cleanPhone];
+    }
+
+    
+    // Remove local metadata
+    const meta = loadSessionMeta();
+    delete meta[cleanPhone];
+    saveSessionMeta(meta);
+    
+    // Clean up Supabase
+    if (supabase) {
+        try {
+            const { error } = await supabase
+                .from('gatekeeper_sessions')
+                .delete()
+                .eq('phone', cleanPhone);
+            if (error) console.error("❌ [Supabase] Failed to delete session record:", error.message);
+            else console.log(`✅ [Supabase] Deleted credentials backup for +${cleanPhone}`);
+        } catch (dbErr) {
+            console.error("❌ [Supabase] DB delete error:", dbErr.message);
+        }
+    }
+    
+    // Delete local authentication credentials folder
+    const sessionDir = `auth_session_${cleanPhone}`;
+    fs.rm(sessionDir, { recursive: true, force: true }, (err) => {
+        if (err) console.error(`❌ Failed to delete folder ${sessionDir}:`, err);
+        else console.log(`🗑️ Cleaned up local directory: ${sessionDir}`);
+    });
+    
+    res.json({ success: true, message: "Logged out and wiped session successfully!" });
+});
+
+
+// Self-ping to prevent sleep
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
+if (RENDER_EXTERNAL_URL) {
+    console.log(`⏱️ Keep-alive loop active targeting: ${RENDER_EXTERNAL_URL}`);
+    setInterval(() => {
+        https.get(`${RENDER_EXTERNAL_URL}/ping`, (res) => {
+            console.log(`💓 Heartbeat ping dispatched. Status code: ${res.statusCode}`);
+        }).on('error', (err) => {
+            console.error('❌ Heartbeat ping failed:', err.message);
+        });
+    }, 10 * 60 * 1000);
+}
+
+// Start API Server
+app.listen(PORT, () => {
+    console.log(`📡 TN Gatekeeper Central Server online on port ${PORT}`);
+});
+
+// ==========================================
+// 🛡️ GLOBAL PRODUCTION PROCESS SHIELD
+// ==========================================
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('⚠️ [Process] Unhandled Rejection detected at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err, origin) => {
+    console.error('⚠️ [Process] Uncaught Exception thrown:', err, 'origin:', origin);
+});

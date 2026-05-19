@@ -1,7 +1,13 @@
-# Dependency directories
+# Dependencies
 node_modules/
 
+# Local session credentials and data
+auth_session_*
+baileys_auth_info
+sessions_meta.json
+registry.json
 
-# Environment variables & secrets
+# Environment files and logs
 .env
 *.log
+.DS_Store
