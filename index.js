@@ -60,8 +60,9 @@ We are viewing chats before approving. If we get to your chat twice and you’ve
 // 🎯 YOUR OFFICIAL GRABBED GROUP JID
 const TN_CONNECT_JID = "120363428438604848@g.us"; 
 
-// 🧠 MEMORY-SAFE SLIDING DEDUPLICATION CACHE (Prevents duplicate message triggers)
+// 🧠 MEMORY-SAFE SLIDING DEDUPLICATION CACHES
 const processedMessageIds = new Set();
+const processedJoinRequests = new Set();
 
 // ⏳ USER SCREENSHOT AGGREGATION SYSTEM (Buffers multiple screenshots within a short window)
 const pendingApprovals = new Map();
@@ -109,12 +110,20 @@ const startBot = async () => {
         if (request.id !== TN_CONNECT_JID) return;
 
         const participant = request.participant;
-        
-        // 🛡️ Filter out LID events (only process standard JID requests)
-        if (participant.endsWith('@lid')) return;
+        if (!participant) return;
 
-        const cleanPhone = participant.replace('@s.whatsapp.net', '');
-        console.log(`📡 Pending queue request captured for user: +${cleanPhone}`);
+        // 🧠 Deduplicate join request events to prevent double-messaging
+        if (processedJoinRequests.has(participant)) return;
+        processedJoinRequests.add(participant);
+
+        // Limit deduplication cache size to 500 items
+        if (processedJoinRequests.size > 500) {
+            const firstKey = processedJoinRequests.values().next().value;
+            processedJoinRequests.delete(firstKey);
+        }
+
+        const cleanPhone = participant.replace('@s.whatsapp.net', '').replace('@lid', '');
+        console.log(`📡 Pending queue request captured for user: +${cleanPhone} (${participant.includes('@lid') ? 'LID' : 'JID'})`);
 
         // 🛡️ SAFE QUICK pacing delays: 3 to 7 seconds randomized intervals
         const randomDelay = Math.floor(Math.random() * (7 - 3 + 1) + 3) * 1000;
@@ -177,8 +186,8 @@ const startBot = async () => {
             const senderJid = msg.key.remoteJid;
             if (!senderJid) continue;
 
-            // 🛡️ SECURITY FIRST: Strictly ignore all group messages (@g.us) and LIDs (@lid). ONLY process standard private individual DMs (@s.whatsapp.net).
-            if (!senderJid.endsWith('@s.whatsapp.net')) continue;
+            // 🛡️ SECURITY FIRST: Strictly ignore all group messages (@g.us). ONLY process standard private individual JIDs (@s.whatsapp.net) and LIDs (@lid).
+            if (!senderJid.endsWith('@s.whatsapp.net') && !senderJid.endsWith('@lid')) continue;
 
             // 🔓 Extract message content, unwrapping ephemeral or view-once wrappers if present
             let messageContent = msg.message;
