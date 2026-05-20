@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { createClient } = require('@supabase/supabase-js');
+const ws = require('ws');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // ==========================================
@@ -41,7 +42,9 @@ const supabaseUrl = process.env.SUPABASE_URL || process.env['Project URL'];
 const supabaseKey = process.env.SUPABASE_ANON_KEY || process.env['anon public key'];
 let supabase = null;
 try {
-    supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
+    supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey, {
+        realtime: { transport: ws }
+    }) : null;
 } catch (e) {
     console.error("❌ [Supabase] Client initialization failed (check URL/Key format):", e.message);
     supabase = null;
