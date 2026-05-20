@@ -341,14 +341,49 @@ const saveApplicant = async (applicantData) => {
 // ==========================================
 // 🤖 GEMINI AI BUSINESS HUB CONVERSATION
 // ==========================================
+const callGeminiWithRetry = async (chat, textInput, retries = 3, initialDelayMs = 2000) => {
+    let currentDelay = initialDelayMs;
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await chat.sendMessage(textInput);
+        } catch (err) {
+            const errStr = String(err.message || err);
+            const isTransient = errStr.includes('503') || errStr.includes('429') || errStr.includes('Service Unavailable') || errStr.includes('Resource exhausted') || errStr.includes('overloaded');
+            if (isTransient && i < retries - 1) {
+                console.warn(`⚠️ [Gemini] API returned transient error: "${errStr}". Retrying in ${currentDelay}ms (Attempt ${i + 1}/${retries})...`);
+                await delay(currentDelay);
+                currentDelay *= 2;
+                continue;
+            }
+            throw err;
+        }
+    }
+};
+
 const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubRequest, adminName) => {
-    if (!geminiModel) return;
+    if (!geminiClient) return;
     const userPhone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
     const history = businessHubConversations.get(userPhone) || [];
 
+    // Dynamically retrieve the admin's role from metadata
+    const cleanPhone = sock.user?.id ? sock.user.id.split(':')[0].replace(/[^0-9]/g, '') : '';
+    const adminRole = cleanPhone ? ((loadSessionMeta()[cleanPhone] || {}).role || 'Admin') : 'Admin';
+
+    // Inject actual admin name and role into Gemini's prompt instructions
+    const dynamicInstruction = `${BUSINESS_HUB_SYSTEM_PROMPT}
+
+IMPORTANT CONTEXT FOR YOUR IDENTITY:
+- You represent the specific admin named "${adminName}" who is the "${adminRole}" of TN Uni Connect.
+- If the applicant mentions they haven't gotten any text from an admin, or asks who you are, explain that you are the virtual intake coordinator assisting ${adminName} (${adminRole}) to gather their business details.
+- Never use placeholder texts like "[Your Name]". Introduce yourself dynamically as the assistant or coordinator on behalf of ${adminName}.`;
+
     try {
-        const chat = geminiModel.startChat({ history });
-        const result = await chat.sendMessage(textInput);
+        const modelInstance = geminiClient.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            systemInstruction: dynamicInstruction
+        });
+        const chat = modelInstance.startChat({ history });
+        const result = await callGeminiWithRetry(chat, textInput);
         const responseText = result.response.text();
 
         // Check for completion marker
@@ -399,7 +434,14 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
             businessHubConversations.delete(userPhone);
         }
     } catch (err) {
-        console.error('❌ [Gemini] API call failed:', err.message || err);
+        console.error('❌ [Gemini] API call failed after retries:', err.message || err);
+        try {
+            await sock.sendMessage(senderJid, { 
+                text: `⚠️ *Intake System Notice* ⚠️\n\nOur AI coordinator is currently experiencing extremely high demand. Please try sending your last message again in a moment so we can continue your application! Thank you for your patience.` 
+            });
+        } catch (e) {
+            console.error('❌ Failed to send failure notice to user:', e.message);
+        }
     }
 };
 
