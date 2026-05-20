@@ -17,6 +17,7 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@hapi/boom": "^10.0.1",
+    "@napi-rs/canvas": "^1.0.0",
     "@supabase/supabase-js": "^2.106.0",
     "@whiskeysockets/baileys": "^6.7.2",
     "cors": "^2.8.6",

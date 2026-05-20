@@ -12,6 +12,7 @@ const https = require('https');
 const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { generateChatScreenshot } = require('./chatScreenshot');
 
 // ==========================================
 // 📡 SERVER CONFIGURATION & MIDDLEWARE
@@ -531,6 +532,25 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
         };
         const transcript = buildTranscript(history);
 
+        // 📸 Helper: Send alert text + WhatsApp-style chat screenshot image to admin group
+        const sendAlertWithScreenshot = async (alertText) => {
+            // Always send text alert first
+            await sendAdminAlert(sock, alertText);
+            // Then try to generate and send screenshot image
+            try {
+                const screenshotBuffer = generateChatScreenshot(history, `+${userPhone}`, 'Business Hub Intake');
+                if (screenshotBuffer && adminAlertsGroupJid) {
+                    await sock.sendMessage(adminAlertsGroupJid, {
+                        image: screenshotBuffer,
+                        caption: `📸 Chat transcript for +${userPhone}`
+                    });
+                    console.log(`📸 [Screenshot] Chat image sent to admin alerts group for +${userPhone}`);
+                }
+            } catch (imgErr) {
+                console.error('❌ [Screenshot] Failed to send chat image (text alert was sent):', imgErr.message);
+            }
+        };
+
         // 🚫 RESIDENT DECLINED: Non-resident won't attend. Close gracefully, stop AI, notify admins
         if (isDeclined) {
             console.log(`🚫 [Business Hub] Non-resident declined physical attendance for +${userPhone}. Closing intake.`);
@@ -545,15 +565,15 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
                 registry[bizHubRequest.key].status = 'non_resident_declined';
                 await saveRegistryItem(bizHubRequest.key, registry[bizHubRequest.key]);
             }
-            await sendAdminAlert(sock, `🚫 *[NON-RESIDENT DECLINED]*\n\n📞 *Number:* +${userPhone}\n🏘️ Not based in Winneba and cannot attend physical meetings.\nIntake closed. Manual follow-up optional.\n\n📋 *Chat Transcript:*\n${transcript}`);
+            await sendAlertWithScreenshot(`🚫 *[NON-RESIDENT DECLINED]*\n\n📞 *Number:* +${userPhone}\n🏘️ Not based in Winneba and cannot attend physical meetings.\nIntake closed. Manual follow-up optional.`);
         }
 
         // Handle [TRIGGER_HUMAN] — escalate to admin group, pause AI for this user
         if (responseText.includes(HUMAN_MARKER)) {
             console.log(`⚠️ [Business Hub] Human handoff triggered for +${userPhone}. Alerting admins...`);
             humanTakeoverUsers.add(userPhone);
-            const alertText = `⚠️ *[HUMAN HANDOFF REQUIRED]* ⚠️\n\n📞 *Number:* +${userPhone}\n💬 *Last message:* "${textInput}"\n\nThe AI has been paused. Open a DM with +${userPhone} to take over.\n\n📋 *Chat Transcript:*\n${transcript}`;
-            await sendAdminAlert(sock, alertText);
+            const alertText = `⚠️ *[HUMAN HANDOFF REQUIRED]* ⚠️\n\n📞 *Number:* +${userPhone}\n💬 *Last message:* "${textInput}"\n\nThe AI has been paused. Open a DM with +${userPhone} to take over.`;
+            await sendAlertWithScreenshot(alertText);
         }
 
         if (isComplete && applicantData) {
@@ -571,12 +591,9 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
                 `🛒 *Services:* ${applicantData.services || 'N/A'}`,
                 `🤝 *Partnerships:* ${applicantData.partnerships || 'N/A'}`,
                 `💡 *Benefit:* ${applicantData.benefit || 'N/A'}`,
-                `🏘️ *Winneba Resident:* ${applicantData.resident || 'N/A'}`,
-                ``,
-                `📋 *Full Chat Transcript:*`,
-                transcript
+                `🏘️ *Winneba Resident:* ${applicantData.resident || 'N/A'}`
             ].join('\n');
-            await sendAdminAlert(sock, summaryLines);
+            await sendAlertWithScreenshot(summaryLines);
 
             // Update registry status so this user is not processed again
             const registry = loadRegistry();
