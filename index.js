@@ -1037,12 +1037,20 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                               messageContent?.imageMessage?.caption || 
                               '';
 
+            // Detect if this is an image message early (needed for rate limit exemption)
+            const isImageMessage = !!(messageContent?.imageMessage || 
+                            messageContent?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage ||
+                            (messageContent?.documentMessage && messageContent.documentMessage.mimetype?.startsWith('image/')));
+
             // Anti-Ban Rate Limiting & Cooldowns
+            // EXEMPTION: Image messages from users with pending verification bypass the rate limiter
+            // because people naturally send multiple screenshots at once
+            const hasPendingRequest = !!findPendingRequest(senderJid);
             const now = Date.now();
             const cooldownKey = `${cleanPhone}_${senderJid}`;
             if (conversationCooldowns.has(cooldownKey)) {
                 const lastMessageTime = conversationCooldowns.get(cooldownKey);
-                if (now - lastMessageTime < 3000) { // 3-second rapid fire block
+                if (now - lastMessageTime < 3000 && !(isImageMessage && hasPendingRequest)) {
                     console.log(`⚠️ [Anti-Ban] Rate limit tripped for user +${senderJid.replace(/[^0-9]/g, '')} on Admin node +${cleanPhone}. Drop execution.`);
                     continue; 
                 }
