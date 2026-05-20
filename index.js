@@ -91,14 +91,14 @@ We are viewing chats before approving. If we get to your chat twice and you’ve
 SEND ME SCREENSHOTS WHEN DONE`;
 
 // Business Hub intro DM — dynamic variations to avoid WhatsApp spam detection
-// The bot introduces itself as an "intake assistant" (NOT a bot) for TN Uni Connect
-const BUSINESS_HUB_INTRO_MESSAGE = (adminName, adminRole) => {
+// The bot introduces itself as an "intake assistant" for TN Uni Connect (no admin name, no bot mention)
+const BUSINESS_HUB_INTRO_MESSAGE = () => {
     const greetings = ['Hello', 'Hi there', 'Hey', 'Good day', 'Greetings'];
     const intros = [
-        `I'm the intake assistant working with ${adminName}, ${adminRole || 'Admin'} of TN Uni Connect`,
-        `I assist ${adminName} (${adminRole || 'Admin'}, TN Uni Connect) with processing new applications`,
-        `I handle intake coordination on behalf of ${adminName}, ${adminRole || 'Admin'} at TN Uni Connect`,
-        `I work closely with ${adminName} (${adminRole || 'Admin'} of TN Uni Connect) to screen and welcome new members`,
+        `I'm the intake assistant for TN Uni Connect`,
+        `I assist the TN Uni Connect team with processing new applications`,
+        `I handle intake coordination for TN Uni Connect`,
+        `I work with the TN Uni Connect admin team to screen and welcome new members`,
     ];
     const checks = [
         'Has any of our team reached out to you already? If yes, just let me know their name.',
@@ -1040,12 +1040,15 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                     }
                 }
 
-                // Handle @lid JIDs — LID numbers aren't phone numbers, label them accordingly
-                const rawId = participant.split('@')[0];
-                const isLid = participant.endsWith('@lid');
-                const displayNumber = isLid ? `LID:${rawId} (phone number hidden by WhatsApp)` : `+${rawId}`;
-                const alertText = `⚠️ *[Departure Alert]* ⚠️\n\nMember ${displayNumber} has left or been removed from *${groupName}*.\n\nTheir verification lock has been wiped so they can re-join and verify again if needed.`;
-                await sendAdminAlert(sock, alertText);
+                // Departure alert — only fire for @s.whatsapp.net JIDs (real phone numbers)
+                // Skip @lid JIDs since we can't resolve their actual phone number
+                if (participant.endsWith('@s.whatsapp.net')) {
+                    const phoneNumber = participant.split('@')[0];
+                    const alertText = `⚠️ *[Departure Alert]* ⚠️\n\nMember +${phoneNumber} has left or been removed from *${groupName}*.\n\nTheir verification lock has been wiped so they can re-join and verify again if needed.`;
+                    await sendAdminAlert(sock, alertText);
+                } else {
+                    console.log(`⚠️ [Departure] Skipping alert for LID participant ${participant} (no phone number available).`);
+                }
 
                 // 🚪 SAFE DEPARTURE NUDGE (Disabled by default — flip ENABLE_DEPARTURE_NUDGE to true)
                 // Only sends if: flag is on, user hasn't been nudged before (one-strike rule)
@@ -1138,7 +1141,7 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
         if (isBizHub) {
             const adminRole = (loadSessionMeta()[cleanPhone] || {}).role || 'Admin';
             console.log(`🏢 [Admin: ${adminName}] Business Hub intro DM queued for +${cleanSender}`);
-            outboundQueue.push(sock, participant, { text: BUSINESS_HUB_INTRO_MESSAGE(adminName, adminRole) }, 'biz-hub-intro');
+            outboundQueue.push(sock, participant, { text: BUSINESS_HUB_INTRO_MESSAGE() }, 'biz-hub-intro');
         } else {
             console.log(`✉️ [Admin: ${adminName}] Requirement guidelines DM queued for +${cleanSender}`);
             outboundQueue.push(sock, participant, { text: GATEKEEPER_MESSAGE }, 'join-request-dm');
