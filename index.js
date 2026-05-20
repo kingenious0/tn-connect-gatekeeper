@@ -71,9 +71,9 @@ We are viewing chats before approving. If we get to your chat twice and you’ve
 
 SEND ME SCREENSHOTS WHEN DONE`;
 
-// Business Hub intro DM (Version B — named admin + double-text check)
-const BUSINESS_HUB_INTRO_MESSAGE = (adminName) =>
-`Hello, thanks for requesting to join TN Winneba Business Hub. I'm ${adminName} 📌, Lead Admin of TN Uni Connect.
+// Business Hub intro DM (Version B — named admin + role + double-text check)
+const BUSINESS_HUB_INTRO_MESSAGE = (adminName, adminRole) =>
+`Hello, thanks for requesting to join TN Winneba Business Hub. I'm ${adminName} 📌, ${adminRole || 'Admin'} of TN Uni Connect.
 
 Has any of our admins texted you already? If yes, please reply with the admin's name.
 
@@ -720,9 +720,10 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
         await sock.sendPresenceUpdate('paused', participant);
 
         if (isBizHub) {
-            // Business Hub: send professional Version B intro DM, Gemini takes over from first reply
+            // Business Hub: send professional Version B intro DM with admin name + role
+            const adminRole = (loadSessionMeta()[cleanPhone] || {}).role || 'Admin';
             console.log(`🏢 [Admin: ${adminName}] Business Hub intro DM dispatched to +${cleanSender}`);
-            await sock.sendMessage(participant, { text: BUSINESS_HUB_INTRO_MESSAGE(adminName) });
+            await sock.sendMessage(participant, { text: BUSINESS_HUB_INTRO_MESSAGE(adminName, adminRole) });
         } else {
             // Standard groups: full screenshot verification flow
             console.log(`✉️ [Admin: ${adminName}] Requirement guidelines DM sent to +${cleanSender}`);
@@ -996,7 +997,7 @@ app.get('/api/sessions', (req, res) => {
 
 
 app.post('/api/auth/request-code', async (req, res) => {
-    const { adminName, adminPhone, selectedGroups, method } = req.body;
+    const { adminName, adminPhone, selectedGroups, method, adminRole } = req.body;
     if (!adminPhone || !adminName) {
         return res.status(400).json({ error: "Admin Name and WhatsApp phone number required!" });
     }
@@ -1016,6 +1017,7 @@ app.post('/api/auth/request-code', async (req, res) => {
         const meta = loadSessionMeta();
         meta[cleanPhone] = {
             name: adminName,
+            role: adminRole || 'Admin',
             selectedGroups: selectedGroups || [],
             timestamp: new Date().toISOString()
         };

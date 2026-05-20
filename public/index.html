@@ -453,6 +453,14 @@
                     </div>
 
                     <div class="form-group">
+                        <label for="adminRole">Your Role</label>
+                        <select id="adminRole" class="form-control" style="background: rgba(255,255,255,0.05); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 14px; font-size: 0.95rem; font-family: 'Outfit', sans-serif; width: 100%; cursor: pointer; appearance: none; -webkit-appearance: none;">
+                            <option value="Admin" style="background:#0b0f19;">Admin</option>
+                            <option value="Lead Admin" style="background:#0b0f19;">Lead Admin</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
                         <label for="adminPhone">WhatsApp Phone Number</label>
                         <input type="text" id="adminPhone" class="form-control" placeholder="e.g. 233240000000" required>
                     </div>
@@ -567,10 +575,12 @@
             currentLinkingPhone = phone;
 
             try {
+                const role = document.getElementById('adminRole').value;
+
                 const response = await fetch('/api/auth/request-code', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ adminName: name, adminPhone: phone, selectedGroups })
+                    body: JSON.stringify({ adminName: name, adminPhone: phone, selectedGroups, adminRole: role })
                 });
 
                 const data = await response.json();
