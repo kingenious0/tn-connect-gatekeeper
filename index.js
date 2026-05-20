@@ -50,7 +50,7 @@ if (supabase) {
 // ==========================================
 // 📋 OFFICIAL MESSAGES & GROUPS REFERENCE
 // ==========================================
-const GATEKEEPER_MESSAGE = `*hello, we just got your request to join our group*
+const GATEKEEPER_MESSAGE = `*{hello|hi|hey}, we just got your request to join our group*
 🚨ACTION REQUIRED🚨
 
 To be approved into the niche group first join one of the general market groups (tap links in channel to see all the links). 
@@ -58,14 +58,14 @@ To be approved into the niche group first join one of the general market groups 
 TikTok: Follow *TN FILMS GH*
 
 
-We’ll view your chat before approving. If we get to your chat and you’ve not done these we will cancel your request. Follow these steps 
+We’ll view your chat before approving. {If we get to your chat and you’ve not done these we will cancel your request.|Please complete these steps to avoid your request being cancelled.} Follow these steps 
 
 Facebook/Instagram: Follow *TN UNIVERSITIES CONNECT*
 
 WhatsApp Channel: Join our official update channel: https://whatsapp.com/channel/0029VbCNby81CYoPIpEQMD1D
-⚠️ Delay = Cancellation. We are clearing the pending list. I
+⚠️ Delay = Cancellation. We are clearing the pending list.
 
-Once you’ve followed all, send a DONE(with a screenshot). 
+Once you’ve followed all, send a DONE({with a screenshot|along with screenshots}). 
 
 We are viewing chats before approving. If we get to your chat twice and you’ve not done so we will cancel your request
 
@@ -73,11 +73,11 @@ SEND ME SCREENSHOTS WHEN DONE`;
 
 // Business Hub intro DM (Version B — named admin + role + double-text check)
 const BUSINESS_HUB_INTRO_MESSAGE = (adminName, adminRole) =>
-`Hello, thanks for requesting to join TN Winneba Business Hub. I'm ${adminName} 📌, ${adminRole || 'Admin'} of TN Uni Connect.
+`{Hello|Hi|Greetings}, thanks for requesting to join TN Winneba Business Hub. I'm ${adminName} 📌, ${adminRole || 'Admin'} of TN Uni Connect.
 
-Has any of our admins texted you already? If yes, please reply with the admin's name.
+{Has any of our admins texted you already? If yes, please reply with the admin's name.|Has an admin contacted you already? If so, kindly reply with their name.}
 
-If not, kindly tell us a little about yourself, your business, and where you are located in Winneba. Anything we need to know before you are approved.`;
+If not, kindly tell us a little about yourself, your business, and where you are located in Winneba. {Anything we need to know before you are approved.|Any relevant details we need to know before your approval.}`;
 
 // Gemini AI system prompt — acts as a professional business intake coordinator
 const BUSINESS_HUB_SYSTEM_PROMPT = `You are a professional and warm business intake coordinator for TN Winneba Business Hub, a prestigious networking community for business owners in Winneba, Ghana. You represent the TN Uni Connect admin team.
@@ -432,13 +432,8 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
         history.push({ role: 'model', parts: [{ text: responseText }] });
         businessHubConversations.set(userPhone, history);
 
-        // Simulate realistic human typing pace
-        await sock.sendPresenceUpdate('composing', senderJid);
-        await delay(Math.min(cleanResponse.length * 25, 9000));
-        await sock.sendPresenceUpdate('paused', senderJid);
-
         if (cleanResponse) {
-            await sock.sendMessage(senderJid, { text: cleanResponse });
+            await sendAntiBanMessage(sock, senderJid, { text: cleanResponse });
         }
 
         if (isComplete && applicantData) {
@@ -528,34 +523,54 @@ const discoverTNGroups = async (sock, phone) => {
 
 };
 
-const triggerDepartureNudge = async (sock, participant, groupName, adminName) => {
+// ==========================================
+// 🛡️ ANTI-BAN MIDDLEWARE & HELPER FUNCTIONS
+// ==========================================
+
+const conversationCooldowns = new Map();
+const connectionAttempts = {};
+
+// Transforms "{Hello|Hi|Greetings} admin" into a randomized variation to mask string filters
+function applySpintax(text) {
+    const spintaxPattern = /\{([^}]+)\}/g;
+    return text.replace(spintaxPattern, (match, options) => {
+        const choices = options.split('|');
+        return choices[Math.floor(Math.random() * choices.length)];
+    });
+}
+
+// Simulates realistic human pacing, typing indicators, and read receipts
+async function sendAntiBanMessage(sock, jid, messageContent) {
     try {
-        // Humanized pacing delay (10 to 20 seconds before starting typing)
-        const delayMs = Math.floor(Math.random() * (20 - 10 + 1) + 10) * 1000;
-        console.log(`⏳ [Retention] Scheduling departure nudge to +${participant.replace(/[^0-9]/g, '')} in ${delayMs / 1000}s...`);
-        await delay(delayMs);
+        // Trigger composing presence state
+        await sock.sendPresenceUpdate('composing', jid);
+
+        // Gaussian Jitter (Variable Typing Speed Delay)
+        const textLength = messageContent.text ? messageContent.text.length : 50;
+        const baseTypingDelay = 1500 + (textLength * 15); // 1.5s base + 15ms per character
         
-        // Dynamic time-of-day greeting
-        const hour = new Date().getHours();
-        let greeting = "Hello";
-        if (hour < 12) greeting = "Good morning";
-        else if (hour < 17) greeting = "Good afternoon";
-        else greeting = "Good evening";
+        // Add random variance (-400ms to +1200ms) to destroy predictable bot patterns
+        const patternShatterVariance = Math.floor(Math.random() * 1600) - 400;
+        const finalDelay = Math.max(2500, baseTypingDelay + patternShatterVariance); 
+
+        // Sleep during typing phase
+        await delay(finalDelay);
+
+        // Turn off typing status and instantly dispatch
+        await sock.sendPresenceUpdate('paused', jid);
         
-        const messageText = `${greeting}, 😊\n\nI noticed you recently left our group *${groupName}*.\n\nWe completely understand that groups can sometimes get busy or that priorities change! We want to make sure we are continuously improving our community experience, so if you are comfortable sharing, could you let us know what prompted your decision to leave?\n\nYour feedback is highly valued and will be handled with absolute care. If there is anything we can do to support you better, please let us know! 🌸✨\n\nWarm regards,\n*${adminName}*`;
-        
-        // Typing status update (exactly 10 seconds)
-        await sock.sendPresenceUpdate('composing', participant);
-        await delay(10000);
-        await sock.sendPresenceUpdate('paused', participant);
-        
-        // Send the message
-        await sock.sendMessage(participant, { text: messageText });
-        console.log(`✉️ [Retention] Departure follow-up DM sent successfully to +${participant.replace(/[^0-9]/g, '')}`);
-    } catch (err) {
-        console.error("❌ [Retention] Failed to send departure nudge:", err);
+        // Content Variation (Spintax) for standard text
+        if (messageContent.text) {
+            messageContent.text = applySpintax(messageContent.text);
+        }
+
+        return await sock.sendMessage(jid, messageContent);
+
+    } catch (error) {
+        console.error("Anti-Ban Middleware error, falling back to direct send:", error);
+        return await sock.sendMessage(jid, messageContent);
     }
-};
+}
 
 
 const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
@@ -585,7 +600,10 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
         logger: P({ level: 'silent' }),
         auth: state,
         printQRInTerminal: false,
-        browser: ["Windows", "Chrome", "122.0.0.0"]
+        browser: ["Windows", "Chrome", "122.0.0.0"],
+        keepAliveIntervalMs: 30000,
+        defaultQueryTimeoutMs: 60000,
+        connectTimeoutMs: 60000
     });
 
 
@@ -619,6 +637,7 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
             if (reason === DisconnectReason.loggedOut) {
                 console.log(`🚨 [Admin: ${adminName}] Device logged out from phone. Cleaning database...`);
                 delete activeSessions[cleanPhone];
+                delete connectionAttempts[cleanPhone];
                 
                 const meta = loadSessionMeta();
                 delete meta[cleanPhone];
@@ -633,11 +652,15 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                     if (err) console.error(`❌ Failed to delete folder ${sessionDir}:`, err);
                 });
             } else {
-                setTimeout(() => initializeAdminSocket(adminName, cleanPhone, selectedGroups), 5000);
+                connectionAttempts[cleanPhone] = (connectionAttempts[cleanPhone] || 0) + 1;
+                const backoffDelay = Math.min(5000 * connectionAttempts[cleanPhone], 90000); // starts at 5s, caps at 1.5 minutes
+                console.warn(`🔌 [Admin: ${adminName}] Connection dropped. Throttling reconnect sequence. Retrying in ${backoffDelay / 1000}s...`);
+                setTimeout(() => initializeAdminSocket(adminName, cleanPhone, selectedGroups), backoffDelay);
             }
         } else if (connection === 'open') {
             console.log(`🚀 [Admin: ${adminName}] Authenticated successfully!`);
             delete activeQRs[cleanPhone];
+            connectionAttempts[cleanPhone] = 0; // Reset network retry metrics
             // Wait 10 seconds for WhatsApp group synchronization before scanning
 
             setTimeout(async () => {
@@ -653,12 +676,12 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
 
     });
 
-    // 🚪 RETENTION PROTOCOL: Capture left/removed group members
+    // 🚪 RETENTION PROTOCOL: Capture left/removed group members & Route cleanly to Admin private DM (No direct candidate nudge to prevent ban risks)
     sock.ev.on('group-participants.update', async (anu) => {
         const groupJid = anu.id;
         const action = anu.action;
         
-        if (action === 'remove') {
+        if (action === 'remove' || action === 'leave') {
             const participants = anu.participants;
             for (const participant of participants) {
                 // Ignore bot self-exit
@@ -698,8 +721,12 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                     }
                 }
 
-                // Trigger human-paced follow-up nudge in background
-                triggerDepartureNudge(sock, participant, groupName, adminName);
+                // CRITICAL ANTI-BAN FIX: DO NOT send unsolicited direct messages to the user who left.
+                // Instead, route this event as a direct alert to the Admin node itself (+cleanPhone)
+                const adminJid = `${cleanPhone}@s.whatsapp.net`;
+                const alertText = `⚠️ *[Admin Notification]* ⚠️\n\nCandidate +${participant.split('@')[0]} has left or been removed from your monitored group *${groupName}*.\n\nI have successfully wiped their validation lock so they can re-join and verify again in the future if needed.`;
+                
+                await sendAntiBanMessage(sock, adminJid, { text: alertText });
             }
         }
     });
@@ -781,11 +808,11 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
             // Business Hub: send professional Version B intro DM with admin name + role
             const adminRole = (loadSessionMeta()[cleanPhone] || {}).role || 'Admin';
             console.log(`🏢 [Admin: ${adminName}] Business Hub intro DM dispatched to +${cleanSender}`);
-            await sock.sendMessage(participant, { text: BUSINESS_HUB_INTRO_MESSAGE(adminName, adminRole) });
+            await sendAntiBanMessage(sock, participant, { text: BUSINESS_HUB_INTRO_MESSAGE(adminName, adminRole) });
         } else {
             // Standard groups: full screenshot verification flow
             console.log(`✉️ [Admin: ${adminName}] Requirement guidelines DM sent to +${cleanSender}`);
-            await sock.sendMessage(participant, { text: GATEKEEPER_MESSAGE });
+            await sendAntiBanMessage(sock, participant, { text: GATEKEEPER_MESSAGE });
         }
     });
 
@@ -797,7 +824,7 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
         const sendReminderNudge = async (jid) => {
             console.log(`⚠️ User +${jid.replace('@s.whatsapp.net', '')} only submitted 1 proof. Sending nudge.`);
             try {
-                await sock.sendMessage(jid, {
+                await sendAntiBanMessage(sock, jid, {
                     text: `⚠️ *GATEKEEPER NOTICE* ⚠️\n\nWe received 1 screenshot, but we require at least **2 screenshots** to verify all tasks (TikTok follow, Facebook/Instagram follow, and WhatsApp Channel join).\n\nPlease send the remaining screenshot(s) so we can automatically approve you! 📸✨`
                 });
             } catch (err) {
@@ -818,7 +845,7 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                 await sock.groupRequestParticipantsUpdate(targetGroupJid, [jid], 'approve');
                 
                 // Confirm entry via DM
-                await sock.sendMessage(jid, { 
+                await sendAntiBanMessage(sock, jid, { 
                     text: `🎉 AUTOMATED VERIFICATION SUCCESSFUL!\n\nYour screenshot evidence has been validated. You have been successfully approved into the group. Welcome elite! 👋✨` 
                 });
 
@@ -852,6 +879,17 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                               messageContent?.imageMessage?.caption || 
                               '';
 
+            // Anti-Ban Rate Limiting & Cooldowns
+            const now = Date.now();
+            const cooldownKey = `${cleanPhone}_${senderJid}`;
+            if (conversationCooldowns.has(cooldownKey)) {
+                const lastMessageTime = conversationCooldowns.get(cooldownKey);
+                if (now - lastMessageTime < 3000) { // 3-second rapid fire block
+                    console.log(`⚠️ [Anti-Ban] Rate limit tripped for user +${senderJid.replace(/[^0-9]/g, '')} on Admin node +${cleanPhone}. Drop execution.`);
+                    continue; 
+                }
+            }
+            conversationCooldowns.set(cooldownKey, now);
 
             // 🏢 BUSINESS HUB: Route to Gemini AI if sender has an active Business Hub intake
             if (geminiModel && textInput.trim().length > 0) {
@@ -866,7 +904,7 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
             // Admin Keyword Locking ("Ken")
             if (textInput.toLowerCase().includes('ken')) {
                 console.log(`🔒 Keyword Match: Thread +${senderJid.replace('@s.whatsapp.net', '')} routed manually.`);
-                await sock.sendMessage(senderJid, {
+                await sendAntiBanMessage(sock, senderJid, {
                     text: `⚙️ Verification File Locked. Assigned Admin: Ken. Please provide your verification screenshots below.`
                 });
                 continue;
