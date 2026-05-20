@@ -39,8 +39,13 @@ const uploadDebounces = {}; // debounces for Supabase credentials upload
 // ==========================================
 const supabaseUrl = process.env.SUPABASE_URL || process.env['Project URL'];
 const supabaseKey = process.env.SUPABASE_ANON_KEY || process.env['anon public key'];
-const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
-
+let supabase = null;
+try {
+    supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
+} catch (e) {
+    console.error("❌ [Supabase] Client initialization failed (check URL/Key format):", e.message);
+    supabase = null;
+}
 
 if (supabase) {
     console.log("💾 [Database] Supabase credentials detected! Cloud Backup Engine is ACTIVE.");
