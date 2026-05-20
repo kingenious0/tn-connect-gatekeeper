@@ -455,6 +455,18 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
         businessHubConversations.set(userPhone, history);
 
         if (cleanResponse) {
+            // Human-like typing simulation before sending Gemini response
+            // 1. Simulate reading the user's message (1.5 - 3.5s)
+            const readDelay = Math.floor(Math.random() * 2000) + 1500;
+            await delay(readDelay);
+
+            // 2. Show typing indicator for time proportional to response length
+            // Average human types ~40 chars/sec, capped between 3s and 12s
+            const typingDuration = Math.min(Math.max(Math.floor(cleanResponse.length / 40) * 1000, 3000), 12000);
+            await sock.sendPresenceUpdate('composing', senderJid);
+            await delay(typingDuration);
+            await sock.sendPresenceUpdate('paused', senderJid);
+
             await sendAntiBanMessage(sock, senderJid, { text: cleanResponse });
         }
 
