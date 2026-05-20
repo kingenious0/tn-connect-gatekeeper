@@ -520,6 +520,17 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
             await sendAntiBanMessage(sock, senderJid, { text: cleanResponse });
         }
 
+        // Build readable chat transcript from conversation history
+        const buildTranscript = (hist) => {
+            if (!hist || hist.length === 0) return '_(no prior messages)_';
+            return hist.map(h => {
+                const role = h.role === 'user' ? '👤 Applicant' : '🤖 Assistant';
+                const text = (h.parts?.[0]?.text || '').substring(0, 300); // cap per turn
+                return `${role}: "${text}${text.length >= 300 ? '...' : ''}"` ;
+            }).join('\n');
+        };
+        const transcript = buildTranscript(history);
+
         // 🚫 RESIDENT DECLINED: Non-resident won't attend. Close gracefully, stop AI, notify admins
         if (isDeclined) {
             console.log(`🚫 [Business Hub] Non-resident declined physical attendance for +${userPhone}. Closing intake.`);
@@ -534,20 +545,38 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
                 registry[bizHubRequest.key].status = 'non_resident_declined';
                 await saveRegistryItem(bizHubRequest.key, registry[bizHubRequest.key]);
             }
-            await sendAdminAlert(sock, `🚫 *[NON-RESIDENT DECLINED]* — +${userPhone} is not based in Winneba and cannot attend physical meetings. Intake closed. Manual follow-up optional.`);
+            await sendAdminAlert(sock, `🚫 *[NON-RESIDENT DECLINED]*\n\n📞 *Number:* +${userPhone}\n🏘️ Not based in Winneba and cannot attend physical meetings.\nIntake closed. Manual follow-up optional.\n\n📋 *Chat Transcript:*\n${transcript}`);
         }
 
         // Handle [TRIGGER_HUMAN] — escalate to admin group, pause AI for this user
         if (responseText.includes(HUMAN_MARKER)) {
             console.log(`⚠️ [Business Hub] Human handoff triggered for +${userPhone}. Alerting admins...`);
             humanTakeoverUsers.add(userPhone);
-            const alertText = `⚠️ *[HUMAN HANDOFF REQUIRED]* ⚠️\n\nApplicant +${userPhone} needs manual attention during their Business Hub intake interview.\n\nLast message from applicant: "${textInput}"\n\nPlease open a direct chat with +${userPhone} and continue the conversation. The AI has been paused for this user.`;
+            const alertText = `⚠️ *[HUMAN HANDOFF REQUIRED]* ⚠️\n\n📞 *Number:* +${userPhone}\n💬 *Last message:* "${textInput}"\n\nThe AI has been paused. Open a DM with +${userPhone} to take over.\n\n📋 *Chat Transcript:*\n${transcript}`;
             await sendAdminAlert(sock, alertText);
         }
 
         if (isComplete && applicantData) {
             console.log(`✅ [Business Hub] Intake complete for +${userPhone}. Saving applicant data...`);
             await saveApplicant(applicantData);
+
+            // 🔔 Alert admins with full applicant summary + transcript
+            const summaryLines = [
+                `✅ *[NEW BUSINESS HUB APPLICANT]* ✅`,
+                ``,
+                `📞 *Number:* +${userPhone}`,
+                `👤 *Name:* ${applicantData.name || 'N/A'}`,
+                `🏢 *Business:* ${applicantData.businessName || 'N/A'} (${applicantData.businessType || 'N/A'})`,
+                `📍 *Location:* ${applicantData.location || 'N/A'}`,
+                `🛒 *Services:* ${applicantData.services || 'N/A'}`,
+                `🤝 *Partnerships:* ${applicantData.partnerships || 'N/A'}`,
+                `💡 *Benefit:* ${applicantData.benefit || 'N/A'}`,
+                `🏘️ *Winneba Resident:* ${applicantData.resident || 'N/A'}`,
+                ``,
+                `📋 *Full Chat Transcript:*`,
+                transcript
+            ].join('\n');
+            await sendAdminAlert(sock, summaryLines);
 
             // Update registry status so this user is not processed again
             const registry = loadRegistry();
