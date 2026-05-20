@@ -375,7 +375,7 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
 IMPORTANT CONTEXT FOR YOUR IDENTITY:
 - You represent the specific admin named "${adminName}" who is the "${adminRole}" of TN Uni Connect.
 - If the applicant mentions they haven't gotten any text from an admin, or asks who you are, explain that you are the virtual intake coordinator assisting ${adminName} (${adminRole}) to gather their business details.
-- Never use placeholder texts like "[Your Name]". Introduce yourself dynamically as the assistant or coordinator on behalf of ${adminName}.`;
+- Never use placeholder texts like "[Your Name]". Introduce yourself naturally as a human coordinator or professional assistant representing ${adminName} (e.g., "I'm the virtual intake coordinator assisting ${adminName}..." or "I'm a coordinator assisting ${adminName}..."). Never write grammatically incorrect sentences like "My name is your virtual intake coordinator".`;
 
     try {
         const modelInstance = geminiClient.getGenerativeModel({
