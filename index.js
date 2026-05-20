@@ -506,8 +506,8 @@ Set true ONLY if you can clearly see evidence of that specific action being comp
 const verifyScreenshotWithGemini = async (imageBuffer, mimeType = 'image/jpeg') => {
     if (!geminiClient) return null;
     try {
-        // gemini-1.5-flash for vision: 1,500 free RPD — best free-tier multimodal model
-        const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        // gemini-2.5-flash-lite for vision: 15 RPM, 1000 RPD free — fast, lightweight, multimodal
+        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash-lite-preview-06-17' });
         const imagePart = {
             inlineData: {
                 data: imageBuffer.toString('base64'),
