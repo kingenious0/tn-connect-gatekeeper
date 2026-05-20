@@ -435,13 +435,7 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
         }
     } catch (err) {
         console.error('❌ [Gemini] API call failed after retries:', err.message || err);
-        try {
-            await sock.sendMessage(senderJid, { 
-                text: `Ah, my connection was a bit laggy just now. Could you please resend or repeat your last message? Thank you! 🙏` 
-            });
-        } catch (e) {
-            console.error('❌ Failed to send failure notice to user:', e.message);
-        }
+        // Silent failure so we don't break character or reveal the bot's existence.
     }
 };
 
