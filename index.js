@@ -1124,34 +1124,34 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                     if (geminiResult.social) verification.social = true;
                     if (geminiResult.channel) verification.channel = true;
 
-                    console.log(`🔍 [Verification] User +${senderJid.replace(/[^0-9]/g, '')} status: TikTok=${verification.tiktok}, Social=${verification.social}, Channel=${verification.channel} (${verification.screenshotCount} screenshots)`);
+                    // Count how many tasks are verified
+                    const verifiedCount = [verification.tiktok, verification.social, verification.channel].filter(Boolean).length;
+                    console.log(`🔍 [Verification] User +${senderJid.replace(/[^0-9]/g, '')} status: TikTok=${verification.tiktok}, Social=${verification.social}, Channel=${verification.channel} — ${verifiedCount}/3 tasks (need any 2)`);
 
-                    // Check if all tasks are verified
-                    const allVerified = verification.tiktok && verification.social && verification.channel;
-
-                    if (allVerified) {
+                    // ✅ APPROVE if any 2 out of 3 tasks are verified
+                    if (verifiedCount >= 2) {
                         pendingVerifications.delete(senderJid);
                         pendingApprovals.delete(senderJid);
                         await executeApproval(senderJid, pendingRequest.groupJid, pendingRequest.key);
                         continue;
                     }
 
-                    // Build list of remaining tasks
-                    const remaining = [];
-                    if (!verification.tiktok) remaining.push('TikTok follow');
-                    if (!verification.social) remaining.push('Facebook/Instagram follow');
-                    if (!verification.channel) remaining.push('WhatsApp Channel join');
+                    // Build list of tasks NOT yet verified (for the nudge)
+                    const notVerified = [];
+                    if (!verification.tiktok) notVerified.push('Follow our *TikTok* account');
+                    if (!verification.social) notVerified.push('Follow our *Facebook/Instagram* page');
+                    if (!verification.channel) notVerified.push('Join our *WhatsApp Channel*');
 
-                    // Clear any existing timer and set a nudge for missing tasks
+                    // Clear any existing timer and nudge with smart message
                     if (pendingApprovals.has(senderJid)) {
                         clearTimeout(pendingApprovals.get(senderJid).timer);
                     }
                     const entry = pendingApprovals.get(senderJid) || { screenshotCount: verification.screenshotCount, timer: null };
                     entry.screenshotCount = verification.screenshotCount;
                     entry.timer = setTimeout(async () => {
-                        console.log(`⚠️ [Gemini Vision] Nudging user +${senderJid.replace(/[^0-9]/g, '')} for missing: ${remaining.join(', ')}`);
+                        console.log(`⚠️ [Gemini Vision] Nudging user +${senderJid.replace(/[^0-9]/g, '')} — only ${verifiedCount}/3 tasks verified`);
                         await sendAntiBanMessage(sock, senderJid, {
-                            text: `⚠️ *GATEKEEPER NOTICE* ⚠️\n\n{Thanks for the screenshot|We received your screenshot}! However, we still need proof of the following:\n\n${remaining.map(t => `• ${t}`).join('\n')}\n\nPlease send {a screenshot|screenshot proof} for each remaining task so we can approve you! 📸✨`
+                            text: `⚠️ *GATEKEEPER NOTICE* ⚠️\n\n{Thanks for the screenshot|We received your screenshot}! You need to complete *any 2* of the following tasks to be approved:\n\n${notVerified.map(t => `• ${t}`).join('\n')}\n\nPlease send a screenshot proving you completed {at least one more|another} task and we will approve you instantly! 📸✨`
                         });
                     }, 20000);
                     pendingApprovals.set(senderJid, entry);
