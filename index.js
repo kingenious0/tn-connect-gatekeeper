@@ -106,7 +106,7 @@ When ALL 7 points are clearly answered, first send a warm professional closing m
 // Gemini client + model initialization
 const geminiClient = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 const geminiModel = geminiClient ? geminiClient.getGenerativeModel({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-2.5-flash',
     systemInstruction: BUSINESS_HUB_SYSTEM_PROMPT
 }) : null;
 
