@@ -756,7 +756,225 @@
         // Poll sessions on page load and run intervals every 3 seconds
         pollSessions();
         setInterval(pollSessions, 3000);
+
+        // ==========================================
+        // 🏢 BUSINESS HUB APPLICANTS DASHBOARD
+        // ==========================================
+        async function loadApplicants() {
+            const container = document.getElementById('applicantsContainer');
+            const countBadge = document.getElementById('applicantCount');
+            try {
+                const res = await fetch('/api/business-hub/applicants');
+                const data = await res.json();
+                countBadge.textContent = data.length;
+                if (data.length === 0) {
+                    container.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:40px 0;">No applicants yet. Awaiting first Business Hub join request.</p>';
+                    return;
+                }
+                // Store for copy/download
+                window._applicants = data;
+                let rows = data.map((a, i) => `
+                    <tr>
+                        <td>${i + 1}</td>
+                        <td>${a.name || '—'}</td>
+                        <td>${a.phone || '—'}</td>
+                        <td>${a.businessName || '—'}</td>
+                        <td>${a.businessType || '—'}</td>
+                        <td>${a.location || '—'}</td>
+                        <td>${a.services || '—'}</td>
+                        <td>${a.partnerships || '—'}</td>
+                        <td>${a.benefit || '—'}</td>
+                        <td>${a.createdAt ? new Date(a.createdAt).toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'}) : '—'}</td>
+                        <td><span class="status-badge ${a.status === 'approved' ? 'badge-approved' : 'badge-pending'}">${a.status === 'approved' ? 'Approved' : 'Pending Review'}</span></td>
+                    </tr>`).join('');
+                container.innerHTML = `<table class="biz-table"><thead><tr>
+                    <th>#</th><th>Full Name</th><th>Phone</th><th>Business Name</th><th>Business Type</th>
+                    <th>Location</th><th>Services / Products</th><th>Open to Partnerships</th>
+                    <th>Benefit to TN Members</th><th>Date Applied</th><th>Status</th>
+                </tr></thead><tbody>${rows}</tbody></table>`;
+            } catch(e) {
+                container.innerHTML = '<p style="color:var(--danger);text-align:center;padding:20px;">Failed to load applicants.</p>';
+            }
+        }
+
+        function copyApplicantsList() {
+            const applicants = window._applicants || [];
+            if (!applicants.length) { alert('No applicants to copy.'); return; }
+            const lines = applicants.map((a, i) => [
+                `${i+1}. ${a.name || 'N/A'}`,
+                `   Phone: ${a.phone || 'N/A'}`,
+                `   Business: ${a.businessName || 'N/A'} (${a.businessType || 'N/A'})`,
+                `   Location: ${a.location || 'N/A'}`,
+                `   Services: ${a.services || 'N/A'}`,
+                `   Partnerships: ${a.partnerships || 'N/A'}`,
+                `   Benefit to TN: ${a.benefit || 'N/A'}`,
+                `   Applied: ${a.createdAt ? new Date(a.createdAt).toLocaleDateString() : 'N/A'}`,
+                `   Status: ${a.status || 'Pending Review'}`,
+                ''
+            ].join('\n')).join('\n');
+            const full = `TN WINNEBA BUSINESS HUB — APPLICANTS LIST\nGenerated: ${new Date().toLocaleString()}\n${'='.repeat(60)}\n\n${lines}`;
+            navigator.clipboard.writeText(full).then(() => {
+                const btn = document.getElementById('copyApplicantsBtn');
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy List', 2000);
+            });
+        }
+
+        function downloadAsWord() {
+            const applicants = window._applicants || [];
+            if (!applicants.length) { alert('No applicants to download.'); return; }
+            const rows = applicants.map((a, i) => `
+                <tr>
+                    <td>${i+1}</td><td>${a.name||''}</td><td>${a.phone||''}</td>
+                    <td>${a.businessName||''}</td><td>${a.businessType||''}</td>
+                    <td>${a.location||''}</td><td>${a.services||''}</td>
+                    <td>${a.partnerships||''}</td><td>${a.benefit||''}</td>
+                    <td>${a.createdAt ? new Date(a.createdAt).toLocaleDateString('en-GB') : ''}</td>
+                    <td>${a.status||'Pending Review'}</td>
+                </tr>`).join('');
+            const html = `
+                <html><head><meta charset="UTF-8">
+                <style>
+                    body{font-family:Calibri,sans-serif;font-size:11pt;margin:2cm;}
+                    h1{font-size:16pt;color:#1a1a2e;}h2{font-size:12pt;color:#555;}
+                    table{border-collapse:collapse;width:100%;font-size:9pt;}
+                    th{background:#1a1a2e;color:#fff;padding:6px 8px;text-align:left;}
+                    td{border:1px solid #ddd;padding:5px 8px;vertical-align:top;}
+                    tr:nth-child(even){background:#f8f9fa;}
+                </style></head><body>
+                <h1>TN Winneba Business Hub — Applicants</h1>
+                <h2>Generated: ${new Date().toLocaleString()}</h2>
+                <table><thead><tr>
+                    <th>#</th><th>Full Name</th><th>Phone</th><th>Business Name</th>
+                    <th>Business Type</th><th>Location</th><th>Services</th>
+                    <th>Partnerships</th><th>Benefit to TN</th><th>Date Applied</th><th>Status</th>
+                </tr></thead><tbody>${rows}</tbody></table>
+                </body></html>`;
+            const blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `TN_Business_Hub_Applicants_${new Date().toISOString().slice(0,10)}.doc`;
+            a.click(); URL.revokeObjectURL(url);
+        }
+
+        loadApplicants();
+        setInterval(loadApplicants, 30000);
     </script>
+
+    <!-- ============================================================ -->
+    <!-- 🏢 BUSINESS HUB APPLICANTS SECTION -->
+    <!-- ============================================================ -->
+    <style>
+        .biz-section { margin-top: 50px; }
+        .biz-section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .biz-section-header h2 {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .biz-count {
+            background: rgba(59,130,246,0.2);
+            border: 1px solid rgba(59,130,246,0.4);
+            color: #93c5fd;
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 2px 10px;
+            border-radius: 20px;
+        }
+        .biz-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+        .biz-btn {
+            padding: 9px 18px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+            font-family: 'Outfit', sans-serif;
+            transition: all 0.2s ease;
+        }
+        .biz-btn-copy { background: rgba(255,255,255,0.08); color: var(--text-main); border: 1px solid rgba(255,255,255,0.12); }
+        .biz-btn-copy:hover { background: rgba(255,255,255,0.14); }
+        .biz-btn-download { background: linear-gradient(135deg, #3b82f6, #1d4ed8); color: #fff; }
+        .biz-btn-download:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(59,130,246,0.4); }
+        .biz-btn-refresh { background: transparent; color: var(--text-muted); border: 1px solid var(--border-color); }
+        .biz-btn-refresh:hover { color: var(--primary); border-color: var(--primary-glow); }
+        .biz-table-wrap {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            overflow-x: auto;
+            backdrop-filter: blur(10px);
+        }
+        .biz-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+            min-width: 900px;
+        }
+        .biz-table thead th {
+            background: rgba(255,255,255,0.04);
+            color: var(--text-muted);
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 14px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+            white-space: nowrap;
+        }
+        .biz-table tbody tr {
+            border-bottom: 1px solid var(--border-color);
+            transition: background 0.15s ease;
+        }
+        .biz-table tbody tr:last-child { border-bottom: none; }
+        .biz-table tbody tr:hover { background: rgba(255,255,255,0.03); }
+        .biz-table td {
+            padding: 13px 16px;
+            color: var(--text-main);
+            vertical-align: top;
+            line-height: 1.5;
+            max-width: 200px;
+        }
+        .biz-table td:first-child { color: var(--text-muted); font-weight: 600; }
+        .status-badge {
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .badge-pending { background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
+        .badge-approved { background: rgba(37,211,102,0.15); color: var(--primary); border: 1px solid var(--primary-glow); }
+    </style>
+
+    <div class="container biz-section">
+        <div class="biz-section-header">
+            <h2>🏢 Business Hub Applicants <span class="biz-count" id="applicantCount">0</span></h2>
+            <div class="biz-actions">
+                <button class="biz-btn biz-btn-refresh" onclick="loadApplicants()">↻ Refresh</button>
+                <button class="biz-btn biz-btn-copy" id="copyApplicantsBtn" onclick="copyApplicantsList()">Copy List</button>
+                <button class="biz-btn biz-btn-download" onclick="downloadAsWord()">⬇ Download as Word</button>
+            </div>
+        </div>
+        <div class="biz-table-wrap">
+            <div id="applicantsContainer" style="padding:40px;text-align:center;color:var(--text-muted);">
+                Loading applicants...
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>
+
 

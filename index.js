@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { createClient } = require('@supabase/supabase-js');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // ==========================================
 // 📡 SERVER CONFIGURATION & MIDDLEWARE
@@ -21,11 +22,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 const PORT = process.env.PORT || 10000;
 const SESSION_META_FILE = './sessions_meta.json';
 const REGISTRY_FILE = './registry.json';
+const APPLICANTS_FILE = './business_hub_applicants.json';
+const GROUP_FLOWS_FILE = './group_flows.json';
 
 // Global variables for active socket sessions and status
 const activeSessions = {};
 const activeQRs = {};
 const pendingApprovals = new Map(); // screenshot aggregation cache
+const businessHubConversations = new Map(); // Gemini AI conversation history per user (phone -> history[])
 
 const uploadDebounces = {}; // debounces for Supabase credentials upload
 
@@ -66,6 +70,51 @@ Once you’ve followed all, send a DONE(with a screenshot).
 We are viewing chats before approving. If we get to your chat twice and you’ve not done so we will cancel your request
 
 SEND ME SCREENSHOTS WHEN DONE`;
+
+// Business Hub intro DM (Version B — named admin + double-text check)
+const BUSINESS_HUB_INTRO_MESSAGE = (adminName) =>
+`Hello, thanks for requesting to join TN Winneba Business Hub. I'm ${adminName} 📌, Lead Admin of TN Uni Connect.
+
+Has any of our admins texted you already? If yes, please reply with the admin's name.
+
+If not, kindly tell us a little about yourself, your business, and where you are located in Winneba. Anything we need to know before you are approved.`;
+
+// Gemini AI system prompt — acts as a professional business intake coordinator
+const BUSINESS_HUB_SYSTEM_PROMPT = `You are a professional and warm business intake coordinator for TN Winneba Business Hub, a prestigious networking community for business owners in Winneba, Ghana. You represent the TN Uni Connect admin team.
+
+Your task is to interview business applicants through a natural, human-feeling conversation. You need to collect ALL of the following:
+1. Full name
+2. Business name
+3. Type of business (e.g. restaurant, salon, IT services, etc.)
+4. Exact location in Winneba
+5. Products or services they offer
+6. Whether they are open to partnerships and vacancy sharing
+7. How TN members and Ghanaians can benefit from their business
+
+Rules:
+- Be warm, professional, and encouraging — like a real human business coordinator, NOT a bot
+- Do NOT ask all 7 questions at once. Have a natural flowing conversation
+- If someone replies with something vague, short, irrelevant or nonsensical (like a single dot, "ok", "yes", etc.), politely and professionally redirect them and ask for the specific information you need
+- Never reveal you are an AI
+- Do not use excessive emojis — keep it professional
+- Ask one or two things at a time
+- Only conclude when you have collected clear, specific answers to ALL 7 points
+
+When ALL 7 points are clearly answered, first send a warm professional closing message telling them their application has been received and an admin will review and get back to them. Then on a NEW LINE, add this exact marker followed immediately (no space) by a valid JSON object:
+[INTAKE_COMPLETE]{"name":"...","businessName":"...","businessType":"...","location":"...","services":"...","partnerships":"...","benefit":"..."}`;
+
+// Gemini client + model initialization
+const geminiClient = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
+const geminiModel = geminiClient ? geminiClient.getGenerativeModel({
+    model: 'gemini-1.5-flash',
+    systemInstruction: BUSINESS_HUB_SYSTEM_PROMPT
+}) : null;
+
+if (geminiModel) {
+    console.log('🤖 [Gemini] AI intake engine is ACTIVE for Business Hub groups.');
+} else {
+    console.log('⚠️ [Gemini] GEMINI_API_KEY missing. Business Hub AI intake will be DISABLED.');
+}
 
 const OFFICIAL_NICHE_GROUPS = [
     "1️⃣ Corporate Events & Protocol Personnel",
@@ -223,11 +272,135 @@ const findPendingRequest = (senderJid) => {
     const cleanSender = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
     
     for (const key of Object.keys(registry)) {
-        if (key.includes(cleanSender) && registry[key].status !== 'approved') {
-            return { key, ...registry[key] };
+        const entry = registry[key];
+        // Only match standard screenshot-flow entries (not business hub)
+        if (key.includes(cleanSender) && entry.groupType !== 'business_hub' && entry.status !== 'approved') {
+            return { key, ...entry };
         }
     }
     return null;
+};
+
+// Find an active Business Hub registry entry for a given sender
+const findBusinessHubRequest = (senderJid) => {
+    const registry = loadRegistry();
+    const cleanSender = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+    for (const key of Object.keys(registry)) {
+        const entry = registry[key];
+        if (key.includes(cleanSender) && entry.groupType === 'business_hub' && entry.status !== 'interview_complete') {
+            return { key, ...entry };
+        }
+    }
+    return null;
+};
+
+// Detect if a group name is TN Winneba Business Hub
+const isBusinessHubGroup = (groupName) => {
+    const name = (groupName || '').toLowerCase();
+    return name.includes('winneba business hub') || name.includes('winneba business');
+};
+
+// ==========================================
+// 📂 BUSINESS HUB APPLICANT STORAGE
+// ==========================================
+const loadApplicants = () => {
+    if (!fs.existsSync(APPLICANTS_FILE)) return [];
+    try { return JSON.parse(fs.readFileSync(APPLICANTS_FILE, 'utf-8')); }
+    catch (e) { return []; }
+};
+
+const saveApplicant = async (applicantData) => {
+    const applicants = loadApplicants();
+    const entry = { ...applicantData, id: Date.now(), createdAt: new Date().toISOString(), status: 'pending_review' };
+    applicants.push(entry);
+    try {
+        fs.writeFileSync(APPLICANTS_FILE, JSON.stringify(applicants, null, 2));
+    } catch (e) {
+        console.error('❌ Failed to save applicant locally:', e);
+    }
+    if (supabase) {
+        try {
+            await supabase.from('business_hub_applicants').insert({
+                phone: applicantData.phone || '',
+                name: applicantData.name || '',
+                business_name: applicantData.businessName || '',
+                business_type: applicantData.businessType || '',
+                location: applicantData.location || '',
+                services: applicantData.services || '',
+                partnerships: applicantData.partnerships || '',
+                benefit: applicantData.benefit || '',
+                status: 'pending_review'
+            });
+        } catch (e) {
+            console.error('❌ [Supabase] Applicant insert failed (table may not exist yet):', e.message);
+        }
+    }
+    return entry;
+};
+
+// ==========================================
+// 🤖 GEMINI AI BUSINESS HUB CONVERSATION
+// ==========================================
+const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubRequest, adminName) => {
+    if (!geminiModel) return;
+    const userPhone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+    const history = businessHubConversations.get(userPhone) || [];
+
+    try {
+        const chat = geminiModel.startChat({ history });
+        const result = await chat.sendMessage(textInput);
+        const responseText = result.response.text();
+
+        // Check for completion marker
+        const INTAKE_MARKER = '[INTAKE_COMPLETE]';
+        const isComplete = responseText.includes(INTAKE_MARKER);
+        let cleanResponse = responseText;
+        let applicantData = null;
+
+        if (isComplete) {
+            const markerIndex = responseText.indexOf(INTAKE_MARKER);
+            cleanResponse = responseText.substring(0, markerIndex).trim();
+            const jsonStr = responseText.substring(markerIndex + INTAKE_MARKER.length).trim();
+            try {
+                applicantData = JSON.parse(jsonStr);
+                applicantData.phone = userPhone;
+            } catch (e) {
+                console.error('❌ [Gemini] Failed to parse intake JSON:', e.message);
+                applicantData = { phone: userPhone, raw: jsonStr };
+            }
+        }
+
+        // Update in-memory conversation history
+        history.push({ role: 'user', parts: [{ text: textInput }] });
+        history.push({ role: 'model', parts: [{ text: responseText }] });
+        businessHubConversations.set(userPhone, history);
+
+        // Simulate realistic human typing pace
+        await sock.sendPresenceUpdate('composing', senderJid);
+        await delay(Math.min(cleanResponse.length * 25, 9000));
+        await sock.sendPresenceUpdate('paused', senderJid);
+
+        if (cleanResponse) {
+            await sock.sendMessage(senderJid, { text: cleanResponse });
+        }
+
+        if (isComplete && applicantData) {
+            console.log(`✅ [Business Hub] Intake complete for +${userPhone}. Saving applicant data...`);
+            await saveApplicant(applicantData);
+
+            // Update registry status so this user is not processed again
+            const registry = loadRegistry();
+            if (registry[bizHubRequest.key]) {
+                registry[bizHubRequest.key].status = 'interview_complete';
+                await saveRegistryItem(bizHubRequest.key, registry[bizHubRequest.key]);
+            }
+
+            // Clear conversation memory
+            businessHubConversations.delete(userPhone);
+        }
+    } catch (err) {
+        console.error('❌ [Gemini] API call failed:', err.message || err);
+    }
 };
 
 // ==========================================
@@ -515,30 +688,46 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
         }
 
 
-        // Lock file
+        // Detect group type from name
+        let groupName = '';
+        const currentMeta = loadSessionMeta()[cleanPhone] || {};
+        if (currentMeta.discoveredGroups) {
+            const matchedGroup = currentMeta.discoveredGroups.find(g => g.jid === incomingGroupJID);
+            if (matchedGroup) groupName = matchedGroup.subject;
+        }
+        const isBizHub = isBusinessHubGroup(groupName);
+
+        // Lock the registry with group type
         const item = {
             admin: adminName,
             phone: cleanPhone,
             groupJid: incomingGroupJID,
+            groupType: isBizHub ? 'business_hub' : 'standard',
             status: 'pending',
             timestamp: new Date().toISOString()
         };
         await saveRegistryItem(registryKey, item);
-        console.log(`🎯 [Admin: ${adminName}] Lock acquired for user +${cleanSender} in group ${incomingGroupJID}`);
+        console.log(`🎯 [Admin: ${adminName}] Lock acquired for +${cleanSender} in "${groupName}" [Type: ${item.groupType}]`);
 
         // Pacing human simulation delays (15 to 40 seconds)
         const randomDelay = Math.floor(Math.random() * (40 - 15 + 1) + 15) * 1000;
         console.log(`⏳ [Admin: ${adminName}] Delaying messaging for ${randomDelay / 1000}s...`);
         await delay(randomDelay);
 
-        // Typing status update
+        // Typing simulation
         await sock.sendPresenceUpdate('composing', participant);
         await delay(6000);
         await sock.sendPresenceUpdate('paused', participant);
 
-        // Dispatch requirement copy block
-        console.log(`✉️ [Admin: ${adminName}] Requirement guidelines DM sent to +${cleanSender}`);
-        await sock.sendMessage(participant, { text: GATEKEEPER_MESSAGE });
+        if (isBizHub) {
+            // Business Hub: send professional Version B intro DM, Gemini takes over from first reply
+            console.log(`🏢 [Admin: ${adminName}] Business Hub intro DM dispatched to +${cleanSender}`);
+            await sock.sendMessage(participant, { text: BUSINESS_HUB_INTRO_MESSAGE(adminName) });
+        } else {
+            // Standard groups: full screenshot verification flow
+            console.log(`✉️ [Admin: ${adminName}] Requirement guidelines DM sent to +${cleanSender}`);
+            await sock.sendMessage(participant, { text: GATEKEEPER_MESSAGE });
+        }
     });
 
     // 🎯 SCREENSHOT VERIFICATION & TEXT TRIGGERS
@@ -604,6 +793,16 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                               messageContent?.imageMessage?.caption || 
                               '';
 
+
+            // 🏢 BUSINESS HUB: Route to Gemini AI if sender has an active Business Hub intake
+            if (geminiModel && textInput.trim().length > 0) {
+                const bizHubRequest = findBusinessHubRequest(senderJid);
+                if (bizHubRequest) {
+                    console.log(`🤖 [Business Hub] Routing reply from +${senderJid.replace('@s.whatsapp.net', '')} to Gemini AI intake engine...`);
+                    await handleBusinessHubConversation(sock, senderJid, textInput, bizHubRequest, adminName);
+                    continue;
+                }
+            }
 
             // Admin Keyword Locking ("Ken")
             if (textInput.toLowerCase().includes('ken')) {
@@ -899,6 +1098,49 @@ app.post('/api/sessions/:phone/disconnect', async (req, res) => {
     });
     
     res.json({ success: true, message: "Logged out and wiped session successfully!" });
+});
+
+// ==========================================
+// 🏢 BUSINESS HUB APPLICANTS API
+// ==========================================
+app.get('/api/business-hub/applicants', (req, res) => {
+    const applicants = loadApplicants();
+    res.json(applicants);
+});
+
+app.delete('/api/business-hub/applicants/:id', (req, res) => {
+    const { id } = req.params;
+    let applicants = loadApplicants();
+    applicants = applicants.filter(a => String(a.id) !== String(id));
+    try {
+        fs.writeFileSync(APPLICANTS_FILE, JSON.stringify(applicants, null, 2));
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to delete applicant' });
+    }
+});
+
+// ==========================================
+// ⚙️ GROUP FLOWS CONFIG API
+// ==========================================
+const loadGroupFlows = () => {
+    if (!fs.existsSync(GROUP_FLOWS_FILE)) return {};
+    try { return JSON.parse(fs.readFileSync(GROUP_FLOWS_FILE, 'utf-8')); }
+    catch (e) { return {}; }
+};
+
+app.get('/api/group-flows', (req, res) => {
+    res.json(loadGroupFlows());
+});
+
+app.post('/api/group-flows', (req, res) => {
+    const flows = req.body;
+    try {
+        fs.writeFileSync(GROUP_FLOWS_FILE, JSON.stringify(flows, null, 2));
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to save group flows' });
+    }
 });
 
 

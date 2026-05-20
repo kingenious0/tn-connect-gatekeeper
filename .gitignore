@@ -6,6 +6,8 @@ auth_session_*
 baileys_auth_info
 sessions_meta.json
 registry.json
+business_hub_applicants.json
+group_flows.json
 
 # Environment files and logs
 .env
