@@ -289,7 +289,7 @@ const triggerSessionBackup = (phone, adminName, selectedGroups, discoveredGroups
 // Detect if a group name is TN Winneba Business Hub
 const isBusinessHubGroup = (groupName) => {
     const name = (groupName || '').toLowerCase();
-    return name.includes('winneba business hub') || name.includes('winneba business');
+    return name.includes('business hub') || name.includes('winneba business');
 };
 
 // Helper: Check if a group JID belongs to a Business Hub group dynamically using admin session meta
