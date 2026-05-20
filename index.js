@@ -98,31 +98,38 @@ const BUSINESS_HUB_INTRO_MESSAGE = (adminName, adminRole) =>
 If not, kindly tell us a little about yourself, your business, and where you are located in Winneba. {Anything we need to know before you are approved.|Any relevant details we need to know before your approval.}`;
 
 // Gemini AI system prompt — acts as a professional business intake coordinator
-const BUSINESS_HUB_SYSTEM_PROMPT = `You are a professional and warm business intake coordinator for TN Winneba Business Hub, a prestigious networking community for business owners in Winneba, Ghana. You represent the TN Uni Connect admin team.
+const BUSINESS_HUB_SYSTEM_PROMPT = `You are a sharp, professional business intake coordinator for TN Winneba Business Hub — an exclusive networking community for serious business owners in Winneba, Ghana. You represent the TN Uni Connect admin team.
 
-Your task is to interview business applicants through a natural, human-feeling conversation. You need to collect ALL of the following:
+Your job is to screen and onboard business applicants through a natural, concise conversation. Collect the following in order, one or two at a time:
 1. Full name
-2. Business name
-3. Type of business (e.g. restaurant, salon, IT services, etc.)
-4. Exact location in Winneba
-5. Products or services they offer
-6. Whether they are open to partnerships and vacancy sharing
-7. How TN members and Ghanaians can benefit from their business
+2. Business name and type
+3. Exact location in Winneba
+4. Products or services offered
+5. Open to partnerships and vacancy sharing? (yes/no)
+6. How TN members and Ghanaians benefit from their business
+7. Are they a resident of Winneba?
 
-Rules:
-- Be warm, professional, and encouraging — like a real human business coordinator, NOT a bot
-- Do NOT ask all 7 questions at once. Have a natural flowing conversation
-- If someone replies with something vague, short, irrelevant or nonsensical (like a single dot, "ok", "yes", etc.), politely and professionally redirect them and ask for the specific information you need
+Residency Rule (CRITICAL):
+- If they say YES to being a Winneba resident → continue to point 8 (meeting attendance is assumed, skip it)
+- If they say NO to being a Winneba resident → ask ONE follow-up: "If we organise a physical meet-up in Winneba, would you be able to attend?"
+  - If YES to attending → treat as approved, proceed to close with [INTAKE_COMPLETE]
+  - If NO to attending → close gracefully with this exact approach: thank them warmly, tell them the hub is currently focused on people who can be physically present in Winneba, let them know TN Connect has other exciting opportunities suited to them and an admin will reach out, then end with the [RESIDENT_DECLINED] marker on a new line. No JSON needed for this path.
+
+Style Rules:
+- Be concise. One clear question per message, maximum two sentences. No paragraphs.
+- Sound like a sharp, experienced business networker — warm but efficient
+- Never sound like a bot or a form. Speak like a real person
+- Do not use excessive emojis — one per message maximum
 - Never reveal you are an AI
-- Do not use excessive emojis — keep it professional
-- Ask one or two things at a time
-- Only conclude when you have collected clear, specific answers to ALL 7 points
+- If someone gives a vague or off-topic reply, redirect sharply but politely in one line
+- Never ask all questions at once
 
-When ALL 7 points are clearly answered, first send a warm professional closing message telling them their application has been received and an admin will review and get back to them. Then on a NEW LINE, add this exact marker followed immediately (no space) by a valid JSON object:
-[INTAKE_COMPLETE]{"name":"...","businessName":"...","businessType":"...","location":"...","services":"...","partnerships":"...","benefit":"..."}
+Completion (when ALL points collected and resident approved or non-resident agrees to attend):
+First send a warm, professional closing message (2-3 lines max) telling them their application is received and an admin will review it. Then on a NEW LINE add this exact marker followed immediately by a valid JSON object (no space):
+[INTAKE_COMPLETE]{"name":"...","businessName":"...","businessType":"...","location":"...","services":"...","partnerships":"...","benefit":"...","resident":"...","canAttend":"..."}
 
 Escalation Rule:
-- If the applicant sends hostile, threatening, deeply confusing, or completely off-topic messages for 2 or more consecutive turns, OR if they explicitly ask to speak with a real person or admin, add the marker [TRIGGER_HUMAN] at the very end of your reply (after your message text). Continue being polite in your visible reply.`;
+- If the applicant is hostile, threatening, deeply confused, or explicitly asks for a real person for 2+ consecutive turns, append [TRIGGER_HUMAN] at the very end of your reply. Stay polite in your visible message.`;
 
 // Gemini client + model initialization
 // gemini-2.5-flash-lite: 15 RPM, 1000 RPD free — fast, lightweight, ideal for conversational intake
@@ -407,7 +414,26 @@ const callGeminiWithRetry = async (chat, textInput, retries = 3, initialDelayMs 
 const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubRequest, adminName) => {
     if (!geminiClient) return;
     const userPhone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
-    const history = businessHubConversations.get(userPhone) || [];
+
+    // 📦 LOAD HISTORY: Check in-memory first, then restore from Supabase
+    let history = businessHubConversations.get(userPhone);
+    if (!history) {
+        if (supabase) {
+            try {
+                const { data } = await supabase
+                    .from('business_hub_conversations')
+                    .select('history')
+                    .eq('phone', userPhone)
+                    .single();
+                if (data?.history) {
+                    history = JSON.parse(data.history);
+                    console.log(`📦 [Business Hub] Restored ${history.length} conversation turns from Supabase for +${userPhone}`);
+                }
+            } catch (e) { /* no prior history */ }
+        }
+        history = history || [];
+        businessHubConversations.set(userPhone, history);
+    }
 
     // Dynamically retrieve the admin's role from metadata
     const cleanPhone = sock.user?.id ? sock.user.id.split(':')[0].replace(/[^0-9]/g, '') : '';
@@ -430,12 +456,22 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
         const result = await callGeminiWithRetry(chat, textInput);
         const responseText = result.response.text();
 
-        // Check for completion marker
+        // Check for markers
         const INTAKE_MARKER = '[INTAKE_COMPLETE]';
-        const isComplete = responseText.includes(INTAKE_MARKER);
-        let cleanResponse = responseText;
-        let applicantData = null;
+        const DECLINED_MARKER = '[RESIDENT_DECLINED]';
+        const HUMAN_MARKER = '[TRIGGER_HUMAN]';
 
+        const isComplete = responseText.includes(INTAKE_MARKER);
+        const isDeclined = responseText.includes(DECLINED_MARKER);
+
+        let cleanResponse = responseText
+            .replace(INTAKE_MARKER, '')
+            .replace(DECLINED_MARKER, '')
+            .replace(HUMAN_MARKER, '')
+            .trim();
+
+        // Strip JSON from cleanResponse if present
+        let applicantData = null;
         if (isComplete) {
             const markerIndex = responseText.indexOf(INTAKE_MARKER);
             cleanResponse = responseText.substring(0, markerIndex).trim();
@@ -454,6 +490,19 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
         history.push({ role: 'model', parts: [{ text: responseText }] });
         businessHubConversations.set(userPhone, history);
 
+        // 💾 PERSIST history to Supabase after every turn
+        if (supabase) {
+            try {
+                await supabase.from('business_hub_conversations').upsert({
+                    phone: userPhone,
+                    history: JSON.stringify(history),
+                    updated_at: new Date().toISOString()
+                }, { onConflict: 'phone' });
+            } catch (e) {
+                console.error('❌ [Business Hub] Failed to persist conversation to Supabase:', e.message);
+            }
+        }
+
         if (cleanResponse) {
             // Human-like typing simulation before sending Gemini response
             // 1. Simulate reading the user's message (1.5 - 3.5s)
@@ -470,8 +519,24 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
             await sendAntiBanMessage(sock, senderJid, { text: cleanResponse });
         }
 
+        // 🚫 RESIDENT DECLINED: Non-resident won't attend. Close gracefully, stop AI, notify admins
+        if (isDeclined) {
+            console.log(`🚫 [Business Hub] Non-resident declined physical attendance for +${userPhone}. Closing intake.`);
+            humanTakeoverUsers.add(userPhone); // Stop AI responses
+            businessHubConversations.delete(userPhone);
+            // Clean from Supabase
+            if (supabase) {
+                try { await supabase.from('business_hub_conversations').delete().eq('phone', userPhone); } catch(e) {}
+            }
+            const registry = loadRegistry();
+            if (registry[bizHubRequest.key]) {
+                registry[bizHubRequest.key].status = 'non_resident_declined';
+                await saveRegistryItem(bizHubRequest.key, registry[bizHubRequest.key]);
+            }
+            await sendAdminAlert(sock, `🚫 *[NON-RESIDENT DECLINED]* — +${userPhone} is not based in Winneba and cannot attend physical meetings. Intake closed. Manual follow-up optional.`);
+        }
+
         // Handle [TRIGGER_HUMAN] — escalate to admin group, pause AI for this user
-        const HUMAN_MARKER = '[TRIGGER_HUMAN]';
         if (responseText.includes(HUMAN_MARKER)) {
             console.log(`⚠️ [Business Hub] Human handoff triggered for +${userPhone}. Alerting admins...`);
             humanTakeoverUsers.add(userPhone);
@@ -490,14 +555,18 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
                 await saveRegistryItem(bizHubRequest.key, registry[bizHubRequest.key]);
             }
 
-            // Clear conversation memory
+            // Clear conversation memory + Supabase
             businessHubConversations.delete(userPhone);
+            if (supabase) {
+                try { await supabase.from('business_hub_conversations').delete().eq('phone', userPhone); } catch(e) {}
+            }
         }
     } catch (err) {
         console.error('❌ [Gemini] API call failed after retries:', err.message || err);
         // Silent failure so we don't break character or reveal the bot's existence.
     }
 };
+
 
 // ==========================================
 // 🔍 GEMINI MULTIMODAL SCREENSHOT VERIFICATION
