@@ -1,6 +1,6 @@
-// Version 1.3.1 - Active Production Build with Anti-Ban and Supabase Sync
+// Version 1.3 Pro - Single-Worker Cloud Engine with Anti-Ban & Gemini Multimodal
 require('dotenv').config();
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, delay } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, delay, downloadMediaMessage } = require('@whiskeysockets/baileys');
 
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
@@ -31,9 +31,18 @@ const GROUP_FLOWS_FILE = './group_flows.json';
 const activeSessions = {};
 const activeQRs = {};
 const pendingApprovals = new Map(); // screenshot aggregation cache
+const pendingVerifications = new Map(); // Gemini screenshot verification tracker per user { tiktok, social, channel }
 const businessHubConversations = new Map(); // Gemini AI conversation history per user (phone -> history[])
+const humanTakeoverUsers = new Set(); // users flagged for manual admin takeover
 
 const uploadDebounces = {}; // debounces for Supabase credentials upload
+
+// Admin Alerts Group — auto-detected by name on boot
+let adminAlertsGroupJid = null;
+
+// Departure Nudge Master Switch — set to true to enable safe departure DMs
+const ENABLE_DEPARTURE_NUDGE = false;
+const departureNudgedUsers = new Set(); // one-strike tracker: never message twice
 
 // ==========================================
 // 🗄️ SUPABASE DATABASE INITIALIZATION
@@ -110,7 +119,10 @@ Rules:
 - Only conclude when you have collected clear, specific answers to ALL 7 points
 
 When ALL 7 points are clearly answered, first send a warm professional closing message telling them their application has been received and an admin will review and get back to them. Then on a NEW LINE, add this exact marker followed immediately (no space) by a valid JSON object:
-[INTAKE_COMPLETE]{"name":"...","businessName":"...","businessType":"...","location":"...","services":"...","partnerships":"...","benefit":"..."}`;
+[INTAKE_COMPLETE]{"name":"...","businessName":"...","businessType":"...","location":"...","services":"...","partnerships":"...","benefit":"..."}
+
+Escalation Rule:
+- If the applicant sends hostile, threatening, deeply confusing, or completely off-topic messages for 2 or more consecutive turns, OR if they explicitly ask to speak with a real person or admin, add the marker [TRIGGER_HUMAN] at the very end of your reply (after your message text). Continue being polite in your visible reply.`;
 
 // Gemini client + model initialization
 const geminiClient = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
@@ -445,6 +457,15 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
             await sendAntiBanMessage(sock, senderJid, { text: cleanResponse });
         }
 
+        // Handle [TRIGGER_HUMAN] — escalate to admin group, pause AI for this user
+        const HUMAN_MARKER = '[TRIGGER_HUMAN]';
+        if (responseText.includes(HUMAN_MARKER)) {
+            console.log(`⚠️ [Business Hub] Human handoff triggered for +${userPhone}. Alerting admins...`);
+            humanTakeoverUsers.add(userPhone);
+            const alertText = `⚠️ *[HUMAN HANDOFF REQUIRED]* ⚠️\n\nApplicant +${userPhone} needs manual attention during their Business Hub intake interview.\n\nLast message from applicant: "${textInput}"\n\nPlease open a direct chat with +${userPhone} and continue the conversation. The AI has been paused for this user.`;
+            await sendAdminAlert(sock, alertText);
+        }
+
         if (isComplete && applicantData) {
             console.log(`✅ [Business Hub] Intake complete for +${userPhone}. Saving applicant data...`);
             await saveApplicant(applicantData);
@@ -462,6 +483,49 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
     } catch (err) {
         console.error('❌ [Gemini] API call failed after retries:', err.message || err);
         // Silent failure so we don't break character or reveal the bot's existence.
+    }
+};
+
+// ==========================================
+// 🔍 GEMINI MULTIMODAL SCREENSHOT VERIFICATION
+// ==========================================
+// Downloads screenshot image buffers and sends them to Gemini 2.5 Flash
+// for OCR analysis to verify the applicant actually completed the tasks.
+
+const SCREENSHOT_VERIFICATION_PROMPT = `Analyze this screenshot image carefully. Determine if it shows evidence of ANY of the following actions:
+1. Following a TikTok account (look for TikTok UI, "Following" button state, profile pages)
+2. Following a Facebook or Instagram page (look for Facebook/Instagram UI, "Following" state, page profiles)
+3. Joining a WhatsApp Channel (look for WhatsApp Channel UI, subscription confirmation)
+
+Respond with ONLY a valid JSON object, nothing else:
+{"tiktok": true/false, "social": true/false, "channel": true/false}
+
+Set true ONLY if you can clearly see evidence of that specific action being completed. If the image is unclear, blurry, or does not show any of these, set all to false.`;
+
+const verifyScreenshotWithGemini = async (imageBuffer, mimeType = 'image/jpeg') => {
+    if (!geminiClient) return null;
+    try {
+        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const imagePart = {
+            inlineData: {
+                data: imageBuffer.toString('base64'),
+                mimeType: mimeType
+            }
+        };
+        const result = await model.generateContent([SCREENSHOT_VERIFICATION_PROMPT, imagePart]);
+        const responseText = result.response.text().trim();
+
+        // Extract JSON from response (handle markdown code blocks)
+        let jsonStr = responseText;
+        const jsonMatch = responseText.match(/\{[^}]+\}/);
+        if (jsonMatch) jsonStr = jsonMatch[0];
+
+        const parsed = JSON.parse(jsonStr);
+        console.log(`🔍 [Gemini Vision] Screenshot analysis result:`, parsed);
+        return parsed;
+    } catch (err) {
+        console.error('❌ [Gemini Vision] Screenshot verification failed:', err.message || err);
+        return null; // Fallback: null means Gemini couldn't analyze it
     }
 };
 
@@ -487,6 +551,12 @@ const discoverTNGroups = async (sock, phone) => {
             const subject = metadata.subject || '';
             const cleanSubject = subject.toLowerCase();
             
+            // 🔔 Auto-detect Admin Alerts Group by name
+            if (cleanSubject.includes('bot alert') || cleanSubject.includes('bot alerts')) {
+                adminAlertsGroupJid = jid;
+                console.log(`🔔 [Alerts] Auto-detected Admin Alerts Group: "${subject}" (${jid})`);
+            }
+
             // Match if it contains TN (with/without space, bracket, or dash) OR contains official niche keywords
             const isTNOfficial = cleanSubject.includes('tn') || keywords.some(kw => cleanSubject.includes(kw));
             
@@ -538,6 +608,62 @@ const discoverTNGroups = async (sock, phone) => {
 
 const conversationCooldowns = new Map();
 const connectionAttempts = {};
+
+// ==========================================
+// 📤 SEQUENTIAL ASYMMETRIC OUTBOUND QUEUE
+// ==========================================
+// Forces all cold-outreach DMs (join requests, departure nudges) into a
+// single-file chronological array with randomized cool-downs between
+// processing different users. Reactive messages (Gemini replies,
+// approvals, screenshot nudges) bypass this queue entirely.
+
+class OutboundQueue {
+    constructor() {
+        this.queue = [];
+        this.processing = false;
+    }
+
+    push(sock, jid, messageContent, label = 'outbound') {
+        this.queue.push({ sock, jid, messageContent, label });
+        console.log(`📤 [Queue] Task added: ${label} to +${jid.replace(/[^0-9]/g, '')}. Queue depth: ${this.queue.length}`);
+        if (!this.processing) this._process();
+    }
+
+    async _process() {
+        this.processing = true;
+        while (this.queue.length > 0) {
+            const task = this.queue.shift();
+            try {
+                console.log(`📤 [Queue] Processing: ${task.label} to +${task.jid.replace(/[^0-9]/g, '')}`);
+                await sendAntiBanMessage(task.sock, task.jid, task.messageContent);
+            } catch (err) {
+                console.error(`❌ [Queue] Task failed (${task.label}):`, err.message || err);
+            }
+
+            // Inter-task cool-down: 45s to 120s randomized gap between different users
+            if (this.queue.length > 0) {
+                const cooldown = Math.floor(Math.random() * (120000 - 45000 + 1)) + 45000;
+                console.log(`⏱️ [Queue] Cool-down rest: ${Math.round(cooldown / 1000)}s before next task (${this.queue.length} remaining)...`);
+                await delay(cooldown);
+            }
+        }
+        this.processing = false;
+        console.log('📤 [Queue] All tasks processed. Queue idle.');
+    }
+}
+
+const outboundQueue = new OutboundQueue();
+
+// Helper: send alert to Admin Alerts Group (or fallback to bot's own JID)
+const sendAdminAlert = async (sock, alertText) => {
+    const targetJid = adminAlertsGroupJid || (sock.user?.id ? (sock.user.id.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net') : null);
+    if (!targetJid) return;
+    try {
+        await sock.sendMessage(targetJid, { text: alertText });
+    } catch (err) {
+        console.error('❌ [Admin Alert] Failed to send alert:', err.message || err);
+    }
+};
 
 // Transforms "{Hello|Hi|Greetings} admin" into a randomized variation to mask string filters
 function applySpintax(text) {
@@ -685,7 +811,7 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
 
     });
 
-    // 🚪 RETENTION PROTOCOL: Capture left/removed group members & Route cleanly to Admin private DM (No direct candidate nudge to prevent ban risks)
+    // 🚪 DEPARTURE PROTOCOL: Capture left/removed group members, alert admins, optional safe departure nudge
     sock.ev.on('group-participants.update', async (anu) => {
         const groupJid = anu.id;
         const action = anu.action;
@@ -730,12 +856,20 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                     }
                 }
 
-                // CRITICAL ANTI-BAN FIX: DO NOT send unsolicited direct messages to the user who left.
-                // Instead, route this event as a direct alert to the Admin node itself (+cleanPhone)
-                const adminJid = `${cleanPhone}@s.whatsapp.net`;
-                const alertText = `⚠️ *[Admin Notification]* ⚠️\n\nCandidate +${participant.split('@')[0]} has left or been removed from your monitored group *${groupName}*.\n\nI have successfully wiped their validation lock so they can re-join and verify again in the future if needed.`;
-                
-                await sendAntiBanMessage(sock, adminJid, { text: alertText });
+                // Route departure alert to Admin Alerts Group
+                const alertText = `⚠️ *[Departure Alert]* ⚠️\n\nMember +${participant.split('@')[0]} has left or been removed from *${groupName}*.\n\nTheir verification lock has been wiped so they can re-join and verify again if needed.`;
+                await sendAdminAlert(sock, alertText);
+
+                // 🚪 SAFE DEPARTURE NUDGE (Disabled by default — flip ENABLE_DEPARTURE_NUDGE to true)
+                // Only sends if: flag is on, user hasn't been nudged before (one-strike rule)
+                if (ENABLE_DEPARTURE_NUDGE && !departureNudgedUsers.has(participant)) {
+                    departureNudgedUsers.add(participant);
+                    const departureNudge = `{Hey|Hi|Hello} {there|}, {we noticed you left|it looks like you exited} *${groupName}*.\n\n{We'd love to know if there's anything we could improve|Is there anything we could have done better}? {Feel free to rejoin anytime|You're always welcome back}! 🙏`;
+                    
+                    // Push through outbound queue with built-in cool-down delays
+                    outboundQueue.push(sock, participant, { text: departureNudge }, 'departure-nudge');
+                    console.log(`🚪 [Departure] Nudge queued for +${participant.replace(/[^0-9]/g, '')}`);
+                }
             }
         }
     });
@@ -813,15 +947,14 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
         await delay(6000);
         await sock.sendPresenceUpdate('paused', participant);
 
+        // Route initial DMs through the Sequential Outbound Queue (cold outreach = highest ban risk)
         if (isBizHub) {
-            // Business Hub: send professional Version B intro DM with admin name + role
             const adminRole = (loadSessionMeta()[cleanPhone] || {}).role || 'Admin';
-            console.log(`🏢 [Admin: ${adminName}] Business Hub intro DM dispatched to +${cleanSender}`);
-            await sendAntiBanMessage(sock, participant, { text: BUSINESS_HUB_INTRO_MESSAGE(adminName, adminRole) });
+            console.log(`🏢 [Admin: ${adminName}] Business Hub intro DM queued for +${cleanSender}`);
+            outboundQueue.push(sock, participant, { text: BUSINESS_HUB_INTRO_MESSAGE(adminName, adminRole) }, 'biz-hub-intro');
         } else {
-            // Standard groups: full screenshot verification flow
-            console.log(`✉️ [Admin: ${adminName}] Requirement guidelines DM sent to +${cleanSender}`);
-            await sendAntiBanMessage(sock, participant, { text: GATEKEEPER_MESSAGE });
+            console.log(`✉️ [Admin: ${adminName}] Requirement guidelines DM queued for +${cleanSender}`);
+            outboundQueue.push(sock, participant, { text: GATEKEEPER_MESSAGE }, 'join-request-dm');
         }
     });
 
@@ -902,6 +1035,13 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
 
             // 🏢 BUSINESS HUB: Route to Gemini AI if sender has an active Business Hub intake
             if (geminiModel && textInput.trim().length > 0) {
+                // Check if this user has been flagged for human takeover
+                const userPhone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+                if (humanTakeoverUsers.has(userPhone)) {
+                    console.log(`🔒 [Business Hub] User +${userPhone} is flagged for HUMAN TAKEOVER. Skipping AI routing.`);
+                    continue; // Admin handles this user manually now
+                }
+
                 const bizHubRequest = findBusinessHubRequest(senderJid);
                 if (bizHubRequest) {
                     console.log(`🤖 [Business Hub] Routing reply from +${senderJid.replace('@s.whatsapp.net', '')} to Gemini AI intake engine...`);
@@ -931,29 +1071,93 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
 
                 console.log(`📸 Screenshot captured from candidate: ${senderJid} for group: ${pendingRequest.groupJid}`);
 
-                if (pendingApprovals.has(senderJid)) {
-                    const pending = pendingApprovals.get(senderJid);
-                    pending.screenshotCount += 1;
-                    clearTimeout(pending.timer);
+                // Initialize verification tracker for this user if not exists
+                if (!pendingVerifications.has(senderJid)) {
+                    pendingVerifications.set(senderJid, { tiktok: false, social: false, channel: false, screenshotCount: 0 });
+                }
+                const verification = pendingVerifications.get(senderJid);
+                verification.screenshotCount += 1;
 
-                    if (pending.screenshotCount >= 2) {
-                        pending.timer = setTimeout(async () => {
-                            pendingApprovals.delete(senderJid);
-                            await executeApproval(senderJid, pendingRequest.groupJid, pendingRequest.key);
-                        }, 2000); // 2 seconds safety buffer for additional files
+                // Attempt Gemini Vision verification on the screenshot
+                let geminiResult = null;
+                try {
+                    const imageMsg = messageContent?.imageMessage || messageContent?.documentMessage;
+                    if (imageMsg) {
+                        const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                        const mime = imageMsg.mimetype || 'image/jpeg';
+                        geminiResult = await verifyScreenshotWithGemini(buffer, mime);
+                    }
+                } catch (dlErr) {
+                    console.error('❌ [Gemini Vision] Failed to download/analyze image:', dlErr.message || dlErr);
+                }
+
+                if (geminiResult) {
+                    // Merge Gemini results into cumulative tracker
+                    if (geminiResult.tiktok) verification.tiktok = true;
+                    if (geminiResult.social) verification.social = true;
+                    if (geminiResult.channel) verification.channel = true;
+
+                    console.log(`🔍 [Verification] User +${senderJid.replace(/[^0-9]/g, '')} status: TikTok=${verification.tiktok}, Social=${verification.social}, Channel=${verification.channel} (${verification.screenshotCount} screenshots)`);
+
+                    // Check if all tasks are verified
+                    const allVerified = verification.tiktok && verification.social && verification.channel;
+
+                    if (allVerified) {
+                        pendingVerifications.delete(senderJid);
+                        pendingApprovals.delete(senderJid);
+                        await executeApproval(senderJid, pendingRequest.groupJid, pendingRequest.key);
+                        continue;
+                    }
+
+                    // Build list of remaining tasks
+                    const remaining = [];
+                    if (!verification.tiktok) remaining.push('TikTok follow');
+                    if (!verification.social) remaining.push('Facebook/Instagram follow');
+                    if (!verification.channel) remaining.push('WhatsApp Channel join');
+
+                    // Clear any existing timer and set a nudge for missing tasks
+                    if (pendingApprovals.has(senderJid)) {
+                        clearTimeout(pendingApprovals.get(senderJid).timer);
+                    }
+                    const entry = pendingApprovals.get(senderJid) || { screenshotCount: verification.screenshotCount, timer: null };
+                    entry.screenshotCount = verification.screenshotCount;
+                    entry.timer = setTimeout(async () => {
+                        console.log(`⚠️ [Gemini Vision] Nudging user +${senderJid.replace(/[^0-9]/g, '')} for missing: ${remaining.join(', ')}`);
+                        await sendAntiBanMessage(sock, senderJid, {
+                            text: `⚠️ *GATEKEEPER NOTICE* ⚠️\n\n{Thanks for the screenshot|We received your screenshot}! However, we still need proof of the following:\n\n${remaining.map(t => `• ${t}`).join('\n')}\n\nPlease send {a screenshot|screenshot proof} for each remaining task so we can approve you! 📸✨`
+                        });
+                    }, 20000);
+                    pendingApprovals.set(senderJid, entry);
+
+                } else {
+                    // FALLBACK: Gemini unavailable — use legacy count-based approval (≥ 2 screenshots)
+                    console.log(`⚠️ [Fallback] Gemini Vision unavailable. Using count-based approval (${verification.screenshotCount}/2).`);
+
+                    if (pendingApprovals.has(senderJid)) {
+                        const pending = pendingApprovals.get(senderJid);
+                        pending.screenshotCount = verification.screenshotCount;
+                        clearTimeout(pending.timer);
+
+                        if (pending.screenshotCount >= 2) {
+                            pending.timer = setTimeout(async () => {
+                                pendingApprovals.delete(senderJid);
+                                pendingVerifications.delete(senderJid);
+                                await executeApproval(senderJid, pendingRequest.groupJid, pendingRequest.key);
+                            }, 2000);
+                        } else {
+                            pending.timer = setTimeout(async () => {
+                                pending.timer = null;
+                                await sendReminderNudge(senderJid);
+                            }, 25000);
+                        }
                     } else {
-                        pending.timer = setTimeout(async () => {
-                            pending.timer = null;
+                        const entry = { screenshotCount: 1, timer: null };
+                        pendingApprovals.set(senderJid, entry);
+                        entry.timer = setTimeout(async () => {
+                            entry.timer = null;
                             await sendReminderNudge(senderJid);
                         }, 25000);
                     }
-                } else {
-                    const entry = { screenshotCount: 1, timer: null };
-                    pendingApprovals.set(senderJid, entry);
-                    entry.timer = setTimeout(async () => {
-                        entry.timer = null;
-                        await sendReminderNudge(senderJid);
-                    }, 25000);
                 }
             }
         }
@@ -1076,6 +1280,50 @@ const recoverAllSessions = async () => {
 // Trigger boot-up sync
 recoverAllSessions().catch(e => console.error("❌ Recovery sequence failed:", e));
 
+// ==========================================
+// 🧹 24-HOUR REGISTRY PRUNING CRON
+// ==========================================
+// Automatically clean stale 'pending' registry entries older than 72 hours
+
+const pruneStaleRegistryEntries = async () => {
+    console.log('🧹 [Pruning] Running 24-hour registry cleanup...');
+    const registry = loadRegistry();
+    const now = Date.now();
+    const STALE_THRESHOLD = 72 * 60 * 60 * 1000; // 72 hours in ms
+    let pruneCount = 0;
+
+    for (const [key, entry] of Object.entries(registry)) {
+        if (entry.status === 'pending' && entry.timestamp) {
+            const entryAge = now - new Date(entry.timestamp).getTime();
+            if (entryAge > STALE_THRESHOLD) {
+                console.log(`🧹 [Pruning] Deleting stale entry: ${key} (age: ${Math.round(entryAge / 3600000)}h)`);
+                delete registry[key];
+                pruneCount++;
+
+                // Also clean from Supabase
+                if (supabase) {
+                    try {
+                        await supabase.from('gatekeeper_registry').delete().eq('key', key);
+                    } catch (e) {
+                        console.error(`❌ [Pruning] Failed to delete cloud key ${key}:`, e.message);
+                    }
+                }
+            }
+        }
+    }
+
+    if (pruneCount > 0) {
+        saveRegistry(registry);
+        console.log(`🧹 [Pruning] Cleaned ${pruneCount} stale registry entries.`);
+    } else {
+        console.log('🧹 [Pruning] No stale entries found. Registry is clean.');
+    }
+};
+
+// Run pruning every 24 hours
+setInterval(pruneStaleRegistryEntries, 24 * 60 * 60 * 1000);
+// Also run once on boot after a short delay
+setTimeout(pruneStaleRegistryEntries, 30000);
 
 // ==========================================
 // 🌐 EXPRESS WEB PORTAL REST API
