@@ -264,6 +264,29 @@ const triggerSessionBackup = (phone, adminName, selectedGroups, discoveredGroups
     }, 5000); // 5 seconds debounce
 };
 
+// Detect if a group name is TN Winneba Business Hub
+const isBusinessHubGroup = (groupName) => {
+    const name = (groupName || '').toLowerCase();
+    return name.includes('winneba business hub') || name.includes('winneba business');
+};
+
+// Helper: Check if a group JID belongs to a Business Hub group dynamically using admin session meta
+const isGroupJidBusinessHub = (groupJid, adminPhone) => {
+    if (!groupJid) return false;
+    const cleanPhone = (adminPhone || '').replace(/[^0-9]/g, '');
+    if (!cleanPhone) return false;
+    
+    const meta = loadSessionMeta();
+    const adminMeta = meta[cleanPhone];
+    if (adminMeta && adminMeta.discoveredGroups) {
+        const group = adminMeta.discoveredGroups.find(g => g.jid === groupJid);
+        if (group && isBusinessHubGroup(group.subject)) {
+            return true;
+        }
+    }
+    return false;
+};
+
 // ==========================================
 // 🔍 PENDING REQUEST RESOLVER
 // ==========================================
@@ -273,9 +296,11 @@ const findPendingRequest = (senderJid) => {
     
     for (const key of Object.keys(registry)) {
         const entry = registry[key];
-        // Only match standard screenshot-flow entries (not business hub)
-        if (key.includes(cleanSender) && entry.groupType !== 'business_hub' && entry.status !== 'approved') {
-            return { key, ...entry };
+        if (key.includes(cleanSender) && entry.status !== 'approved') {
+            const isBizHub = entry.groupType === 'business_hub' || isGroupJidBusinessHub(entry.groupJid, entry.phone);
+            if (!isBizHub) {
+                return { key, ...entry };
+            }
         }
     }
     return null;
@@ -287,17 +312,14 @@ const findBusinessHubRequest = (senderJid) => {
     const cleanSender = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
     for (const key of Object.keys(registry)) {
         const entry = registry[key];
-        if (key.includes(cleanSender) && entry.groupType === 'business_hub' && entry.status !== 'interview_complete') {
-            return { key, ...entry };
+        if (key.includes(cleanSender) && entry.status !== 'interview_complete') {
+            const isBizHub = entry.groupType === 'business_hub' || isGroupJidBusinessHub(entry.groupJid, entry.phone);
+            if (isBizHub) {
+                return { key, ...entry };
+            }
         }
     }
     return null;
-};
-
-// Detect if a group name is TN Winneba Business Hub
-const isBusinessHubGroup = (groupName) => {
-    const name = (groupName || '').toLowerCase();
-    return name.includes('winneba business hub') || name.includes('winneba business');
 };
 
 // ==========================================
