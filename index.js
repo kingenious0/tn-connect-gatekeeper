@@ -128,7 +128,7 @@ Escalation Rule:
 // gemini-2.5-flash-lite: 15 RPM, 1000 RPD free — fast, lightweight, ideal for conversational intake
 const geminiClient = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 const geminiModel = geminiClient ? geminiClient.getGenerativeModel({
-    model: 'gemini-2.5-flash-lite-preview-06-17',
+    model: 'gemini-2.5-flash-lite',
     systemInstruction: BUSINESS_HUB_SYSTEM_PROMPT
 }) : null;
 
@@ -423,7 +423,7 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
 
     try {
         const modelInstance = geminiClient.getGenerativeModel({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-2.5-flash-lite',
             systemInstruction: dynamicInstruction
         });
         const chat = modelInstance.startChat({ history });
@@ -506,8 +506,8 @@ Set true ONLY if you can clearly see evidence of that specific action being comp
 const verifyScreenshotWithGemini = async (imageBuffer, mimeType = 'image/jpeg') => {
     if (!geminiClient) return null;
     try {
-        // gemini-2.5-flash-lite for vision: 15 RPM, 1000 RPD free — fast, lightweight, multimodal
-        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash-lite-preview-06-17' });
+        // gemini-2.5-flash-lite: 15 RPM, 1000 RPD free — covers both chat and vision tasks
+        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
         const imagePart = {
             inlineData: {
                 data: imageBuffer.toString('base64'),
