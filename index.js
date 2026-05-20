@@ -1,3 +1,4 @@
+// Version 1.3.1 - Active Production Build with Anti-Ban and Supabase Sync
 require('dotenv').config();
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, delay } = require('@whiskeysockets/baileys');
 
