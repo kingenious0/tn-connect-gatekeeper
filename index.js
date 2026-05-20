@@ -90,13 +90,32 @@ We are viewing chats before approving. If we get to your chat twice and you’ve
 
 SEND ME SCREENSHOTS WHEN DONE`;
 
-// Business Hub intro DM (Version B — named admin + role + double-text check)
-const BUSINESS_HUB_INTRO_MESSAGE = (adminName, adminRole) =>
-`{Hello|Hi|Greetings}, thanks for requesting to join TN Winneba Business Hub. I'm ${adminName} 📌, ${adminRole || 'Admin'} of TN Uni Connect.
-
-{Has any of our admins texted you already? If yes, please reply with the admin's name.|Has an admin contacted you already? If so, kindly reply with their name.}
-
-If not, kindly tell us a little about yourself, your business, and where you are located in Winneba. {Anything we need to know before you are approved.|Any relevant details we need to know before your approval.}`;
+// Business Hub intro DM — dynamic variations to avoid WhatsApp spam detection
+// The bot introduces itself as an "intake assistant" (NOT a bot) for TN Uni Connect
+const BUSINESS_HUB_INTRO_MESSAGE = (adminName, adminRole) => {
+    const greetings = ['Hello', 'Hi there', 'Hey', 'Good day', 'Greetings'];
+    const intros = [
+        `I'm the intake assistant working with ${adminName}, ${adminRole || 'Admin'} of TN Uni Connect`,
+        `I assist ${adminName} (${adminRole || 'Admin'}, TN Uni Connect) with processing new applications`,
+        `I handle intake coordination on behalf of ${adminName}, ${adminRole || 'Admin'} at TN Uni Connect`,
+        `I work closely with ${adminName} (${adminRole || 'Admin'} of TN Uni Connect) to screen and welcome new members`,
+    ];
+    const checks = [
+        'Has any of our team reached out to you already? If yes, just let me know their name.',
+        'Has an admin already contacted you about this? If so, kindly share their name.',
+        'Have you been contacted by one of our admins yet? If yes, reply with their name.',
+    ];
+    const prompts = [
+        `If not, could you share a bit about yourself and your business? We'd love to know what you do and where you're based in Winneba.`,
+        `If no one has reached out yet, tell us a little about yourself — your business name, what you do, and your location in Winneba.`,
+        `If not, kindly introduce yourself — what's your business about and where are you located in Winneba?`,
+    ];
+    const g = greetings[Math.floor(Math.random() * greetings.length)];
+    const i = intros[Math.floor(Math.random() * intros.length)];
+    const c = checks[Math.floor(Math.random() * checks.length)];
+    const p = prompts[Math.floor(Math.random() * prompts.length)];
+    return `${g}, thanks for requesting to join TN Winneba Business Hub 💼. ${i}.\n\n${c}\n\n${p}`;
+};
 
 // Gemini AI system prompt — acts as a professional business intake coordinator
 const BUSINESS_HUB_SYSTEM_PROMPT = `You are a sharp, professional business intake coordinator for TN Winneba Business Hub — an exclusive networking community for serious business owners in Winneba, Ghana. You represent the TN Uni Connect admin team.
@@ -124,13 +143,20 @@ Style Rules:
 - Never reveal you are an AI
 - If someone gives a vague or off-topic reply, redirect sharply but politely in one line
 - Never ask all questions at once
+- Variation Rule: Always change your phrasing for every new user and every turn. Use synonyms for questions like "What is your business name?", "What do you do?", "Where are you located?". NEVER repeat the same greeting or question structure across different conversations.
 
 Completion (when ALL points collected and residency approved):
 First send a warm, professional closing message (2-3 lines max) telling them their application is received and an admin will review it. Then on a NEW LINE add this exact marker followed immediately by a valid JSON object (no space):
 [INTAKE_COMPLETE]{"name":"...","businessName":"...","businessType":"...","location":"...","services":"...","partnerships":"...","benefit":"...","resident":"...","canAttend":"..."}
 
 Escalation Rule:
-- If the applicant is hostile, threatening, deeply confused, or explicitly asks for a real person for 2+ consecutive turns, append [TRIGGER_HUMAN] at the very end of your reply. Stay polite in your visible message.`;
+- If the applicant is hostile, threatening, deeply confused, or explicitly asks for a real person for 2+ consecutive turns, append [TRIGGER_HUMAN] at the very end of your reply. Stay polite in your visible message.
+
+Anti-Spam Variation Rule (CRITICAL for WhatsApp compliance):
+- NEVER use the exact same wording twice across different conversations
+- Vary your phrasing by ~20% each time — use synonyms, rearrange sentence structure, change greeting style
+- This prevents WhatsApp from flagging identical bulk messages as spam
+- Example: Instead of always saying "What's your business name?" — alternate with "Tell me about your business", "What do you do professionally?", "What's the name of your venture?" etc.`;
 
 
 // Gemini client + model initialization
@@ -994,13 +1020,13 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                     if (matchedGroup) groupName = matchedGroup.subject;
                 }
                 
-                console.log(`🚶 Member +${participant.replace(/[^0-9]/g, '')} left group ${groupName} (${groupJid})`);
+                console.log(`🚶 Member ${participant} left group ${groupName} (${groupJid})`);
                 
                 // Clear their approved/pending logs from registry & Supabase so they can re-join cleanly!
                 const registryKey = `${groupJid}_${participant.replace('@s.whatsapp.net', '').replace('@lid', '')}`;
                 const registry = loadRegistry();
                 if (registry[registryKey]) {
-                    console.log(`🗑️ [Retention] Wiping registry entry for +${participant.replace(/[^0-9]/g, '')} to reset re-join approval status.`);
+                    console.log(`🗑️ [Retention] Wiping registry entry for ${participant} to reset re-join approval status.`);
                     delete registry[registryKey];
                     saveRegistry(registry);
                     
@@ -1014,8 +1040,11 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                     }
                 }
 
-                // Route departure alert to Admin Alerts Group
-                const alertText = `⚠️ *[Departure Alert]* ⚠️\n\nMember +${participant.split('@')[0]} has left or been removed from *${groupName}*.\n\nTheir verification lock has been wiped so they can re-join and verify again if needed.`;
+                // Handle @lid JIDs — LID numbers aren't phone numbers, label them accordingly
+                const rawId = participant.split('@')[0];
+                const isLid = participant.endsWith('@lid');
+                const displayNumber = isLid ? `LID:${rawId} (phone number hidden by WhatsApp)` : `+${rawId}`;
+                const alertText = `⚠️ *[Departure Alert]* ⚠️\n\nMember ${displayNumber} has left or been removed from *${groupName}*.\n\nTheir verification lock has been wiped so they can re-join and verify again if needed.`;
                 await sendAdminAlert(sock, alertText);
 
                 // 🚪 SAFE DEPARTURE NUDGE (Disabled by default — flip ENABLE_DEPARTURE_NUDGE to true)

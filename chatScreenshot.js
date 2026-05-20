@@ -6,12 +6,30 @@
  * Falls back gracefully — if canvas fails, returns null (caller sends text instead).
  */
 
-let createCanvas;
+let createCanvas, GlobalFonts;
 try {
-    ({ createCanvas } = require('@napi-rs/canvas'));
+    ({ createCanvas, GlobalFonts } = require('@napi-rs/canvas'));
 } catch (e) {
     console.warn('⚠️ [Screenshot] @napi-rs/canvas not available. Chat screenshots disabled.');
     createCanvas = null;
+}
+
+// Register bundled Inter font (required for Render Linux which has no system fonts)
+const path = require('path');
+const fs = require('fs');
+
+if (GlobalFonts) {
+    const fontPaths = [
+        path.join(__dirname, 'fonts', 'Inter.otf'),
+        path.join(__dirname, 'fonts', 'Inter.ttf'),
+    ];
+    for (const fp of fontPaths) {
+        if (fs.existsSync(fp)) {
+            GlobalFonts.registerFromPath(fp, 'Inter');
+            console.log(`🔤 [Screenshot] Registered font: ${fp}`);
+            break;
+        }
+    }
 }
 
 // WhatsApp Dark Theme Colors
@@ -20,40 +38,49 @@ const COLORS = {
     headerBg: '#1f2c34',     // Header bar
     headerText: '#e9edef',   // Header name
     headerSub: '#8696a0',    // Header subtitle
-    bubbleOut: '#005c4b',    // Outgoing bubble (green)
-    bubbleIn: '#1f2c34',     // Incoming bubble (dark)
+    bubbleOut: '#005c4b',    // Outgoing bubble (green — user/applicant)
+    bubbleIn: '#1f2c34',     // Incoming bubble (dark — bot/assistant)
     textOut: '#e9edef',      // Outgoing text
     textIn: '#e9edef',       // Incoming text
     timestamp: '#8696a0',    // Timestamp text
-    divider: '#182229',      // Divider lines
     icon: '#00a884',         // WhatsApp green accent
 };
 
-// Font config (system fonts that exist everywhere)
-const FONT_MAIN = '14px sans-serif';
-const FONT_HEADER = 'bold 16px sans-serif';
-const FONT_SUB = '12px sans-serif';
-const FONT_TIME = '11px sans-serif';
+// Font config — use Inter if registered, fallback to sans-serif
+const FONT_FAMILY = 'Inter, sans-serif';
+const FONT_MAIN = `14px ${FONT_FAMILY}`;
+const FONT_HEADER = `bold 16px ${FONT_FAMILY}`;
+const FONT_SUB = `12px ${FONT_FAMILY}`;
+const FONT_TIME = `11px ${FONT_FAMILY}`;
 
 /**
- * Wrap text to fit within a given pixel width
+ * Wrap text to fit within a given pixel width, handling newlines
  */
 function wrapText(ctx, text, maxWidth) {
-    const words = text.split(' ');
     const lines = [];
-    let currentLine = '';
-
-    for (const word of words) {
-        const testLine = currentLine ? `${currentLine} ${word}` : word;
-        const metrics = ctx.measureText(testLine);
-        if (metrics.width > maxWidth && currentLine) {
-            lines.push(currentLine);
-            currentLine = word;
-        } else {
-            currentLine = testLine;
+    // Split by newlines first
+    const paragraphs = text.split('\n');
+    
+    for (const paragraph of paragraphs) {
+        if (paragraph.trim() === '') {
+            lines.push('');
+            continue;
         }
+        const words = paragraph.split(' ');
+        let currentLine = '';
+
+        for (const word of words) {
+            const testLine = currentLine ? `${currentLine} ${word}` : word;
+            const metrics = ctx.measureText(testLine);
+            if (metrics.width > maxWidth && currentLine) {
+                lines.push(currentLine);
+                currentLine = word;
+            } else {
+                currentLine = testLine;
+            }
+        }
+        if (currentLine) lines.push(currentLine);
     }
-    if (currentLine) lines.push(currentLine);
     return lines;
 }
 
@@ -66,18 +93,37 @@ function wrapText(ctx, text, maxWidth) {
  */
 function generateChatScreenshot(history, contactName, subtitle = 'Business Hub Applicant') {
     if (!createCanvas) return null;
+    if (!history || history.length === 0) return null;
 
     try {
         const WIDTH = 420;
-        const BUBBLE_MAX_WIDTH = 280;
+        const BUBBLE_MAX_WIDTH = 290;
         const PADDING = 14;
-        const BUBBLE_PADDING = 10;
-        const LINE_HEIGHT = 20;
+        const BUBBLE_PADDING_H = 12;
+        const BUBBLE_PADDING_V = 8;
+        const LINE_HEIGHT = 19;
         const BUBBLE_GAP = 6;
         const HEADER_HEIGHT = 60;
+        const TIME_ROW_HEIGHT = 18;
+
+        // Clean conversation entries — strip markers
+        const cleanEntries = [];
+        for (const entry of history) {
+            let text = (entry.parts?.[0]?.text || '')
+                .replace(/\[INTAKE_COMPLETE\].*/s, '')
+                .replace(/\[RESIDENT_DECLINED\]/g, '')
+                .replace(/\[TRIGGER_HUMAN\]/g, '')
+                .trim();
+            if (!text) continue;
+            // Cap individual messages to 500 chars for readability
+            if (text.length > 500) text = text.substring(0, 497) + '...';
+            cleanEntries.push({ role: entry.role, text });
+        }
+
+        if (cleanEntries.length === 0) return null;
 
         // =============================================
-        // PASS 1: Calculate total height needed
+        // PASS 1: Measure all bubbles to calculate total height
         // =============================================
         const tempCanvas = createCanvas(WIDTH, 100);
         const tempCtx = tempCanvas.getContext('2d');
@@ -85,21 +131,14 @@ function generateChatScreenshot(history, contactName, subtitle = 'Business Hub A
 
         let totalHeight = HEADER_HEIGHT + 20; // header + top padding
 
-        for (const entry of history) {
-            const text = (entry.parts?.[0]?.text || '')
-                .replace(/\[INTAKE_COMPLETE\].*/s, '')
-                .replace(/\[RESIDENT_DECLINED\]/g, '')
-                .replace(/\[TRIGGER_HUMAN\]/g, '')
-                .trim();
-            if (!text) continue;
-
-            const lines = wrapText(tempCtx, text, BUBBLE_MAX_WIDTH - BUBBLE_PADDING * 2);
-            const bubbleHeight = lines.length * LINE_HEIGHT + BUBBLE_PADDING * 2 + 16; // +16 for timestamp
+        for (const entry of cleanEntries) {
+            const lines = wrapText(tempCtx, entry.text, BUBBLE_MAX_WIDTH - BUBBLE_PADDING_H * 2);
+            const bubbleHeight = lines.length * LINE_HEIGHT + BUBBLE_PADDING_V * 2 + TIME_ROW_HEIGHT;
             totalHeight += bubbleHeight + BUBBLE_GAP;
         }
 
         totalHeight += 20; // bottom padding
-        totalHeight = Math.min(totalHeight, 4000); // cap image height
+        totalHeight = Math.min(totalHeight, 5000); // cap image height
 
         // =============================================
         // PASS 2: Draw the actual image
@@ -115,76 +154,81 @@ function generateChatScreenshot(history, contactName, subtitle = 'Business Hub A
         ctx.fillStyle = COLORS.headerBg;
         ctx.fillRect(0, 0, WIDTH, HEADER_HEIGHT);
 
+        // Back arrow
+        ctx.fillStyle = COLORS.headerSub;
+        ctx.font = `18px ${FONT_FAMILY}`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('←', 12, HEADER_HEIGHT / 2);
+
         // Profile circle
         ctx.beginPath();
-        ctx.arc(36, HEADER_HEIGHT / 2, 20, 0, Math.PI * 2);
-        ctx.fillStyle = COLORS.icon;
+        ctx.arc(52, HEADER_HEIGHT / 2, 19, 0, Math.PI * 2);
+        ctx.fillStyle = '#2a3942';
         ctx.fill();
 
-        // Profile initial
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 18px sans-serif';
+        // Profile icon (person silhouette placeholder)
+        ctx.fillStyle = '#8696a0';
+        ctx.font = `bold 16px ${FONT_FAMILY}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText((contactName || '?')[0].toUpperCase(), 36, HEADER_HEIGHT / 2);
+        const initial = (contactName || '?').replace('+', '')[0];
+        ctx.fillText(initial || '?', 52, HEADER_HEIGHT / 2);
 
         // Contact name
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
         ctx.fillStyle = COLORS.headerText;
         ctx.font = FONT_HEADER;
-        ctx.fillText(contactName || 'Unknown', 66, 14);
+        const displayName = contactName.length > 25 ? contactName.substring(0, 22) + '...' : contactName;
+        ctx.fillText(displayName, 80, 13);
 
         // Subtitle
         ctx.fillStyle = COLORS.headerSub;
         ctx.font = FONT_SUB;
-        ctx.fillText(subtitle, 66, 36);
+        ctx.fillText(subtitle, 80, 35);
 
         // ---- Chat Bubbles ----
         let y = HEADER_HEIGHT + 14;
-        ctx.font = FONT_MAIN;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
 
         const now = new Date();
-        let minuteOffset = history.length * 2;
+        let minuteOffset = cleanEntries.length * 3;
 
-        for (const entry of history) {
+        for (const entry of cleanEntries) {
             const isUser = entry.role === 'user';
-            const text = (entry.parts?.[0]?.text || '')
-                .replace(/\[INTAKE_COMPLETE\].*/s, '')
-                .replace(/\[RESIDENT_DECLINED\]/g, '')
-                .replace(/\[TRIGGER_HUMAN\]/g, '')
-                .trim();
-            if (!text) continue;
 
-            const lines = wrapText(ctx, text, BUBBLE_MAX_WIDTH - BUBBLE_PADDING * 2);
-            const bubbleHeight = lines.length * LINE_HEIGHT + BUBBLE_PADDING * 2 + 16;
+            ctx.font = FONT_MAIN;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
 
-            // Calculate bubble width based on longest line
+            const lines = wrapText(ctx, entry.text, BUBBLE_MAX_WIDTH - BUBBLE_PADDING_H * 2);
+            const bubbleContentHeight = lines.length * LINE_HEIGHT;
+            const bubbleHeight = bubbleContentHeight + BUBBLE_PADDING_V * 2 + TIME_ROW_HEIGHT;
+
+            // Calculate bubble width based on longest line (min 100px)
             let maxLineWidth = 0;
             for (const line of lines) {
                 const w = ctx.measureText(line).width;
                 if (w > maxLineWidth) maxLineWidth = w;
             }
-            const bubbleWidth = Math.min(maxLineWidth + BUBBLE_PADDING * 2 + 10, BUBBLE_MAX_WIDTH);
+            const bubbleWidth = Math.max(Math.min(maxLineWidth + BUBBLE_PADDING_H * 2 + 14, BUBBLE_MAX_WIDTH), 100);
 
-            // Position: user on right, bot on left
+            // Position: user (applicant) on right, bot on left
             const x = isUser ? WIDTH - bubbleWidth - PADDING : PADDING;
 
             // Draw bubble with rounded corners
-            const radius = 10;
+            const r = 8;
             ctx.fillStyle = isUser ? COLORS.bubbleOut : COLORS.bubbleIn;
             ctx.beginPath();
-            ctx.moveTo(x + radius, y);
-            ctx.lineTo(x + bubbleWidth - radius, y);
-            ctx.quadraticCurveTo(x + bubbleWidth, y, x + bubbleWidth, y + radius);
-            ctx.lineTo(x + bubbleWidth, y + bubbleHeight - radius);
-            ctx.quadraticCurveTo(x + bubbleWidth, y + bubbleHeight, x + bubbleWidth - radius, y + bubbleHeight);
-            ctx.lineTo(x + radius, y + bubbleHeight);
-            ctx.quadraticCurveTo(x, y + bubbleHeight, x, y + bubbleHeight - radius);
-            ctx.lineTo(x, y + radius);
-            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + bubbleWidth - r, y);
+            ctx.arcTo(x + bubbleWidth, y, x + bubbleWidth, y + r, r);
+            ctx.lineTo(x + bubbleWidth, y + bubbleHeight - r);
+            ctx.arcTo(x + bubbleWidth, y + bubbleHeight, x + bubbleWidth - r, y + bubbleHeight, r);
+            ctx.lineTo(x + r, y + bubbleHeight);
+            ctx.arcTo(x, y + bubbleHeight, x, y + bubbleHeight - r, r);
+            ctx.lineTo(x, y + r);
+            ctx.arcTo(x, y, x + r, y, r);
             ctx.closePath();
             ctx.fill();
 
@@ -192,22 +236,23 @@ function generateChatScreenshot(history, contactName, subtitle = 'Business Hub A
             ctx.fillStyle = isUser ? COLORS.textOut : COLORS.textIn;
             ctx.font = FONT_MAIN;
             for (let i = 0; i < lines.length; i++) {
-                ctx.fillText(lines[i], x + BUBBLE_PADDING, y + BUBBLE_PADDING + i * LINE_HEIGHT);
+                ctx.fillText(lines[i], x + BUBBLE_PADDING_H, y + BUBBLE_PADDING_V + i * LINE_HEIGHT);
             }
 
-            // Timestamp
-            minuteOffset -= 2;
-            const msgTime = new Date(now.getTime() - minuteOffset * 60000);
+            // Timestamp row (bottom-right of bubble)
+            minuteOffset -= 3;
+            const msgTime = new Date(now.getTime() - Math.max(minuteOffset, 0) * 60000);
             const timeStr = msgTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+            
             ctx.fillStyle = COLORS.timestamp;
             ctx.font = FONT_TIME;
-            ctx.fillText(timeStr, x + bubbleWidth - 46, y + bubbleHeight - 16);
-
-            // Double check mark for outgoing
+            
+            // Check marks for user messages
             if (isUser) {
-                ctx.fillStyle = '#53bdeb';
-                ctx.font = '10px sans-serif';
-                ctx.fillText('✓✓', x + bubbleWidth - 18, y + bubbleHeight - 16);
+                const checkAndTime = `${timeStr}  ✓✓`;
+                ctx.fillText(checkAndTime, x + bubbleWidth - ctx.measureText(checkAndTime).width - 8, y + bubbleHeight - TIME_ROW_HEIGHT + 2);
+            } else {
+                ctx.fillText(timeStr, x + bubbleWidth - ctx.measureText(timeStr).width - 8, y + bubbleHeight - TIME_ROW_HEIGHT + 2);
             }
 
             y += bubbleHeight + BUBBLE_GAP;
