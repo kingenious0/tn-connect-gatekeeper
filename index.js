@@ -818,6 +818,18 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
         const groupJid = anu.id;
         const action = anu.action;
 
+    // 🔄 AUTO-RESCAN: Also fires when bot creates a group (groups.upsert catches group creation)
+    sock.ev.on('groups.upsert', async (newGroups) => {
+        console.log(`🔄 [Auto-Rescan] New group(s) detected via groups.upsert. Re-scanning in 5s...`);
+        setTimeout(async () => {
+            try {
+                await discoverTNGroups(sock, cleanPhone);
+            } catch (e) {
+                console.error('❌ [Auto-Rescan] Failed:', e.message || e);
+            }
+        }, 5000);
+    });
+
         // 🔄 AUTO-RESCAN: When the bot is added to a new group, re-discover all groups
         if (action === 'add') {
             const botJid = sock.user?.id ? (sock.user.id.split(':')[0] + '@s.whatsapp.net') : null;
