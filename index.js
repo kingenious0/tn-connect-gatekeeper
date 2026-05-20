@@ -125,9 +125,10 @@ Escalation Rule:
 - If the applicant sends hostile, threatening, deeply confusing, or completely off-topic messages for 2 or more consecutive turns, OR if they explicitly ask to speak with a real person or admin, add the marker [TRIGGER_HUMAN] at the very end of your reply (after your message text). Continue being polite in your visible reply.`;
 
 // Gemini client + model initialization
+// gemini-2.5-flash-lite: 15 RPM, 1000 RPD free — fast, lightweight, ideal for conversational intake
 const geminiClient = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 const geminiModel = geminiClient ? geminiClient.getGenerativeModel({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-2.5-flash-lite-preview-06-17',
     systemInstruction: BUSINESS_HUB_SYSTEM_PROMPT
 }) : null;
 
@@ -505,7 +506,8 @@ Set true ONLY if you can clearly see evidence of that specific action being comp
 const verifyScreenshotWithGemini = async (imageBuffer, mimeType = 'image/jpeg') => {
     if (!geminiClient) return null;
     try {
-        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        // gemini-1.5-flash for vision: 1,500 free RPD — best free-tier multimodal model
+        const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash' });
         const imagePart = {
             inlineData: {
                 data: imageBuffer.toString('base64'),
@@ -990,8 +992,17 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
             }
         };
 
+        // Approval mutex — prevents race conditions when 2 screenshots arrive simultaneously
+        const approvalInProgress = new Set();
+
         // Helper: execute dynamic entry approval
         const executeApproval = async (jid, targetGroupJid, registryKey) => {
+            // Mutex check — if already approving this user, skip duplicate call
+            if (approvalInProgress.has(jid)) {
+                console.log(`🔒 [Approval] Already processing approval for ${jid}. Skipping duplicate.`);
+                return;
+            }
+            approvalInProgress.add(jid);
             console.log(`🔓 Criteria verified! Approving ${jid} into group ${targetGroupJid}`);
             
             await sock.sendPresenceUpdate('composing', jid);
@@ -1014,7 +1025,21 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                     await saveRegistryItem(registryKey, registry[registryKey]);
                 }
             } catch (err) {
-                console.error("❌ Action failed or user already approved:", err);
+                // internal-server-error usually means WhatsApp already processed the request
+                // (user was manually approved or request expired) — not a real failure
+                if (err.message && err.message.includes('internal-server-error')) {
+                    console.log(`⚠️ [Approval] WhatsApp returned internal-server-error for ${jid}. User may already be approved or request expired.`);
+                    // Still mark as approved in registry to prevent re-processing
+                    const registry = loadRegistry();
+                    if (registry[registryKey]) {
+                        registry[registryKey].status = 'approved';
+                        await saveRegistryItem(registryKey, registry[registryKey]);
+                    }
+                } else {
+                    console.error(`❌ [Approval] Failed for ${jid}:`, err.message || err);
+                }
+            } finally {
+                approvalInProgress.delete(jid);
             }
         };
 
