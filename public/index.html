@@ -437,181 +437,26 @@
 </head>
 <body>
 
-<!-- ============================================================ -->
-<!-- 🔒 SYSTEM LOCKDOWN OVERLAY — Remove this block to unlock     -->
-<!-- ============================================================ -->
-<style>
-    #lockdown-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 99999;
-        background: #0b0f19;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-direction: column;
-        gap: 0;
-        overflow: hidden;
-    }
-
-    #lockdown-overlay::before {
-        content: '';
-        position: absolute;
-        width: 600px;
-        height: 600px;
-        background: radial-gradient(circle, rgba(37,211,102,0.07) 0%, transparent 70%);
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        animation: lockPulse 4s ease-in-out infinite;
-        pointer-events: none;
-    }
-
-    @keyframes lockPulse {
-        0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.6; }
-        50% { transform: translate(-50%, -50%) scale(1.3); opacity: 1; }
-    }
-
-    @keyframes lockSlideUp {
-        from { opacity: 0; transform: translateY(30px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes lockSpin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-
-    @keyframes lockBlink {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.3; }
-    }
-
-    .lockdown-card {
-        position: relative;
-        z-index: 1;
-        background: rgba(17, 24, 39, 0.85);
-        border: 1px solid rgba(37, 211, 102, 0.2);
-        border-radius: 28px;
-        padding: 60px 55px;
-        max-width: 520px;
-        width: 90%;
-        text-align: center;
-        backdrop-filter: blur(20px);
-        box-shadow: 0 0 60px rgba(37,211,102,0.08), 0 30px 80px rgba(0,0,0,0.5);
-        animation: lockSlideUp 0.8s ease-out forwards;
-    }
-
-    .lockdown-icon {
-        font-size: 64px;
-        margin-bottom: 24px;
-        display: block;
-        animation: lockBlink 2.5s ease-in-out infinite;
-    }
-
-    .lockdown-spinner {
-        width: 52px;
-        height: 52px;
-        border: 3px solid rgba(37,211,102,0.15);
-        border-top: 3px solid #25D366;
-        border-radius: 50%;
-        animation: lockSpin 1s linear infinite;
-        margin: 0 auto 28px auto;
-    }
-
-    .lockdown-title {
-        font-family: 'Outfit', sans-serif;
-        font-size: 1.75rem;
-        font-weight: 800;
-        background: linear-gradient(135deg, #25D366 0%, #3b82f6 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 14px;
-        letter-spacing: -0.5px;
-    }
-
-    .lockdown-subtitle {
-        font-family: 'Outfit', sans-serif;
-        color: #9ca3af;
-        font-size: 0.97rem;
-        line-height: 1.7;
-        margin-bottom: 32px;
-    }
-
-    .lockdown-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        background: rgba(37, 211, 102, 0.08);
-        border: 1px solid rgba(37, 211, 102, 0.2);
-        border-radius: 50px;
-        padding: 10px 22px;
-        font-size: 0.82rem;
-        font-weight: 600;
-        color: #25D366;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-    }
-
-    .lockdown-badge-dot {
-        width: 7px;
-        height: 7px;
-        background: #25D366;
-        border-radius: 50%;
-        animation: lockBlink 1.2s ease-in-out infinite;
-    }
-
-    .lockdown-footer {
-        position: absolute;
-        bottom: 30px;
-        left: 50%;
-        transform: translateX(-50%);
-        font-family: 'Outfit', sans-serif;
-        font-size: 0.78rem;
-        color: rgba(255,255,255,0.15);
-        white-space: nowrap;
-        z-index: 1;
-        letter-spacing: 0.5px;
-    }
-</style>
-
-<div id="lockdown-overlay">
-    <div class="lockdown-card">
-        <span class="lockdown-icon">🔒</span>
-        <div class="lockdown-spinner"></div>
-        <h1 class="lockdown-title">System Under Maintenance</h1>
-        <p class="lockdown-subtitle">
-            The TN Connect Gatekeeper portal is currently undergoing critical system updates.<br><br>
-            Our infrastructure team is working to ensure everything is perfectly configured before access is restored.
-        </p>
-        <div class="lockdown-badge">
-            <span class="lockdown-badge-dot"></span>
-            Updates in Progress
-        </div>
-    </div>
-    <div class="lockdown-footer">TN Connect Gatekeeper · Secure Admin Portal · v1.3</div>
-</div>
-<!-- ============================================================ -->
-<!-- 🔒 END OF LOCKDOWN OVERLAY                                   -->
-<!-- ============================================================ -->
+<!-- 🔒 LOCKDOWN OVERLAY REMOVED — To re-enable, restore the lockdown div block here -->
 
     <div class="container">
         <header>
-            <h1>TN Connect Gatekeeper Hub 🛡️</h1>
-            <p>High-Performance Multi-Admin Community Onboarding Platform</p>
+            <h1>TN Connect Gatekeeper 🛡️</h1>
+            <p>Secure Bot Linking Portal · v1.3 Pro</p>
         </header>
 
         <div class="dashboard-grid">
             <!-- Panel 1: Pairing Auth Link -->
             <div class="card">
-                <h3 class="card-title">🔗 Setup <span>New Admin Node</span></h3>
+                <h3 class="card-title">🔗 Link <span>Bot Account</span></h3>
                 <form id="authForm">
-                    <div class="form-group">
+                    <!-- HIDDEN: Admin name/role/groups — kept for future multi-admin re-enable -->
+                    <div class="form-group" style="display: none;">
                         <label for="adminName">Admin Username</label>
-                        <input type="text" id="adminName" class="form-control" placeholder="e.g. Ken" required>
+                        <input type="text" id="adminName" class="form-control" placeholder="e.g. Ken" value="TN Connect Bot">
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="display: none;">
                         <label for="adminRole">Your Role</label>
                         <select id="adminRole" class="form-control" style="background: rgba(255,255,255,0.05); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 14px; font-size: 0.95rem; font-family: 'Outfit', sans-serif; width: 100%; cursor: pointer; appearance: none; -webkit-appearance: none;">
                             <option value="Admin" style="background:#0b0f19;">Admin</option>
@@ -620,18 +465,18 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="adminPhone">WhatsApp Phone Number</label>
+                        <label for="adminPhone">Bot WhatsApp Number</label>
                         <input type="text" id="adminPhone" class="form-control" placeholder="e.g. 233240000000" required>
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="display: none;">
                         <label style="display: block; font-size: 0.9rem; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">SELECT THE GROUPS YOU MONITOR</label>
                         <div class="checkbox-scroll" id="groupsChecklist">
                             <!-- Populated dynamically via JS -->
                         </div>
                     </div>
 
-                    <button type="submit" id="submitBtn" class="btn">CONNECT MY LINE</button>
+                    <button type="submit" id="submitBtn" class="btn">LINK BOT ACCOUNT</button>
                 </form>
 
                 <!-- Monospace OTP Panel -->
@@ -653,8 +498,8 @@
             </div>
 
 
-            <!-- Panel 2: Live Management Nodes -->
-            <div class="card">
+            <!-- Panel 2: Live Management Nodes — HIDDEN for single-worker mode -->
+            <div class="card" style="display: none;">
                 <h3 class="card-title">⚙️ Active <span>Management Nodes</span></h3>
                 <div class="sessions-list" id="sessionsContainer">
                     <div class="empty-sessions">📡 Loading active server sessions...</div>
