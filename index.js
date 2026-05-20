@@ -1043,14 +1043,17 @@ const initializeAdminSocket = async (adminName, phone, selectedGroups = []) => {
                             (messageContent?.documentMessage && messageContent.documentMessage.mimetype?.startsWith('image/')));
 
             // Anti-Ban Rate Limiting & Cooldowns
-            // EXEMPTION: Image messages from users with pending verification bypass the rate limiter
-            // because people naturally send multiple screenshots at once
+            // EXEMPTIONS from rate limiter:
+            // 1. Image messages from users with a pending join request (multi-screenshot submission)
+            // 2. Business Hub users mid-conversation (never drop Gemini interview replies)
             const hasPendingRequest = !!findPendingRequest(senderJid);
+            const hasBizHubConversation = !!findBusinessHubRequest(senderJid);
             const now = Date.now();
             const cooldownKey = `${cleanPhone}_${senderJid}`;
             if (conversationCooldowns.has(cooldownKey)) {
                 const lastMessageTime = conversationCooldowns.get(cooldownKey);
-                if (now - lastMessageTime < 3000 && !(isImageMessage && hasPendingRequest)) {
+                const isExempt = (isImageMessage && hasPendingRequest) || hasBizHubConversation;
+                if (now - lastMessageTime < 3000 && !isExempt) {
                     console.log(`⚠️ [Anti-Ban] Rate limit tripped for user +${senderJid.replace(/[^0-9]/g, '')} on Admin node +${cleanPhone}. Drop execution.`);
                     continue; 
                 }
