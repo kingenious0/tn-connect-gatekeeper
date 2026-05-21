@@ -50,6 +50,7 @@ const pendingApprovals = new Map(); // screenshot aggregation cache
 const pendingVerifications = new Map(); // Gemini screenshot verification tracker per user { tiktok, social, channel }
 const businessHubConversations = new Map(); // Gemini AI conversation history per user (phone -> history[])
 const humanTakeoverUsers = new Set(); // users flagged for manual admin takeover
+const joinIntroSentKeys = new Set(); // prevents re-sending requirements on rescans / restart
 
 const uploadDebounces = {}; // debounces for Supabase credentials upload
 
@@ -228,6 +229,88 @@ const loadRegistry = () => {
     }
 };
 
+/** Statuses where requirements/intro was already sent — do not DM again on rescan */
+const INTRO_ALREADY_SENT_STATUSES = [
+    'intro_sent',
+    'pending',
+    'verification_complete',
+    'approved',
+    'interview_complete',
+    'non_resident_declined'
+];
+
+let registryHydratedFromCloud = false;
+
+const hydrateJoinIntroCacheFromRegistry = (registry) => {
+    for (const [key, entry] of Object.entries(registry)) {
+        if (entry && INTRO_ALREADY_SENT_STATUSES.includes(entry.status)) {
+            joinIntroSentKeys.add(key);
+        }
+    }
+};
+
+const syncRegistryFromSupabase = async () => {
+    const local = loadRegistry();
+    if (!supabase) {
+        hydrateJoinIntroCacheFromRegistry(local);
+        return local;
+    }
+    try {
+        const { data, error } = await supabase.from('gatekeeper_registry').select('*');
+        if (error) {
+            console.warn('⚠️ [Registry] Supabase load skipped:', error.message);
+            hydrateJoinIntroCacheFromRegistry(local);
+            return local;
+        }
+        const merged = { ...local };
+        for (const row of data || []) {
+            if (!row.key) continue;
+            merged[row.key] = {
+                ...(merged[row.key] || {}),
+                admin: row.admin_name || merged[row.key]?.admin,
+                phone: row.phone || merged[row.key]?.phone,
+                groupJid: row.group_jid || merged[row.key]?.groupJid,
+                groupSubject: row.group_subject || merged[row.key]?.groupSubject,
+                groupType: row.group_type || merged[row.key]?.groupType,
+                participantJid: row.participant_jid || merged[row.key]?.participantJid,
+                rawParticipantJid: row.raw_participant_jid || merged[row.key]?.rawParticipantJid,
+                status: row.status || merged[row.key]?.status || 'intro_sent',
+                timestamp: row.timestamp || merged[row.key]?.timestamp
+            };
+        }
+        saveRegistry(merged);
+        hydrateJoinIntroCacheFromRegistry(merged);
+        console.log('☁️ [Registry] Loaded ' + (data?.length || 0) + ' entries from Supabase (' + joinIntroSentKeys.size + ' awaiting evidence or done)');
+        return merged;
+    } catch (e) {
+        console.warn('⚠️ [Registry] Supabase sync failed:', e.message);
+        hydrateJoinIntroCacheFromRegistry(local);
+        return local;
+    }
+};
+
+const ensureRegistryLoaded = async () => {
+    if (registryHydratedFromCloud) return;
+    await syncRegistryFromSupabase();
+    registryHydratedFromCloud = true;
+};
+
+const findExistingRegistryEntry = (groupJid, participantJid) => {
+    const registry = loadRegistry();
+    const digits = participantDigits(participantJid);
+    const exactKey = buildRegistryKey(groupJid, participantJid);
+    if (registry[exactKey]) {
+        return { key: exactKey, ...registry[exactKey] };
+    }
+    for (const [key, entry] of Object.entries(registry)) {
+        if (!entry || entry.groupJid !== groupJid) continue;
+        if (key.includes(digits)) return { key, ...entry };
+        if (participantDigits(entry.participantJid || '') === digits) return { key, ...entry };
+        if (participantDigits(entry.rawParticipantJid || '') === digits) return { key, ...entry };
+    }
+    return null;
+};
+
 const saveRegistry = (data) => {
     try {
         fs.writeFileSync(REGISTRY_FILE, JSON.stringify(data, null, 2));
@@ -243,9 +326,21 @@ const saveRegistryItem = async (key, item) => {
 
     if (supabase) {
         try {
-            const { error } = await supabase
-                .from('gatekeeper_registry')
-                .upsert({
+            const row = {
+                key,
+                admin_name: item.admin,
+                phone: item.phone,
+                group_jid: item.groupJid,
+                group_subject: item.groupSubject || null,
+                group_type: item.groupType || null,
+                participant_jid: item.participantJid || null,
+                raw_participant_jid: item.rawParticipantJid || null,
+                status: item.status,
+                timestamp: item.timestamp
+            };
+            const { error } = await supabase.from('gatekeeper_registry').upsert(row);
+            if (error) {
+                const { error: err2 } = await supabase.from('gatekeeper_registry').upsert({
                     key,
                     admin_name: item.admin,
                     phone: item.phone,
@@ -253,7 +348,8 @@ const saveRegistryItem = async (key, item) => {
                     status: item.status,
                     timestamp: item.timestamp
                 });
-            if (error) console.error("❌ [Supabase] Registry save failure:", error.message);
+                if (err2) console.error('❌ [Supabase] Registry save failure:', err2.message);
+            }
         } catch (err) {
             console.error("❌ [Supabase] Registry sync crash:", err);
         }
@@ -352,7 +448,6 @@ const findBusinessHubRequest = (senderJid) => {
 // 🚪 JOIN REQUEST & GATEKEEPER AUTOMATION
 // ==========================================
 const groupSubjectCache = new Map();
-const joinIntroSentKeys = new Set();
 
 const parseSpintax = (template) => {
     return template.replace(/\{([^{}]+)\}/g, (_, options) => {
@@ -516,6 +611,8 @@ const processJoinRequest = async (socket, groupJid, participantJid, action, grou
         return;
     }
 
+    await ensureRegistryLoaded();
+
     const dmJid = dmJidFromParticipant(participantJid);
     if (!dmJid) {
         console.warn('⚠️ [Join] Could not resolve DM JID for participant:', participantJid);
@@ -523,12 +620,19 @@ const processJoinRequest = async (socket, groupJid, participantJid, action, grou
     }
 
     const registryKey = buildRegistryKey(groupJid, participantJid);
-    if (joinIntroSentKeys.has(registryKey)) return;
+    if (joinIntroSentKeys.has(registryKey)) {
+        console.log('⏳ [Join] Skipping ' + dmJid + ' — intro already sent (cache), waiting for evidence');
+        return;
+    }
 
-    const registry = loadRegistry();
-    const existing = registry[registryKey];
-    if (existing && ['intro_sent', 'pending', 'verification_complete', 'interview_complete', 'approved'].includes(existing.status)) {
-        console.log('ℹ️ [Join] Already processed ' + registryKey + ' (status: ' + existing.status + ')');
+    const existing = findExistingRegistryEntry(groupJid, participantJid);
+    if (existing && INTRO_ALREADY_SENT_STATUSES.includes(existing.status)) {
+        joinIntroSentKeys.add(existing.key || registryKey);
+        if (existing.status === 'intro_sent' || existing.status === 'pending') {
+            console.log('⏳ [Join] Skipping ' + dmJid + ' for ' + (existing.groupSubject || groupJid) + ' — requirements already sent, waiting for screenshot');
+        } else {
+            console.log('ℹ️ [Join] Skipping ' + dmJid + ' — already handled (status: ' + existing.status + ')');
+        }
         return;
     }
 
@@ -633,12 +737,14 @@ const completeGatekeeperApproval = async (socket, senderJid, pendingRequest, ver
 };
 
 const scanPendingJoinRequests = async (socket) => {
+    await ensureRegistryLoaded();
+
     const admin = getBotAdminContext();
     const meta = loadSessionMeta()[admin.phone] || {};
     const groups = meta.discoveredGroups || [];
     if (!groups.length) return;
 
-    console.log('🔍 [Join] Scanning ' + groups.length + ' groups for pending join requests...');
+    console.log('🔍 [Join] Scanning ' + groups.length + ' groups for pending join requests (skipping anyone already sent requirements)...');
     for (const group of groups) {
         try {
             const pending = await socket.groupRequestParticipantsList(group.jid);
@@ -1476,5 +1582,6 @@ app.get('/', (req, res) => {
 
 server.listen(PORT, async () => {
     console.log('⚡️ [Server] Gatekeeper is live on port ' + PORT);
+    await ensureRegistryLoaded();
     await restoreCoreSessionOnBoot();
 });
