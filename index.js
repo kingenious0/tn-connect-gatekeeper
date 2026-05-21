@@ -526,7 +526,7 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
             await sendAdminAlert(sock, alertText);
             // Then try to generate and send screenshot image
             try {
-                const screenshotBuffer = generateChatScreenshot(history, `+${userPhone}`, 'Business Hub Intake');
+                const screenshotBuffer = generateChatScreenshot(history, '+' + userPhone, 'Business Hub Intake');
                 if (screenshotBuffer && adminAlertsGroupJid) {
                     await sock.sendMessage(adminAlertsGroupJid, {
                         image: screenshotBuffer,
