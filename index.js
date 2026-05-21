@@ -84,7 +84,7 @@ if (supabase) {
 // ==========================================
 // 📋 OFFICIAL MESSAGES & GROUPS REFERENCE
 // ==========================================
-const GATEKEEPER_MESSAGE = `*{hello|hi|hey}, we just got your request to join our group*\r\n🚨ACTION REQUIRED🚨\r\n\r\nTo be approved into the niche group first join one of the general market groups (tap links in channel to see all the links).\r\n\r\nTikTok: Follow *TN FILMS GH*\r\n\r\n\r\nWe\'ll view your chat before approving. {If we get to your chat and you\'ve not done these we will cancel your request.|Please complete these steps to avoid your request being cancelled.} Follow these steps \r\n\r\nFacebook/Instagram: Follow *TN UNIVERSITIES CONNECT*\r\n\r\nWhatsApp Channel: Join our official update channel: https://whatsapp.com/channel/0029VbCNby81CYoPIpEQMD1D\r\n⚠️ Delay = Cancellation. We are clearing the pending list.\r\n\r\nOnce you\'ve followed all, send a DONE({with a screenshot|along with screenshots}). \r\n\r\nWe are viewing chats before approving. If we get to your chat twice and you\'ve not done so we will cancel your request\r\n\r\nSEND ME SCREENSHOTS WHEN DONE`;
+const GATEKEEPER_MESSAGE = `*{hello|hi|hey}, we just got your request to join our group*\r\n🚨ACTION REQUIRED🚨\r\n\r\nComplete *at least one* of these (more is fine):\r\n\r\n• TikTok: Follow *TN FILMS GH*\r\n• Facebook/Instagram: Follow *TN UNIVERSITIES CONNECT*\r\n• WhatsApp Channel: https://whatsapp.com/channel/0029VbCNby81CYoPIpEQMD1D\r\n\r\nThen send *one clear screenshot* as proof (not view-once). Our system will verify it and approve you into the group.\r\n\r\n{If we review your request and there\'s no valid proof, it will be declined.|Invalid or fake screenshots will be rejected.} ⚠️ Delay = Cancellation.`;
 
 // Business Hub intro DM — dynamic variations to avoid WhatsApp spam detection
 const BUSINESS_HUB_INTRO_MESSAGE = () => {
@@ -423,35 +423,59 @@ const downloadImageBuffer = async (socket, msg) => {
     }
 };
 
-const classifyScreenshotWithGemini = async (buffer, mime) => {
-    if (!geminiClient) return [];
+const parseGeminiJson = (text) => {
+    const match = (text || '').match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+        return JSON.parse(match[0]);
+    } catch (e) {
+        return null;
+    }
+};
+
+/** Deep fraud check — at least one legitimate proof screenshot required */
+const deepVerifyScreenshotEvidence = async (buffer, mime) => {
+    if (!geminiClient) {
+        return { valid: false, reason: 'Verification service is temporarily unavailable. Try again shortly.', platform: null };
+    }
     try {
         const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
         const result = await model.generateContent([
             {
-                text: 'You verify join-request screenshots for TN Connect Ghana. ' +
-                    'Reply with ONLY comma-separated tags from this list: TIKTOK, SOCIAL, CHANNEL, UNKNOWN. ' +
-                    'TIKTOK = TikTok follow for TN FILMS GH. ' +
-                    'SOCIAL = Instagram or Facebook follow for TN UNIVERSITIES CONNECT. ' +
-                    'CHANNEL = WhatsApp channel membership. ' +
-                    'If unclear, include UNKNOWN.'
+                text: 'You are a strict fraud reviewer for TN Connect Ghana WhatsApp group joins.\n' +
+                    'Accept ONLY if this image is a real screenshot showing the user completed AT LEAST ONE of:\n' +
+                    '- Following TN FILMS GH on TikTok\n' +
+                    '- Following TN UNIVERSITIES CONNECT on Facebook or Instagram\n' +
+                    '- Joining the official TN WhatsApp update channel\n\n' +
+                    'REJECT if: unrelated photo, meme, random chat, black screen, profile with no follow proof, ' +
+                    'obvious fake/edited image, stock photo, or attempt to bypass without social proof.\n\n' +
+                    'Reply with ONLY JSON: {"valid":true|false,"reason":"one short sentence","platform":"tiktok|social|channel|none"}'
             },
             { inlineData: { data: buffer.toString('base64'), mimeType: mime || 'image/jpeg' } }
         ]);
-        const raw = (result.response.text() || '').toUpperCase();
-        const tags = [];
-        if (raw.includes('TIKTOK')) tags.push('tiktok');
-        if (raw.includes('SOCIAL')) tags.push('social');
-        if (raw.includes('CHANNEL')) tags.push('channel');
-        return tags;
+        const parsed = parseGeminiJson(result.response.text());
+        if (parsed && typeof parsed.valid === 'boolean') {
+            return {
+                valid: parsed.valid,
+                reason: String(parsed.reason || '').trim() || (parsed.valid ? 'Valid proof detected.' : 'Invalid proof.'),
+                platform: parsed.platform || null
+            };
+        }
+        const raw = (result.response.text() || '').toLowerCase();
+        const valid = raw.includes('"valid":true') || raw.includes('"valid": true');
+        return {
+            valid,
+            reason: valid ? 'Proof accepted.' : 'Could not verify this image as legitimate proof.',
+            platform: null
+        };
     } catch (e) {
-        console.error('❌ [Gemini] Screenshot classify failed:', e.message);
-        return [];
+        console.error('❌ [Gemini] Deep screenshot verify failed:', e.message);
+        return { valid: false, reason: 'Verification failed. Please send a clearer screenshot.', platform: null };
     }
 };
 
 const initVerificationState = (userPhone) => {
-    const state = { tiktok: false, social: false, channel: false, screenshots: 0 };
+    const state = { attempts: 0, rejected: 0, hasValidProof: false, platform: null };
     pendingVerifications.set(userPhone, state);
     return state;
 };
@@ -481,7 +505,7 @@ const processJoinRequest = async (socket, groupJid, participantJid, action, grou
 
     const registry = loadRegistry();
     const existing = registry[registryKey];
-    if (existing && ['intro_sent', 'pending', 'verification_complete', 'interview_complete'].includes(existing.status)) {
+    if (existing && ['intro_sent', 'pending', 'verification_complete', 'interview_complete', 'approved'].includes(existing.status)) {
         console.log('ℹ️ [Join] Already processed ' + registryKey + ' (status: ' + existing.status + ')');
         return;
     }
@@ -496,6 +520,7 @@ const processJoinRequest = async (socket, groupJid, participantJid, action, grou
         groupJid,
         groupSubject,
         groupType,
+        rawParticipantJid: participantJid,
         participantJid: dmJid,
         status: 'intro_sent',
         timestamp: new Date().toISOString()
@@ -521,6 +546,68 @@ const processJoinRequest = async (socket, groupJid, participantJid, action, grou
         console.error('❌ [Join] Failed to send intro DM to ' + dmJid + ':', e.message);
         joinIntroSentKeys.delete(registryKey);
     }
+};
+
+const approveGroupJoinRequest = async (socket, pendingRequest) => {
+    const groupJid = pendingRequest.groupJid;
+    const candidates = [
+        pendingRequest.rawParticipantJid,
+        pendingRequest.participantJid,
+        pendingRequest.rawParticipantJid ? jidNormalizedUser(pendingRequest.rawParticipantJid) : null
+    ].filter((j, i, arr) => j && arr.indexOf(j) === i);
+
+    for (const jid of candidates) {
+        try {
+            await socket.groupRequestParticipantsUpdate(groupJid, [jid], 'approve');
+            console.log('✅ [Gatekeeper] Approved join for ' + jid + ' into ' + (pendingRequest.groupSubject || groupJid));
+            return { success: true, jid };
+        } catch (e) {
+            console.warn('⚠️ [Gatekeeper] Approve failed for ' + jid + ':', e.message);
+        }
+    }
+    return { success: false, jid: null };
+};
+
+const completeGatekeeperApproval = async (socket, senderJid, pendingRequest, verify, proof) => {
+    const userPhone = formatPhoneNumberGH(participantDigits(senderJid));
+    const approveResult = await approveGroupJoinRequest(socket, pendingRequest);
+
+    const registry = loadRegistry();
+    if (registry[pendingRequest.key]) {
+        registry[pendingRequest.key].status = approveResult.success ? 'approved' : 'verification_complete';
+        registry[pendingRequest.key].proofPlatform = proof.platform;
+        registry[pendingRequest.key].approvedAt = new Date().toISOString();
+        await saveRegistryItem(pendingRequest.key, registry[pendingRequest.key]);
+    }
+
+    if (approveResult.success) {
+        await sendAntiBanMessage(socket, senderJid, {
+            text: '✅ Your proof was verified! You have been *approved* into *' +
+                (pendingRequest.groupSubject || 'the group') + '*. Welcome to TN Connect 🎉'
+        });
+        const alertText = [
+            '✅ *[AUTO-APPROVED — GATEKEEPER]*',
+            '',
+            '📞 *Applicant:* ' + userPhone,
+            '🌐 *Group:* ' + (pendingRequest.groupSubject || pendingRequest.groupJid),
+            '📸 *Proof:* ' + (proof.platform || 'verified') + ' — ' + (proof.reason || 'Valid screenshot'),
+            '✅ Join request approved automatically.'
+        ].join('\n');
+        await sendAdminAlert(socket, alertText);
+    } else {
+        await sendAntiBanMessage(socket, senderJid, {
+            text: '✅ Your screenshot was verified, but we could not auto-approve the join yet. An admin will approve you in WhatsApp shortly.'
+        });
+        await sendAdminAlert(socket, [
+            '⚠️ *[VERIFIED — MANUAL APPROVE NEEDED]*',
+            '',
+            '📞 *Applicant:* ' + userPhone,
+            '🌐 *Group:* ' + (pendingRequest.groupSubject || pendingRequest.groupJid),
+            '📸 Proof OK but API approve failed. Please approve manually in the group.'
+        ].join('\n'));
+    }
+
+    pendingVerifications.delete(userPhone);
 };
 
 const scanPendingJoinRequests = async (socket) => {
@@ -552,82 +639,55 @@ const handleGatekeeperDM = async (socket, senderJid, msg, pendingRequest) => {
 
     const { text, hasImage } = extractIncomingPayload(msg);
     const verify = getVerificationState(userPhone);
-    let verificationUpdated = false;
+    const saidDone = /\bdone\b/i.test(text);
 
     if (hasImage) {
         const media = await downloadImageBuffer(socket, msg);
-        if (media?.buffer) {
-            verify.screenshots += 1;
-            const tags = await classifyScreenshotWithGemini(media.buffer, media.mime);
-            if (tags.includes('tiktok')) verify.tiktok = true;
-            if (tags.includes('social')) verify.social = true;
-            if (tags.includes('channel')) verify.channel = true;
-            verificationUpdated = true;
-
-            const confirmed = [];
-            if (verify.tiktok) confirmed.push('TikTok ✓');
-            if (verify.social) confirmed.push('Instagram/Facebook ✓');
-            if (verify.channel) confirmed.push('WhatsApp Channel ✓');
-
-            let feedback = '📸 Screenshot received.';
-            if (confirmed.length) feedback += ' Verified: ' + confirmed.join(', ') + '.';
-            const missing = [];
-            if (!verify.tiktok) missing.push('TikTok (TN FILMS GH)');
-            if (!verify.social) missing.push('Facebook/Instagram (TN UNIVERSITIES CONNECT)');
-            if (!verify.channel) missing.push('WhatsApp Channel');
-            if (missing.length) feedback += ' Still needed: ' + missing.join(', ') + '.';
-            feedback += ' Reply DONE when finished.';
-
-            await sendAntiBanMessage(socket, senderJid, { text: feedback });
-        }
-    }
-
-    const saidDone = /\bdone\b/i.test(text);
-    if (saidDone || (verificationUpdated && verify.tiktok && verify.social && verify.channel)) {
-        const ready = verify.tiktok && verify.social && verify.channel;
-        if (ready || (saidDone && verify.screenshots >= 2)) {
-            const registry = loadRegistry();
-            if (registry[pendingRequest.key]) {
-                registry[pendingRequest.key].status = 'verification_complete';
-                await saveRegistryItem(pendingRequest.key, registry[pendingRequest.key]);
-            }
-
+        if (!media?.buffer) {
             await sendAntiBanMessage(socket, senderJid, {
-                text: '✅ Thanks! Your proof has been received. An admin will review your request to join *' +
-                    (pendingRequest.groupSubject || 'the group') + '* shortly.'
-            });
-
-            const alertText = [
-                '✅ *[GATEKEEPER VERIFICATION COMPLETE]*',
-                '',
-                '📞 *Applicant:* ' + userPhone,
-                '🌐 *Group:* ' + (pendingRequest.groupSubject || pendingRequest.groupJid),
-                '📸 *Proof:* TikTok ' + (verify.tiktok ? '✓' : '✗') + ' | Social ' + (verify.social ? '✓' : '✗') + ' | Channel ' + (verify.channel ? '✓' : '✗'),
-                '',
-                'Review in WhatsApp and approve or reject the pending member.'
-            ].join('\n');
-            await sendAdminAlert(socket, alertText);
-            pendingVerifications.delete(userPhone);
-            return;
-        }
-
-        if (saidDone && !ready) {
-            await sendAntiBanMessage(socket, senderJid, {
-                text: '⚠️ You replied DONE but we still need proof for: ' +
-                    [
-                        !verify.tiktok ? 'TikTok' : null,
-                        !verify.social ? 'Social' : null,
-                        !verify.channel ? 'Channel' : null
-                    ].filter(Boolean).join(', ') +
-                    '. Please send clear screenshots, then reply DONE again.'
+                text: '⚠️ We could not read that image. Please send a normal screenshot (not view-once) showing TikTok, Instagram/Facebook, or WhatsApp channel proof.'
             });
             return;
         }
+
+        verify.attempts += 1;
+        console.log('🔎 [Gatekeeper] Deep-checking screenshot from ' + userPhone + ' (attempt ' + verify.attempts + ')...');
+
+        const proof = await deepVerifyScreenshotEvidence(media.buffer, media.mime);
+
+        if (!proof.valid) {
+            verify.rejected += 1;
+            await sendAntiBanMessage(socket, senderJid, {
+                text: '❌ That image was not accepted as valid proof.\n\n*Reason:* ' + proof.reason +
+                    '\n\nPlease send a *real screenshot* of at least one step (TikTok TN FILMS GH, Facebook/Instagram TN UNIVERSITIES CONNECT, or our WhatsApp channel). No memes or random photos.'
+            });
+            return;
+        }
+
+        verify.hasValidProof = true;
+        verify.platform = proof.platform;
+        await completeGatekeeperApproval(socket, senderJid, pendingRequest, verify, proof);
+        return;
     }
 
-    if (text && !hasImage && !saidDone) {
+    if (saidDone) {
+        if (verify.hasValidProof) {
+            await sendAntiBanMessage(socket, senderJid, {
+                text: '✅ You are already verified. If you are not in the group yet, wait a moment or contact an admin.'
+            });
+        } else {
+            await sendAntiBanMessage(socket, senderJid, {
+                text: 'Please send *at least one clear screenshot* as proof first (TikTok, Facebook/Instagram, or WhatsApp channel). ' +
+                    'Use a normal photo — not view-once. We will verify and approve you automatically.'
+            });
+        }
+        return;
+    }
+
+    if (text) {
         await sendAntiBanMessage(socket, senderJid, {
-            text: 'Please follow the steps in our earlier message (TikTok, Facebook/Instagram, WhatsApp Channel), send screenshots, then reply *DONE* when finished.'
+            text: 'Send *one screenshot* showing you followed TN FILMS GH (TikTok), TN UNIVERSITIES CONNECT (Facebook/Instagram), or joined our WhatsApp channel. ' +
+                'We verify it and approve you into *' + (pendingRequest.groupSubject || 'the group') + '* automatically.'
         });
     }
 };
