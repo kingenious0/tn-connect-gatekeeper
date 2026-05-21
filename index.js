@@ -30,7 +30,11 @@ const APPLICANTS_FILE = './business_hub_applicants.json';
 const GROUP_FLOWS_FILE = './group_flows.json';
 
 // Global variables for active socket sessions and status
-let sock = null; // Fix: Ensure global sock is explicitly initialized
+let sock = null;
+let activeSessionPhone = null;
+let isReconnecting = false;
+let intentionalLogout = false;
+const reconnectTimers = {};
 const activeSessions = {};
 const activeQRs = {};
 const pendingApprovals = new Map(); // screenshot aggregation cache
@@ -612,8 +616,39 @@ const refreshDiscoveredGroups = async (socket, phone) => {
     }
 };
 
+const hasStoredCreds = (phone) => {
+    const credsPath = path.join(__dirname, 'auth_session_' + phone, 'creds.json');
+    return fs.existsSync(credsPath);
+};
+
+const scheduleWhatsAppReconnect = (phone, options, statusCode) => {
+    if (intentionalLogout || isReconnecting) return;
+    if (reconnectTimers[phone]) clearTimeout(reconnectTimers[phone]);
+
+    const delayMs = statusCode === DisconnectReason.restartRequired ? 2000 : 4000;
+    reconnectTimers[phone] = setTimeout(async () => {
+        delete reconnectTimers[phone];
+        if (intentionalLogout || isReconnecting) return;
+
+        isReconnecting = true;
+        try {
+            console.log('🔄 [WhatsApp] Reconnecting +' + phone + ' (after disconnect code ' + statusCode + ')...');
+            await startWhatsAppSession(phone, { ...options, wipeLocalAuth: false });
+        } catch (e) {
+            console.error('❌ [WhatsApp] Reconnect failed:', e.message || e);
+        } finally {
+            isReconnecting = false;
+        }
+    }, delayMs);
+};
+
 async function teardownSession(phone) {
     const cleanPhone = String(phone || '').replace(/\D/g, '');
+    intentionalLogout = true;
+    if (reconnectTimers[cleanPhone]) {
+        clearTimeout(reconnectTimers[cleanPhone]);
+        delete reconnectTimers[cleanPhone];
+    }
     if (sock) {
         try {
             sock.ev.removeAllListeners();
@@ -627,6 +662,8 @@ async function teardownSession(phone) {
         }
         sock = null;
     }
+    activeSessionPhone = null;
+    intentionalLogout = false;
     const dirPath = path.join(__dirname, 'auth_session_' + cleanPhone);
     if (fs.existsSync(dirPath)) {
         fs.rmSync(dirPath, { recursive: true, force: true });
@@ -707,6 +744,8 @@ async function startWhatsAppSession(phone, options = {}) {
         }
     });
 
+    activeSessionPhone = phone;
+
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'open') {
@@ -716,10 +755,27 @@ async function startWhatsAppSession(phone, options = {}) {
         }
         if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            const loggedOut = statusCode === DisconnectReason.loggedOut;
+            const shouldReconnect = !loggedOut && !intentionalLogout;
             console.log('📴 [WhatsApp] Connection closed. Reconnect=' + shouldReconnect + ' code=' + statusCode);
-            if (!shouldReconnect) {
-                sock = null;
+
+            try {
+                sock?.ev?.removeAllListeners();
+            } catch (e) { /* ignore */ }
+            sock = null;
+
+            if (loggedOut || intentionalLogout) {
+                activeSessionPhone = null;
+                return;
+            }
+
+            if (shouldReconnect) {
+                const meta = loadSessionMeta()[phone] || {};
+                scheduleWhatsAppReconnect(phone, {
+                    adminName: meta.adminName || adminName,
+                    selectedGroups: meta.selectedGroups || selectedGroups,
+                    adminRole: meta.adminRole || adminRole
+                }, statusCode);
             }
         }
     });
@@ -884,17 +940,27 @@ app.post('/api/auth/request-code', async (req, res) => {
             }
         }
 
+        const wipeLocalAuth = !hasStoredCreds(phone) || req.body.forceNew === true;
+        if (wipeLocalAuth) {
+            console.log('🧹 [Pairing] Starting fresh auth for +' + phone);
+        } else {
+            console.log('♻️ [Pairing] Reusing existing creds for +' + phone + ' (no wipe)');
+        }
+
         await startWhatsAppSession(phone, {
             adminName,
             selectedGroups,
             adminRole,
-            wipeLocalAuth: true
+            wipeLocalAuth
         });
 
         setTimeout(async () => {
             try {
                 if (!sock) {
                     return res.status(500).json({ error: 'WhatsApp socket failed to initialize.' });
+                }
+                if (sock.user) {
+                    return res.json({ status: 'CONNECTED', pairingCode: null, success: true });
                 }
                 const pairingCode = await sock.requestPairingCode(phone);
                 console.log('🔑 Generated pairing code: ' + pairingCode);
