@@ -375,7 +375,7 @@ const callGeminiWithRetry = async (chat, textInput, retries = 3, initialDelayMs 
             const errStr = String(err.message || err);
             const isTransient = errStr.includes('503') || errStr.includes('429') || errStr.includes('Service Unavailable') || errStr.includes('Resource exhausted') || errStr.includes('overloaded');
             if (isTransient && i < retries - 1) {
-                console.warn(`⚠️ [Gemini] API returned transient error: "${errStr}". Retrying in ${currentDelay}ms (Attempt ${i + 1}/${retries})...`);
+                console.warn('⚠️ [Gemini] API returned transient error: "' + errStr + '". Retrying in ' + currentDelay + 'ms (Attempt ' + (i + 1) + '/' + retries + ')...');
                 await delay(currentDelay);
                 currentDelay *= 2;
                 continue;
