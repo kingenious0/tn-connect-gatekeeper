@@ -530,7 +530,7 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
                 if (screenshotBuffer && adminAlertsGroupJid) {
                     await sock.sendMessage(adminAlertsGroupJid, {
                         image: screenshotBuffer,
-                        caption: `📸 Chat transcript for ${userPhone}`
+                        caption: '📸 Chat transcript for ' + userPhone
                     });
                     console.log(`📸 [Screenshot] Chat image sent to admin alerts group for +${userPhone}`);
                 }
