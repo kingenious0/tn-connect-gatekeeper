@@ -260,7 +260,7 @@ const triggerSessionBackup = (phone, adminName, selectedGroups, discoveredGroups
                 });
 
             if (error) console.error('❌ [Supabase] Backup error for +' + phone + ':', error.message);
-            else console.log(`✅ [Supabase] Session data backed up successfully for +${phone}!`);
+            else console.log('✅ [Supabase] Session data backed up successfully for +' + phone + '!');
         } catch (err) {
             console.error(`❌ [Supabase] System error backing up session for +${phone}:`, err);
         }
