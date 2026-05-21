@@ -244,7 +244,7 @@ const triggerSessionBackup = (phone, adminName, selectedGroups, discoveredGroups
 
     uploadDebounces[phone] = setTimeout(async () => {
         try {
-            const dirPath = `auth_session_${phone}`;
+            const dirPath = 'auth_session_' + phone;
             const files = serializeDirectory(dirPath);
 
             console.log(`💾 [Supabase] Pushing backup for Admin node +${phone}...`);
