@@ -106,8 +106,9 @@ function generateChatScreenshot(history, contactName, subtitle = 'Business Hub A
         const HEADER_HEIGHT = 60;
         const TIME_ROW_HEIGHT = 18;
 
-        // Clean conversation entries — strip markers
+        // Clean conversation entries — strip markers and deduplicate
         const cleanEntries = [];
+        const seenTexts = new Set(); // Track unique messages to prevent duplicates
         for (const entry of history) {
             let text = (entry.parts?.[0]?.text || '')
                 .replace(/\[INTAKE_COMPLETE\].*/s, '')
@@ -117,6 +118,12 @@ function generateChatScreenshot(history, contactName, subtitle = 'Business Hub A
             if (!text) continue;
             // Cap individual messages to 500 chars for readability
             if (text.length > 500) text = text.substring(0, 497) + '...';
+            
+            // Skip duplicate messages (same role + same text)
+            const uniqueKey = `${entry.role}::${text}`;
+            if (seenTexts.has(uniqueKey)) continue;
+            seenTexts.add(uniqueKey);
+            
             cleanEntries.push({ role: entry.role, text });
         }
 

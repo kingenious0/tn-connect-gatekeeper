@@ -95,10 +95,10 @@ SEND ME SCREENSHOTS WHEN DONE`;
 const BUSINESS_HUB_INTRO_MESSAGE = () => {
     const greetings = ['Hello', 'Hi there', 'Hey', 'Good day', 'Greetings'];
     const intros = [
-        `I'm the intake assistant for TN Uni Connect`,
-        `I assist the TN Uni Connect team with processing new applications`,
-        `I handle intake coordination for TN Uni Connect`,
-        `I work with the TN Uni Connect admin team to screen and welcome new members`,
+        `I'm the virtual intake coordinator assisting the TN Connect team`,
+        `I'm a coordinator helping the TN Connect team process new applications`,
+        `I assist the TN Connect team with intake coordination`,
+        `I work with the TN Connect team to welcome and screen new members`,
     ];
     const checks = [
         'Has any of our team reached out to you already? If yes, just let me know their name.',
@@ -439,9 +439,30 @@ const callGeminiWithRetry = async (chat, textInput, retries = 3, initialDelayMs 
     }
 };
 
+// Convert JID phone number to proper Ghanaian contact format
+// WhatsApp JID: 233506746307 → Ghana format: 0506746307 or +233506746307
+const formatPhoneNumberGH = (jidPhone) => {
+    if (!jidPhone) return '';
+    const digits = jidPhone.replace(/[^0-9]/g, '');
+    
+    // If starts with 233 (Ghana country code), convert to local format 0XXXXXXXXX
+    if (digits.startsWith('233') && digits.length === 12) {
+        return '0' + digits.substring(3);
+    }
+    
+    // If starts with 0 already, return as-is
+    if (digits.startsWith('0')) {
+        return digits;
+    }
+    
+    // Otherwise return with + prefix (international format)
+    return '+' + digits;
+};
+
 const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubRequest, adminName) => {
     if (!geminiClient) return;
-    const userPhone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+    const rawPhone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+    const userPhone = formatPhoneNumberGH(rawPhone); // Convert to Ghana format (0XXXXXXXXX)
 
     // 📦 LOAD HISTORY: Check in-memory first, then restore from Supabase
     let history = businessHubConversations.get(userPhone);
@@ -568,7 +589,7 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
                 if (screenshotBuffer && adminAlertsGroupJid) {
                     await sock.sendMessage(adminAlertsGroupJid, {
                         image: screenshotBuffer,
-                        caption: `📸 Chat transcript for +${userPhone}`
+                        caption: `📸 Chat transcript for ${userPhone}`
                     });
                     console.log(`📸 [Screenshot] Chat image sent to admin alerts group for +${userPhone}`);
                 }
@@ -591,14 +612,14 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
                 registry[bizHubRequest.key].status = 'non_resident_declined';
                 await saveRegistryItem(bizHubRequest.key, registry[bizHubRequest.key]);
             }
-            await sendAlertWithScreenshot(`🚫 *[NON-RESIDENT DECLINED]*\n\n📞 *Number:* +${userPhone}\n🏘️ Not based in Winneba and cannot attend physical meetings.\nIntake closed. Manual follow-up optional.`);
+            await sendAlertWithScreenshot(`🚫 *[NON-RESIDENT DECLINED]*\n\n📞 *Number:* ${userPhone}\n🏘️ Not based in Winneba and cannot attend physical meetings.\nIntake closed. Manual follow-up optional.`);
         }
 
         // Handle [TRIGGER_HUMAN] — escalate to admin group, pause AI for this user
         if (responseText.includes(HUMAN_MARKER)) {
             console.log(`⚠️ [Business Hub] Human handoff triggered for +${userPhone}. Alerting admins...`);
             humanTakeoverUsers.add(userPhone);
-            const alertText = `⚠️ *[HUMAN HANDOFF REQUIRED]* ⚠️\n\n📞 *Number:* +${userPhone}\n💬 *Last message:* "${textInput}"\n\nThe AI has been paused. Open a DM with +${userPhone} to take over.`;
+            const alertText = `⚠️ *[HUMAN HANDOFF REQUIRED]* ⚠️\n\n📞 *Number:* ${userPhone}\n💬 *Last message:* "${textInput}"\n\nThe AI has been paused. Open a DM with ${userPhone} to take over.`;
             await sendAlertWithScreenshot(alertText);
         }
 
@@ -610,7 +631,7 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
             const summaryLines = [
                 `✅ *[NEW BUSINESS HUB APPLICANT]* ✅`,
                 ``,
-                `📞 *Number:* +${userPhone}`,
+                `📞 *Number:* ${userPhone}`,
                 `👤 *Name:* ${applicantData.name || 'N/A'}`,
                 `🏢 *Business:* ${applicantData.businessName || 'N/A'} (${applicantData.businessType || 'N/A'})`,
                 `📍 *Location:* ${applicantData.location || 'N/A'}`,
