@@ -20,6 +20,7 @@
     "@napi-rs/canvas": "^1.0.0",
     "@supabase/supabase-js": "^2.106.0",
     "@whiskeysockets/baileys": "^6.7.2",
+    "baileys-antiban": "^3.8.11",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

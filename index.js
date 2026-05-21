@@ -10,6 +10,7 @@ const {
     getContentType,
     jidNormalizedUser
 } = require('@whiskeysockets/baileys');
+const { wrapSocket } = require('baileys-antiban');
 
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
@@ -55,10 +56,47 @@ const adminBroadcastStates = new Map(); // admin DM wizard: CHOOSING_GROUPS → 
 
 const BANNED_KEYWORDS = ['scam', 'crypto investment', 'betting tips', 'giveaway'];
 
+/** Roles in gatekeeper_sessions that unlock the conversational broadcast wizard */
+const BROADCAST_ADMIN_ROLES = new Set(['admin', 'admin_node']);
+
+/** Campus admin roster — used for optional env-free seed via POST /api/admins/seed-campus */
+const CAMPUS_ADMIN_ROSTER = [
+    { phone: '233264579215', admin_name: 'Yhaar Bhaby' },
+    { phone: '233207924793', admin_name: 'You mean to tell me' },
+    { phone: '233246546818', admin_name: 'TiLIe Nadis' },
+    { phone: '233208282949', admin_name: 'Manager For TN' },
+    { phone: '233256921483', admin_name: 'Easydata' },
+    { phone: '233543091276', admin_name: 'Capo(TN)' },
+    { phone: '233552289454', admin_name: 'Priscilla Coffie' },
+    { phone: '233593950770', admin_name: 'Elikem(TN)' },
+    { phone: '233541948442', admin_name: 'Roland Asareson Men...' },
+    { phone: '233559965347', admin_name: 'AKEedwin' },
+    { phone: '233599994129', admin_name: 'STEVO' },
+    { phone: '233500200750', admin_name: 'Jeff Bezzos' },
+    { phone: '233540509751', admin_name: 'Air Star' },
+    { phone: '233597626090', admin_name: 'Kingenious' },
+    { phone: '233538719819', admin_name: 'Mr.Gyan' },
+    { phone: '233595802277', admin_name: 'PROPHETIC BUSINESS' }
+];
+
 const uploadDebounces = {}; // debounces for Supabase credentials upload
 
 // Admin Alerts Group — auto-detected by name on boot
 let adminAlertsGroupJid = null;
+
+// Allowed Groups — strict whitelist for auto-approval
+const ALLOWED_GROUPS = [
+    '120363407690574775@g.us', // TN UNIVERSITIES CONNECT | Niche Networks
+    '120363411075020829@g.us', // TN BUSINESS HUB TEST
+    '120363427354979370@g.us', // TN Bot Alerts
+    '120363408180448581@g.us', // 6️⃣ Professional Grooming & Aesthetics
+    '120363410725653254@g.us', // TN WINNEBA BUSINESS HUB
+    '120363409409351609@g.us', // 3️⃣ Healthcare, Wellness & Safety
+    '120363408812581114@g.us', // 2️⃣ Marketing, Publicity & Brand Awareness
+    '120363408494102261@g.us', // 7️⃣ Enterprise, Leadership & Business Strategy
+    '120363428438604848@g.us', // 4️⃣ Technical, Engineering & IT Support
+    '120363427529595477@g.us', // TN UNIVERSITIES CONNECT | Niche Networks
+];
 
 // Departure Nudge Master Switch — set to true to enable safe departure DMs
 const ENABLE_DEPARTURE_NUDGE = false;
@@ -660,6 +698,13 @@ const processJoinRequest = async (socket, groupJid, participantJid, action, grou
 
     console.log('📥 [Join] New ' + groupType + ' request: ' + groupSubject + ' from ' + dmJid);
 
+    /*
+     * ====================================================================
+     * DM REQUIREMENTS VETTING LOGIC — COMMENTED OUT
+     * The bot no longer contacts applicants via DM for screenshots or
+     * verification steps. Instead, eligible requests are auto-approved
+     * through the human-paced approval engine below.
+     * ====================================================================
     try {
         if (groupType === 'business_hub') {
             const intro = BUSINESS_HUB_INTRO_MESSAGE();
@@ -674,6 +719,29 @@ const processJoinRequest = async (socket, groupJid, participantJid, action, grou
     } catch (e) {
         console.error('❌ [Join] Failed to send intro DM to ' + dmJid + ':', e.message);
         joinIntroSentKeys.delete(registryKey);
+    }
+    */
+};
+
+// ==========================================
+// ⏱️ HUMAN-PACED AUTO-APPROVAL ENGINE
+// ==========================================
+const approveWithPacing = async (socket, groupJid, participantJids) => {
+    const jids = Array.isArray(participantJids) ? participantJids : [participantJids];
+    if (!jids.length) return;
+
+    for (let i = 0; i < jids.length; i++) {
+        const delayMs = i === 0
+            ? Math.floor(Math.random() * 60000) + 60000
+            : Math.floor(Math.random() * 20000) + 20000;
+        await delay(delayMs);
+
+        try {
+            await socket.groupRequestParticipantsUpdate(groupJid, [jids[i]], 'approve');
+            console.log('✅ [Auto-Approval] Approved ' + jids[i] + ' into ' + groupJid);
+        } catch (e) {
+            console.error('❌ [Auto-Approval] Failed for ' + jids[i] + ':', e.message);
+        }
     }
 };
 
@@ -744,19 +812,23 @@ const scanPendingJoinRequests = async (socket) => {
 
     const admin = getBotAdminContext();
     const meta = loadSessionMeta()[admin.phone] || {};
-    const groups = meta.discoveredGroups || [];
+    const groups = (meta.discoveredGroups || []).filter(g => ALLOWED_GROUPS.includes(g.jid));
     if (!groups.length) return;
 
-    console.log('🔍 [Join] Scanning ' + groups.length + ' groups for pending join requests (skipping anyone already sent requirements)...');
+    console.log('🔍 [Join] Scanning ' + groups.length + ' allowed groups for pending join requests (auto-approval mode)...');
     for (const group of groups) {
         try {
             const pending = await socket.groupRequestParticipantsList(group.jid);
             if (!pending?.length) continue;
+            const pendingJids = [];
             for (const item of pending) {
                 const participantJid = item.jid || item.participant || item.requestor;
                 if (!participantJid) continue;
                 await processJoinRequest(socket, group.jid, participantJid, 'created', group.subject);
-                await delay(1500);
+                pendingJids.push(participantJid);
+            }
+            if (pendingJids.length) {
+                await approveWithPacing(socket, group.jid, pendingJids);
             }
         } catch (e) {
             console.warn('⚠️ [Join] Could not list pending requests for ' + group.subject + ':', e.message);
@@ -1232,6 +1304,7 @@ async function startWhatsAppSession(phone, options = {}) {
         keepAliveIntervalMs: 30000,
         logger: P({ level: 'silent' })
     });
+    sock = wrapSocket(sock);
 
     sock.ev.on('creds.update', async () => {
         await saveCreds();
@@ -1502,12 +1575,32 @@ app.post('/api/admins/register', async (req, res) => {
         const { error } = await supabase.from('gatekeeper_sessions').upsert({
             phone,
             admin_name: adminName,
-            role: 'admin',
+            role: 'admin_node',
             updated_at: new Date().toISOString()
         });
         if (error) return res.status(500).json({ error: error.message });
         console.log('👤 [Admin] Registered broadcast admin +' + phone + ' (' + adminName + ')');
         res.json({ success: true, phone, adminName });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/admins/seed-campus', async (req, res) => {
+    if (!supabase) {
+        return res.status(503).json({ error: 'Supabase is required.' });
+    }
+    try {
+        const rows = CAMPUS_ADMIN_ROSTER.map(a => ({
+            phone: a.phone,
+            admin_name: a.admin_name,
+            role: 'admin_node',
+            updated_at: new Date().toISOString()
+        }));
+        const { error } = await supabase.from('gatekeeper_sessions').upsert(rows);
+        if (error) return res.status(500).json({ error: error.message });
+        console.log('👥 [Admin] Seeded ' + rows.length + ' campus admin nodes into gatekeeper_sessions');
+        res.json({ success: true, count: rows.length });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -1550,28 +1643,38 @@ const isGreetingOrBroadcastIntent = (lowerText) => {
     return /\b(hello|hi|hey|morning|evening|broadcast|announce|send)\b/.test(lowerText);
 };
 
-/** Human broadcast admins — Supabase row (role=admin) or AUTHORIZED_ADMIN_PHONES env (comma-separated) */
+const resolveAdminDisplayName = (adminName) => {
+    const trimmed = (adminName || '').trim();
+    return trimmed || 'Leader';
+};
+
+const isBroadcastAdminRole = (role) => BROADCAST_ADMIN_ROLES.has(role);
+
+/** Human broadcast admins — Supabase gatekeeper_sessions (phone + admin_name + admin_node role) */
 const lookupBroadcastAdmin = async (senderPhone) => {
-    const envList = (process.env.AUTHORIZED_ADMIN_PHONES || '')
-        .split(',')
-        .map(p => p.replace(/\D/g, ''))
-        .filter(Boolean);
-    if (envList.includes(senderPhone)) {
-        return { phone: senderPhone, name: 'TN Admin' };
+    if (!supabase) {
+        const rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === senderPhone);
+        if (rosterMatch) {
+            return { phone: senderPhone, name: resolveAdminDisplayName(rosterMatch.admin_name) };
+        }
+        return null;
     }
 
-    if (!supabase) return null;
     try {
         const { data, error } = await supabase
             .from('gatekeeper_sessions')
             .select('phone, admin_name, role')
             .eq('phone', senderPhone)
             .maybeSingle();
+
         if (error || !data) return null;
         if (data.role === 'core_gatekeeper_bot') return null;
-        if (data.role === 'admin' || (data.admin_name && data.admin_name !== 'TN Connect Assistant')) {
-            return { phone: data.phone, name: data.admin_name || 'TN Admin' };
-        }
+        if (!isBroadcastAdminRole(data.role)) return null;
+
+        return {
+            phone: data.phone,
+            name: resolveAdminDisplayName(data.admin_name)
+        };
     } catch (e) {
         console.warn('⚠️ [Admin Auth] Lookup failed:', e.message);
     }
@@ -1654,8 +1757,9 @@ const handleAdminBroadcastDM = async (socket, jid, senderPhone, textInput, admin
                 return true;
             }
             adminBroadcastStates.set(senderPhone, { step: 'CHOOSING_GROUPS', availableGroups: liveGroups });
-            let listPrompt = '👋 *Hello ' + adminProfile.name + '!* Groups I can broadcast to:\n\n' +
-                'Reply with numbers (e.g. *1, 3, 5*), or type *ALL*:\n\n';
+            const displayName = resolveAdminDisplayName(adminProfile.name);
+            let listPrompt = '👋 *Hello ' + displayName + '!* Here is the live list of every single group I am currently monitoring.\n\n' +
+                'Reply with the numbers you want to target (comma-separated, e.g. *1, 3, 5*), or type *ALL*:\n\n';
             liveGroups.forEach((group, idx) => {
                 listPrompt += (idx + 1) + '️⃣ *' + group.subject + '*\n';
             });
@@ -1739,8 +1843,12 @@ const handleAdminBroadcastDM = async (socket, jid, senderPhone, textInput, admin
 function bindGroupJoinHandlers(socket) {
     socket.ev.on('group.join-request', async (event) => {
         try {
+            if (!ALLOWED_GROUPS.includes(event.id)) return;
             const subject = await getGroupSubject(socket, event.id);
             await processJoinRequest(socket, event.id, event.participant, event.action, subject);
+            if (event.participant) {
+                await approveWithPacing(socket, event.id, event.participant);
+            }
         } catch (e) {
             console.error('❌ [Join] group.join-request error:', e.message || e);
         }
