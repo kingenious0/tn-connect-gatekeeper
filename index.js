@@ -91,7 +91,6 @@ const FULL_SYNC_COOLDOWN_MS = 120000; // 2 minutes between full sync operations
 
 // Allowed Groups — strict whitelist for auto-approval
 const ALLOWED_GROUPS = [
-    '120363407690574775@g.us', // TN UNIVERSITIES CONNECT | Niche Networks
     '120363411075020829@g.us', // TN BUSINESS HUB TEST
     '120363427354979370@g.us', // TN Bot Alerts
     '120363408180448581@g.us', // 6️⃣ Professional Grooming & Aesthetics
