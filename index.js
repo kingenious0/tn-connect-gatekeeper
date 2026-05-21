@@ -150,7 +150,7 @@ const serializeDirectory = (dirPath) => {
             }
         }
     } catch (e) {
-        console.error(`❌ Failed to serialize folder \${dirPath}:`, e);
+        console.error('❌ Failed to serialize folder ' + dirPath + ':', e);
     }
     return filesData;
 };
