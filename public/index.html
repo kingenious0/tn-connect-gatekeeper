@@ -589,9 +589,10 @@
 
                 const data = await response.json();
 
-                if (data.pairingCode) {
+                const rawPairingCode = data.pairingCode || data.code;
+                if (rawPairingCode) {
                     // Inject and display OTP pairing code
-                    let formattedCode = data.pairingCode;
+                    let formattedCode = String(rawPairingCode);
                     if (formattedCode.length === 8) {
                         formattedCode = `${formattedCode.substring(0, 4)} - ${formattedCode.substring(4)}`;
                     }

@@ -30,6 +30,7 @@ const APPLICANTS_FILE = './business_hub_applicants.json';
 const GROUP_FLOWS_FILE = './group_flows.json';
 
 // Global variables for active socket sessions and status
+let sock = null; // Fix: Ensure global sock is explicitly initialized
 const activeSessions = {};
 const activeQRs = {};
 const pendingApprovals = new Map(); // screenshot aggregation cache
@@ -390,6 +391,8 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
     const rawPhone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
     const userPhone = formatPhoneNumberGH(rawPhone);
 
+    if (humanTakeoverUsers.has(userPhone)) return;
+
     let history = businessHubConversations.get(userPhone);
     if (!history) {
         if (supabase) {
@@ -478,8 +481,24 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
             await sendAntiBanMessage(sock, senderJid, { text: cleanResponse });
         }
 
+        const sendAlertWithScreenshot = async (alertText) => {
+            await sendAdminAlert(sock, alertText);
+            try {
+                const screenshotBuffer = generateChatScreenshot(history, '+' + userPhone, 'Business Hub Intake');
+                if (screenshotBuffer && adminAlertsGroupJid) {
+                    await sock.sendMessage(adminAlertsGroupJid, {
+                        image: screenshotBuffer,
+                        caption: '📸 Chat transcript for ' + userPhone
+                    });
+                    console.log('📸 [Screenshot] Chat image sent to admin alerts group for +' + userPhone);
+                }
+            } catch (imgErr) {
+                console.error('❌ [Screenshot] Failed to send chat image (text alert was sent):', imgErr.message);
+            }
+        };
+
         if (isDeclined) {
-            console.log(`🚫 [Business Hub] Non-resident declined physical attendance for +${userPhone}. Closing intake.`);
+            console.log('🚫 [Business Hub] Non-resident declined physical attendance for +' + userPhone + '. Closing intake.');
             humanTakeoverUsers.add(userPhone);
             businessHubConversations.delete(userPhone);
             if (supabase) {
@@ -490,13 +509,13 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
                 registry[bizHubRequest.key].status = 'non_resident_declined';
                 await saveRegistryItem(bizHubRequest.key, registry[bizHubRequest.key]);
             }
-            await sendAlertWithScreenshot(`🚫 *[NON-RESIDENT DECLINED]*\n\n📞 *Number:* ${userPhone}\n🏘️ Not based in Winneba and cannot attend physical meetings.\nIntake closed. Manual follow-up optional.`);
+            await sendAlertWithScreenshot('🚫 *[NON-RESIDENT DECLINED]*\n\n📞 *Number:* ' + userPhone + '\n🏘️ Not based in Winneba and cannot attend physical meetings.\nIntake closed. Manual follow-up optional.');
         }
 
         if (responseText.includes(HUMAN_MARKER)) {
-            console.log(`⚠️ [Business Hub] Human handooff triggered for +${userPhone}. Alerting admins...`);
+            console.log('⚠️ [Business Hub] Human handooff triggered for +' + userPhone + '. Alerting admins...');
             humanTakeoverUsers.add(userPhone);
-            const alertText = `⚠️ *[HUMAN HANDOFF REQUIRED]* ⚠️\n\n📞 *Number:* ${userPhone}\n💬 *Last message:* "${textInput}"\n\nThe AI has been paused. Open a DM with ${userPhone} to take over.`;
+            const alertText = '⚠️ *[HUMAN HANDOFF REQUIRED]* ⚠️\n\n📞 *Number:* ' + userPhone + '\n💬 *Last message:* "' + textInput + '"\n\nThe AI has been paused. Open a DM with ' + userPhone + ' to take over.';
             await sendAlertWithScreenshot(alertText);
         }
 
@@ -527,6 +546,239 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
     }
 };
 
+// ==========================================
+// 📱 WHATSAPP SESSION LIFECYCLE
+// ==========================================
+const getSocketPhone = () => {
+    if (!sock?.user?.id) return null;
+    return sock.user.id.split(':')[0].replace(/\D/g, '');
+};
+
+const normalizeApplicant = (row) => ({
+    id: row.id,
+    phone: row.phone || '',
+    name: row.name || '',
+    businessName: row.businessName || row.business_name || '',
+    businessType: row.businessType || row.business_type || '',
+    location: row.location || '',
+    services: row.services || '',
+    partnerships: row.partnerships || '',
+    benefit: row.benefit || '',
+    status: row.status || 'pending_review',
+    createdAt: row.createdAt || row.created_at || null
+});
+
+const detectAdminAlertsGroup = async (socket) => {
+    try {
+        const groups = await socket.groupFetchAllParticipating();
+        const keyword = (process.env.ADMIN_ALERTS_GROUP_KEYWORD || 'admin alert').toLowerCase();
+        for (const [, meta] of Object.entries(groups)) {
+            const subject = (meta.subject || '').toLowerCase();
+            if (subject.includes('admin') && (subject.includes('alert') || subject.includes(keyword))) {
+                adminAlertsGroupJid = meta.id;
+                console.log('📢 [Alerts] Admin alerts group detected: ' + meta.subject);
+                return;
+            }
+        }
+    } catch (e) {
+        console.warn('⚠️ [Alerts] Could not scan groups for admin alerts:', e.message);
+    }
+};
+
+const refreshDiscoveredGroups = async (socket, phone) => {
+    try {
+        const groups = await socket.groupFetchAllParticipating();
+        const discoveredGroups = Object.values(groups).map(g => ({
+            jid: g.id,
+            subject: g.subject || 'Unknown Group'
+        }));
+        const meta = loadSessionMeta();
+        meta[phone] = {
+            ...(meta[phone] || {}),
+            discoveredGroups,
+            updatedAt: new Date().toISOString()
+        };
+        saveSessionMeta(meta);
+        triggerSessionBackup(
+            phone,
+            meta[phone].adminName || 'TN Connect Assistant',
+            meta[phone].selectedGroups || [],
+            discoveredGroups
+        );
+        return discoveredGroups;
+    } catch (e) {
+        console.warn('⚠️ [Groups] Failed to refresh discovered groups:', e.message);
+        return (loadSessionMeta()[phone] || {}).discoveredGroups || [];
+    }
+};
+
+async function teardownSession(phone) {
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    if (sock) {
+        try {
+            sock.ev.removeAllListeners();
+            if (typeof sock.logout === 'function') {
+                await sock.logout();
+            } else {
+                sock.ws?.close?.();
+            }
+        } catch (e) {
+            console.warn('⚠️ [Session] Socket close warning:', e.message);
+        }
+        sock = null;
+    }
+    const dirPath = path.join(__dirname, 'auth_session_' + cleanPhone);
+    if (fs.existsSync(dirPath)) {
+        fs.rmSync(dirPath, { recursive: true, force: true });
+    }
+    if (supabase && cleanPhone) {
+        try {
+            await supabase.from('gatekeeper_sessions').delete().eq('phone', cleanPhone);
+        } catch (e) {
+            console.warn('⚠️ [Supabase] Session delete warning:', e.message);
+        }
+    }
+}
+
+async function startWhatsAppSession(phone, options = {}) {
+    const {
+        adminName = 'TN Connect Assistant',
+        selectedGroups = [],
+        adminRole = 'Admin',
+        wipeLocalAuth = false
+    } = options;
+
+    const dirPath = path.join(__dirname, 'auth_session_' + phone);
+    if (wipeLocalAuth && fs.existsSync(dirPath)) {
+        fs.rmSync(dirPath, { recursive: true, force: true });
+    }
+    if (!fs.existsSync(dirPath)) {
+        fs.mkdirSync(dirPath, { recursive: true });
+    }
+
+    const meta = loadSessionMeta();
+    meta[phone] = {
+        ...(meta[phone] || {}),
+        adminName,
+        role: adminRole,
+        selectedGroups,
+        discoveredGroups: meta[phone]?.discoveredGroups || []
+    };
+    saveSessionMeta(meta);
+
+    if (sock) {
+        try {
+            sock.ev.removeAllListeners();
+            sock.ws?.close?.();
+        } catch (e) { /* ignore */ }
+        sock = null;
+    }
+
+    const { state, saveCreds } = await useMultiFileAuthState(dirPath);
+    const { version } = await fetchLatestBaileysVersion();
+
+    sock = makeWASocket({
+        version,
+        auth: state,
+        printQRInTerminal: false,
+        keepAliveIntervalMs: 30000,
+        logger: P({ level: 'silent' })
+    });
+
+    sock.ev.on('creds.update', async () => {
+        await saveCreds();
+        const discovered = (loadSessionMeta()[phone] || {}).discoveredGroups || [];
+        triggerSessionBackup(phone, adminName, selectedGroups, discovered);
+        if (supabase) {
+            try {
+                const files = serializeDirectory(dirPath);
+                await supabase.from('gatekeeper_sessions').upsert({
+                    phone,
+                    admin_name: adminName,
+                    role: 'core_gatekeeper_bot',
+                    selected_groups: selectedGroups,
+                    discovered_groups: discovered,
+                    files,
+                    updated_at: new Date().toISOString()
+                });
+            } catch (e) {
+                console.error('❌ [Supabase] Creds backup failed:', e.message);
+            }
+        }
+    });
+
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect } = update;
+        if (connection === 'open') {
+            console.log('🚀 SUCCESS: TN Connect Assistant is linked (+' + phone + ')');
+            await detectAdminAlertsGroup(sock);
+            await refreshDiscoveredGroups(sock, phone);
+        }
+        if (connection === 'close') {
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log('📴 [WhatsApp] Connection closed. Reconnect=' + shouldReconnect + ' code=' + statusCode);
+            if (!shouldReconnect) {
+                sock = null;
+            }
+        }
+    });
+
+    bindBotMessageHandlers(sock);
+    return sock;
+}
+
+async function restoreCoreSessionOnBoot() {
+    let localDirs = [];
+    try {
+        localDirs = fs.readdirSync(__dirname, { withFileTypes: true })
+            .filter(d => d.isDirectory() && d.name.startsWith('auth_session_'))
+            .map(d => d.name.replace('auth_session_', ''));
+    } catch (e) {
+        console.warn('⚠️ [Boot] Could not scan auth_session folders:', e.message);
+    }
+
+    let phone = localDirs[0];
+    let adminName = 'TN Connect Assistant';
+    let selectedGroups = [];
+
+    if (!phone && supabase) {
+        try {
+            const { data, error } = await supabase
+                .from('gatekeeper_sessions')
+                .select('phone, admin_name, selected_groups, files')
+                .eq('role', 'core_gatekeeper_bot')
+                .maybeSingle();
+            if (!error && data?.phone && data.files) {
+                phone = String(data.phone).replace(/\D/g, '');
+                adminName = data.admin_name || adminName;
+                selectedGroups = data.selected_groups || [];
+                const dirPath = path.join(__dirname, 'auth_session_' + phone);
+                deserializeDirectory(dirPath, data.files);
+                console.log('☁️ [Boot] Restored WhatsApp credentials from Supabase for +' + phone);
+            }
+        } catch (e) {
+            console.warn('⚠️ [Boot] Supabase session restore skipped:', e.message);
+        }
+    }
+
+    if (!phone) return;
+
+    try {
+        const meta = loadSessionMeta();
+        await startWhatsAppSession(phone, {
+            adminName: meta[phone]?.adminName || adminName,
+            selectedGroups: meta[phone]?.selectedGroups || selectedGroups,
+            adminRole: meta[phone]?.role || 'Admin',
+            wipeLocalAuth: false
+        });
+        console.log('🔄 [Boot] Reconnected WhatsApp session for +' + phone);
+    } catch (e) {
+        console.error('❌ [Boot] Failed to restore WhatsApp session:', e.message);
+        sock = null;
+    }
+}
+
 const server = http.createServer(app);
 const wss = new ws.Server({ server });
 
@@ -546,90 +798,130 @@ wss.on('connection', ws => {
     ws.send('Hello from WebSocket server!');
 });
 
+// ==========================================
+// 🌐 EXPRESS REST API ENDPOINTS (FIXED FOR FRONTEND INTERATION)
+// ==========================================
+
 app.get('/api/sessions', async (req, res) => {
     try {
-        if (sock && sock.user) {
-            return res.json({ status: 'connected', user: sock.user });
+        const sessionArray = [];
+        const connectedPhone = getSocketPhone();
+
+        if (sock && sock.user && connectedPhone) {
+            const meta = loadSessionMeta()[connectedPhone] || {};
+            sessionArray.push({
+                phone: connectedPhone,
+                name: meta.adminName || 'TN Connect Assistant',
+                connected: true,
+                discoveredGroups: meta.discoveredGroups || []
+            });
+            return res.json(sessionArray);
         }
+
         if (supabase) {
-            const { data } = await supabase.from('gatekeeper_sessions').select('phone').eq('role', 'core_gatekeeper_bot').single();
-            if (data) return res.json({ status: 'resting_in_cloud', phone: data.phone });
+            const { data, error } = await supabase
+                .from('gatekeeper_sessions')
+                .select('phone, admin_name, discovered_groups')
+                .eq('role', 'core_gatekeeper_bot')
+                .maybeSingle();
+
+            if (!error && data?.phone) {
+                const cloudPhone = String(data.phone).replace(/\D/g, '');
+                const meta = loadSessionMeta()[cloudPhone] || {};
+                sessionArray.push({
+                    phone: cloudPhone,
+                    name: data.admin_name || meta.adminName || 'TN Connect Assistant',
+                    connected: false,
+                    discoveredGroups: meta.discoveredGroups || data.discovered_groups || []
+                });
+                return res.json(sessionArray);
+            }
         }
-        res.json({ status: 'disconnected' });
+
+        res.json(sessionArray);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('❌ Error in GET /api/sessions:', err.message);
+        res.status(500).json([]);
     }
 });
 
 app.get('/api/business-hub/applicants', async (req, res) => {
     try {
         if (supabase) {
-            const { data, error } = await supabase.from('business_hub_applicants').select('*').order('created_at', { ascending: false });
-            if (!error && data) return res.json(data);
+            const { data, error } = await supabase
+                .from('business_hub_applicants')
+                .select('*')
+                .order('created_at', { ascending: false });
+            if (!error && data) return res.json(data.map(normalizeApplicant));
         }
-        res.json(loadApplicants());
+        
+        const localApplicants = loadApplicants();
+        res.json(Array.isArray(localApplicants) ? localApplicants.map(normalizeApplicant) : []);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("❌ Error in GET /api/business-hub/applicants:", err.message);
+        res.status(500).json([]);
     }
 });
 
 app.post('/api/auth/request-code', async (req, res) => {
-    let { phone } = req.body;
-    if (!phone) return res.status(400).json({ error: "Phone target parameter is required." });
+    let phone = req.body.adminPhone || req.body.phone;
+    const adminName = (req.body.adminName || 'TN Connect Assistant').trim();
+    const selectedGroups = Array.isArray(req.body.selectedGroups) ? req.body.selectedGroups : [];
+    const adminRole = req.body.adminRole || 'Admin';
 
-    phone = phone.replace(/\D/g, '');
-    console.log(`📡 [Pairing Router] Triggering engine layer code lifecycle for +${phone}`);
+    if (!phone) {
+        return res.status(400).json({ error: 'Phone target parameter is required (adminPhone or phone).' });
+    }
+
+    phone = String(phone).replace(/\D/g, '');
+    console.log('📡 [Pairing Router] Triggering pairing for +' + phone + ' (' + adminName + ')');
 
     try {
-        const dirPath = path.join(__dirname, 'auth_session_' + phone);
-        if (fs.existsSync(dirPath)) fs.rmSync(dirPath, { recursive: true, force: true });
-        fs.mkdirSync(dirPath, { recursive: true });
-
-        const { state, saveCreds } = await useMultiFileAuthState(dirPath);
-        const { version } = await fetchLatestBaileysVersion();
-
-        sock = makeWASocket({
-            version,
-            auth: state,
-            printQRInTerminal: false,
-            keepAliveIntervalMs: 30000,
-            logger: P({ level: 'silent' })
-        });
-
-        sock.ev.on('creds.update', async () => {
-            await saveCreds();
-            if (supabase) {
-                const files = serializeDirectory(dirPath);
-                await supabase.from('gatekeeper_sessions').upsert({
-                    phone,
-                    admin_name: "TN Connect Assistant",
-                    role: "core_gatekeeper_bot",
-                    files,
-                    updated_at: new Date().toISOString()
-                });
+        if (sock && sock.user) {
+            const existingPhone = getSocketPhone();
+            if (existingPhone === phone) {
+                return res.json({ status: 'CONNECTED', pairingCode: null, success: true });
             }
-        });
+        }
 
-        sock.ev.on('connection.update', (update) => {
-            const { connection } = update;
-            if (connection === 'open') console.log(`🚀 SUCCESS: TN Connect Assistant is 100% Linked via Server!`);
+        await startWhatsAppSession(phone, {
+            adminName,
+            selectedGroups,
+            adminRole,
+            wipeLocalAuth: true
         });
-
-        // Initialize background group monitors
-        bindBotMessageHandlers(sock);
 
         setTimeout(async () => {
             try {
+                if (!sock) {
+                    return res.status(500).json({ error: 'WhatsApp socket failed to initialize.' });
+                }
                 const pairingCode = await sock.requestPairingCode(phone);
-                console.log(`🔑 Generated Teleprompter Code Connection: ${pairingCode}`);
-                res.json({ success: true, code: pairingCode });
+                console.log('🔑 Generated pairing code: ' + pairingCode);
+                res.json({ success: true, pairingCode, code: pairingCode });
             } catch (err) {
-                res.status(500).json({ error: "Meta system credentials handshake error." });
+                console.error('❌ Pairing code error:', err.message || err);
+                res.status(500).json({ error: 'Meta system credentials handshake error.' });
             }
         }, 3000);
-
     } catch (err) {
+        console.error('❌ request-code error:', err.message || err);
         res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/sessions/:phone/disconnect', async (req, res) => {
+    const phone = String(req.params.phone || '').replace(/\D/g, '');
+    if (!phone) {
+        return res.status(400).json({ success: false, error: 'Invalid phone.' });
+    }
+    try {
+        await teardownSession(phone);
+        console.log('🔌 [Session] Disconnected and removed session for +' + phone);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('❌ Disconnect error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
@@ -664,11 +956,28 @@ function bindBotMessageHandlers(socket) {
     });
 }
 
-// 🚨 Fixed Express 5 Wildcard Matcher
-app.get('/*splat', (req, res) => {
+async function sendAdminAlert(socketInstance, alertText) {
+    if (adminAlertsGroupJid) {
+        try {
+            await socketInstance.sendMessage(adminAlertsGroupJid, { text: alertText });
+        } catch (e) {
+            console.error("❌ Failed to send message to admin group:", e.message);
+        }
+    } else {
+        console.log("⚠️ No admin alerts group JID detected yet. Printing alert to console:\n" + alertText);
+    }
+}
+
+// Express 5–safe API 404 (bare `/api/*` crashes path-to-regexp)
+app.use('/api', (req, res) => {
+    res.status(404).json({ error: 'API Route not found.' });
+});
+
+app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-server.listen(PORT, () => {
-    console.log(`⚡️ [Server] Gatekeeper is live on port ${PORT}`);
+server.listen(PORT, async () => {
+    console.log('⚡️ [Server] Gatekeeper is live on port ' + PORT);
+    await restoreCoreSessionOnBoot();
 });
