@@ -10,7 +10,8 @@ const {
     delay,
     downloadMediaMessage,
     getContentType,
-    jidNormalizedUser
+    jidNormalizedUser,
+    WAMessageStubType
 } = require('@whiskeysockets/baileys');
 
 const { Boom } = require('@hapi/boom');
@@ -1881,6 +1882,22 @@ function bindBotMessageHandlers(socket) {
             const isGroup = jid.endsWith('@g.us');
             const sender = isGroup ? (msg.key.participant || jid) : jid;
             const senderPhone = senderPhoneFromJid(sender);
+
+            // Status group-mention interceptor (stub type 210 = STATUS_MENTION)
+            if (isGroup && ALLOWED_GROUPS.includes(jid) && (msg.messageStubType === WAMessageStubType.STATUS_MENTION || msg.isMentionedInStatus)) {
+                try {
+                    await socket.sendMessage(jid, { delete: msg.key });
+                    const offender = msg.key.participant || sender;
+                    await socket.sendMessage(jid, {
+                        text: '⚠️ *Security Alert:* @' + offender.split('@')[0] + ', mass group-tagging via Status updates is strictly prohibited in this network. The notification has been scrubbed.',
+                        mentions: [offender]
+                    });
+                    console.log('🔇 [Status Mention] Intercepted and deleted from +' + senderPhone + ' in ' + jid);
+                } catch (e) {
+                    console.error('❌ [Status Mention] Failed to intercept:', e.message);
+                }
+                continue;
+            }
 
             const adminProfile = await lookupBroadcastAdmin(senderPhone);
             const isAdmin = !!adminProfile;
