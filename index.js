@@ -69,36 +69,17 @@ if (supabase) {
 // ==========================================
 // 📋 OFFICIAL MESSAGES & GROUPS REFERENCE
 // ==========================================
-const GATEKEEPER_MESSAGE = \`*{hello|hi|hey}, we just got your request to join our group*
-🚨ACTION REQUIRED🚨
-
-To be approved into the niche group first join one of the general market groups (tap links in channel to see all the links). 
-
-TikTok: Follow *TN FILMS GH*
-
-
-We'll view your chat before approving. {If we get to your chat and you've not done these we will cancel your request.|Please complete these steps to avoid your request being cancelled.} Follow these steps 
-
-Facebook/Instagram: Follow *TN UNIVERSITIES CONNECT*
-
-WhatsApp Channel: Join our official update channel: https://whatsapp.com/channel/0029VbCNby81CYoPIpEQMD1D
-⚠️ Delay = Cancellation. We are clearing the pending list.
-
-Once you've followed all, send a DONE({with a screenshot|along with screenshots}). 
-
-We are viewing chats before approving. If we get to your chat twice and you've not done so we will cancel your request
-
-SEND ME SCREENSHOTS WHEN DONE\`;
+const GATEKEEPER_MESSAGE = `*{hello|hi|hey}, we just got your request to join our group*\r\n🚨ACTION REQUIRED🚨\r\n\r\nTo be approved into the niche group first join one of the general market groups (tap links in channel to see all the links).\r\n\r\nTikTok: Follow *TN FILMS GH*\r\n\r\n\r\nWe\'ll view your chat before approving. {If we get to your chat and you\'ve not done these we will cancel your request.|Please complete these steps to avoid your request being cancelled.} Follow these steps \r\n\r\nFacebook/Instagram: Follow *TN UNIVERSITIES CONNECT*\r\n\r\nWhatsApp Channel: Join our official update channel: https://whatsapp.com/channel/0029VbCNby81CYoPIpEQMD1D\r\n⚠️ Delay = Cancellation. We are clearing the pending list.\r\n\r\nOnce you\'ve followed all, send a DONE({with a screenshot|along with screenshots}). \r\n\r\nWe are viewing chats before approving. If we get to your chat twice and you\'ve not done so we will cancel your request\r\n\r\nSEND ME SCREENSHOTS WHEN DONE`;
 
 // Business Hub intro DM — dynamic variations to avoid WhatsApp spam detection
 // The bot introduces itself as an "intake assistant" for TN Uni Connect (no admin name, no bot mention)
 const BUSINESS_HUB_INTRO_MESSAGE = () => {
     const greetings = ['Hello', 'Hi there', 'Hey', 'Good day', 'Greetings'];
     const intros = [
-        \`I'm the virtual intake coordinator assisting the TN Connect team\`,
-        \`I'm a coordinator helping the TN Connect team process new applications\`,
-        \`I assist the TN Connect team with intake coordination\`,
-        \`I work with the TN Connect team to welcome and screen new members\`,
+        `I\'m the virtual intake coordinator assisting the TN Connect team`,
+        `I\'m a coordinator helping the TN Connect team process new applications`,
+        `I assist the TN Connect team with intake coordination`,
+        `I work with the TN Connect team to welcome and screen new members`,
     ];
     const checks = [
         'Has any of our team reached out to you already? If yes, just let me know their name.',
@@ -106,57 +87,19 @@ const BUSINESS_HUB_INTRO_MESSAGE = () => {
         'Have you been contacted by one of our admins yet? If yes, reply with their name.',
     ];
     const prompts = [
-        \`If not, could you share a bit about yourself and your business? We'd love to know what you do and where you're based in Winneba.\`,
-        \`If no one has reached out yet, tell us a little about yourself — your business name, what you do, and your location in Winneba.\`,
-        \`If not, kindly introduce yourself — what's your business about and where are you located in Winneba?\`,
+        `If not, could you share a bit about yourself and your business? We\'d love to know what you do and where you\'re based in Winneba.`,
+        `If no one has reached out yet, tell us a little about yourself — your business name, what you do, and your location in Winneba.`,
+        `If not, kindly introduce yourself — what\'s your business about and where are you located in Winneba?`,
     ];
     const g = greetings[Math.floor(Math.random() * greetings.length)];
     const i = intros[Math.floor(Math.random() * intros.length)];
     const c = checks[Math.floor(Math.random() * checks.length)];
     const p = prompts[Math.floor(Math.random() * prompts.length)];
-    return \`\${g}, thanks for requesting to join TN Winneba Business Hub 💼. \${i}.\\n\\n\${c}\\n\\n\${p}\`;
+    return `${g}, thanks for requesting to join TN Winneba Business Hub 💼. ${i}.\n\n${c}\n\n${p}`;
 };
 
 // Gemini AI system prompt — acts as a professional business intake coordinator
-const BUSINESS_HUB_SYSTEM_PROMPT = \`You are a sharp, professional business intake coordinator for TN Winneba Business Hub — an exclusive networking community for serious business owners in Winneba, Ghana. You represent the TN Uni Connect admin team.
-
-Your job is to screen and onboard business applicants through a natural, concise conversation. Collect the following in this EXACT order, one or two at a time:
-1. Full name
-2. Are they a resident of Winneba? (ask this SECOND — before any business questions)
-3. Business name and type
-4. Exact location in Winneba
-5. Products or services offered
-6. Open to partnerships and vacancy sharing? (yes/no)
-7. How TN members and Ghanaians benefit from their business
-
-Residency Rule (CRITICAL — check at step 2, immediately after getting their name):
-- If they say YES to being a Winneba resident → continue with the remaining business questions (3-7)
-- If they say NO to being a Winneba resident → ask ONE follow-up: "If we organise a physical meet-up in Winneba, would you be able to attend?"
-  - If YES to attending → continue with the remaining business questions (3-7), treat as approved
-  - If NO to attending → close gracefully immediately. Thank them warmly, tell them the hub is currently focused on people who can be physically present in Winneba, let them know TN Connect has other exciting opportunities suited to them and an admin will reach out soon. Then end with the [RESIDENT_DECLINED] marker on a new line. No JSON needed for this path. Do NOT ask any more business questions.
-
-Style Rules:
-- Be concise. One clear question per message, maximum two sentences. No paragraphs.
-- Sound like a sharp, experienced business networker — warm but efficient
-- Never sound like a bot or a form. Speak like a real person
-- Do not use excessive emojis — one per message maximum
-- Never reveal you are an AI
-- If someone gives a vague or off-topic reply, redirect sharply but politely in one line
-- Never ask all questions at once
-- Variation Rule: Always change your phrasing for every new user and every turn. Use synonyms for questions like "What is your business name?", "What do you do?", "Where are you located?". NEVER repeat the same greeting or question structure across different conversations.
-
-Completion (when ALL points collected and residency approved):
-First send a warm, professional closing message (2-3 lines max) telling them their application is received and an admin will review it. Then on a NEW LINE add this exact marker followed immediately by a valid JSON object (no space):
-[INTAKE_COMPLETE]{"name":"...","businessName":"...","businessType":"...","location":"...","services":"...","partnerships":"...","benefit":"...","resident":"...","canAttend":"..."}
-
-Escalation Rule:
-- If the applicant is hostile, threatening, deeply confused, or explicitly asks for a real person for 2+ consecutive turns, append [TRIGGER_HUMAN] at the very end of your reply. Stay polite in your visible message.
-
-Anti-Spam Variation Rule (CRITICAL for WhatsApp compliance):
-- NEVER use the exact same wording twice across different conversations
-- Vary your phrasing by ~20% each time — use synonyms, rearrange sentence structure, change greeting style
-- This prevents WhatsApp from flagging identical bulk messages as spam
-- Example: Instead of always saying "What's your business name?" — alternate with "Tell me about your business", "What do you do professionally?", "What's the name of your venture?" etc.\`;
+const BUSINESS_HUB_SYSTEM_PROMPT = `You are a sharp, professional business intake coordinator for TN Winneba Business Hub — an exclusive networking community for serious business owners in Winneba, Ghana. You represent the TN Uni Connect admin team.\r\n\r\nYour job is to screen and onboard business applicants through a natural, concise conversation. Collect the following in this EXACT order, one or two at a time:\r\n1. Full name\r\n2. Are they a resident of Winneba? (ask this SECOND — before any business questions)\r\n3. Business name and type\r\n4. Exact location in Winneba\r\n5. Products or services offered\r\n6. Open to partnerships and vacancy sharing? (yes/no)\r\n7. How TN members and Ghanaians benefit from their business\r\n\r\nResidency Rule (CRITICAL — check at step 2, immediately after getting their name):\r\n- If they say YES to being a Winneba resident → continue with the remaining business questions (3-7)\r\n- If they say NO to being a Winneba resident → ask ONE follow-up: "If we organise a physical meet-up in Winneba, would you be able to attend?"\r\n  - If YES to attending → continue with the remaining business questions (3-7), treat as approved\r\n  - If NO to attending → close gracefully immediately. Thank them warmly, tell them the hub is currently focused on people who can be physically present in Winneba, let them know TN Connect has other exciting opportunities suited to them and an admin will reach out soon. Then end with the [RESIDENT_DECLINED] marker on a new line. No JSON needed for this path. Do NOT ask any more business questions.\r\n\r\nStyle Rules:\r\n- Be concise. One clear question per message, maximum two sentences. No paragraphs.\r\n- Sound like a sharp, experienced business networker — warm but efficient\r\n- Never sound like a bot or a form. Speak like a real person\r\n- Do not use excessive emojis — one per message maximum\r\n- Never reveal you are an AI\r\n- If someone gives a vague or off-topic reply, redirect sharply but politely in one line\r\n- Never ask all questions at once\r\n- Variation Rule: Always change your phrasing for every new user and every turn. Use synonyms for questions like "What is your business name?", "What do you do?", "Where are you located?". NEVER repeat the same greeting or question structure across different conversations.\r\n\r\nCompletion (when ALL points collected and residency approved):\r\nFirst send a warm, professional closing message (2-3 lines max) telling them their application is received and an admin will review it. Then on a NEW LINE add this exact marker followed immediately by a valid JSON object (no space):\r\n[INTAKE_COMPLETE]{"name":"...","businessName":"...","businessType":"...","location":"...","services":"...","partnerships":"...","benefit":"...","resident":"...","canAttend":"..."}\r\n\r\nEscalation Rule:\r\n- If the applicant is hostile, threatening, deeply confused, or explicitly asks for a real person for 2+ consecutive turns, append [TRIGGER_HUMAN] at the very end of your reply. Stay polite in your visible message.\r\n\r\nAnti-Spam Variation Rule (CRITICAL for WhatsApp compliance):\r\n- NEVER use the exact same wording twice across different conversations\r\n- Vary your phrasing by ~20% each time — use synonyms, rearrange sentence structure, change greeting style\r\n- This prevents WhatsApp from flagging identical bulk messages as spam\r\n- Example: Instead of always saying "What\'s your business name?" — alternate with "Tell me about your business", "What do you do professionally?", "What\'s the name of your venture?" etc.`;
 
 
 // Gemini client + model initialization
@@ -206,7 +149,7 @@ const serializeDirectory = (dirPath) => {
             }
         }
     } catch (e) {
-        console.error(\`❌ Failed to serialize folder \${dirPath}:\`, e);
+        console.error(`❌ Failed to serialize folder \${dirPath}:`, e);
     }
     return filesData;
 };
@@ -222,7 +165,7 @@ const deserializeDirectory = (dirPath, filesData) => {
             fs.writeFileSync(filePath, Buffer.from(base64Content, 'base64'));
         }
     } catch (e) {
-        console.error(\`❌ Failed to deserialize folder \${dirPath}:\`, e);
+        console.error(`❌ Failed to deserialize folder \${dirPath}:`, e);
     }
 };
 
@@ -298,10 +241,10 @@ const triggerSessionBackup = (phone, adminName, selectedGroups, discoveredGroups
 
     uploadDebounces[phone] = setTimeout(async () => {
         try {
-            const dirPath = \`auth_session_\${phone}\`;
+            const dirPath = `auth_session_${phone}`;
             const files = serializeDirectory(dirPath);
 
-            console.log(\`💾 [Supabase] Pushing backup for Admin node +\${phone}...\`);
+            console.log(`💾 [Supabase] Pushing backup for Admin node +${phone}...`);
             const { error } = await supabase
                 .from('gatekeeper_sessions')
                 .upsert({
@@ -313,10 +256,10 @@ const triggerSessionBackup = (phone, adminName, selectedGroups, discoveredGroups
                     updated_at: new Date().toISOString()
                 });
 
-            if (error) console.error(\`❌ [Supabase] Backup error for +\${phone}:\`, error.message);
-            else console.log(\`✅ [Supabase] Session data backed up successfully for +\${phone}!\`);
+            if (error) console.error(`❌ [Supabase] Backup error for +${phone}:`, error.message);
+            else console.log(`✅ [Supabase] Session data backed up successfully for +${phone}!`);
         } catch (err) {
-            console.error(\`❌ [Supabase] System error backing up session for +\${phone}:\`, err);
+            console.error(`❌ [Supabase] System error backing up session for +${phone}:`, err);
         }
     }, 5000); // 5 seconds debounce
 };
@@ -429,7 +372,7 @@ const callGeminiWithRetry = async (chat, textInput, retries = 3, initialDelayMs 
             const errStr = String(err.message || err);
             const isTransient = errStr.includes('503') || errStr.includes('429') || errStr.includes('Service Unavailable') || errStr.includes('Resource exhausted') || errStr.includes('overloaded');
             if (isTransient && i < retries - 1) {
-                console.warn(\`⚠️ [Gemini] API returned transient error: "\${errStr}". Retrying in \${currentDelay}ms (Attempt \${i + 1}/\${retries})...\`);
+                console.warn(`⚠️ [Gemini] API returned transient error: "${errStr}". Retrying in ${currentDelay}ms (Attempt ${i + 1}/${retries})...`);
                 await delay(currentDelay);
                 currentDelay *= 2;
                 continue;
@@ -476,7 +419,7 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
                     .single();
                 if (data?.history) {
                     history = JSON.parse(data.history);
-                    console.log(\`📦 [Business Hub] Restored \${history.length} conversation turns from Supabase for +\${userPhone}\`);
+                    console.log(`📦 [Business Hub] Restored ${history.length} conversation turns from Supabase for +${userPhone}`);
                 }
             } catch (e) { /* no prior history */ }
         }
@@ -489,12 +432,7 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
     const adminRole = cleanPhone ? ((loadSessionMeta()[cleanPhone] || {}).role || 'Admin') : 'Admin';
 
     // Inject actual admin name and role into Gemini's prompt instructions
-    const dynamicInstruction = \`\${BUSINESS_HUB_SYSTEM_PROMPT}
-
-IMPORTANT CONTEXT FOR YOUR IDENTITY:
-- You represent the specific admin named "\${adminName}" who is the "\${adminRole}" of TN Uni Connect.
-- If the applicant mentions they haven't gotten any text from an admin, or asks who you are, explain that you are the virtual intake coordinator assisting \${adminName} (\${adminRole}) to gather their business details.
-- Never use placeholder texts like "[Your Name]". Introduce yourself naturally as a human coordinator or professional assistant representing \${adminName} (e.g., "I'm the virtual intake coordinator assisting \${adminName}..." or "I'm a coordinator assisting \${adminName}..."). Never write grammatically incorrect sentences like "My name is your virtual intake coordinator".\`;
+    const dynamicInstruction = `${BUSINESS_HUB_SYSTEM_PROMPT}\r\n\r\nIMPORTANT CONTEXT FOR YOUR IDENTITY:\r\n- You represent the specific admin named "${adminName}" who is the "${adminRole}" of TN Uni Connect.\r\n- If the applicant mentions they haven't gotten any text from an admin, or asks who you are, explain that you are the virtual intake coordinator assisting ${adminName} (${adminRole}) to gather their business details.\r\n- Never use placeholder texts like "[Your Name]". Introduce yourself naturally as a human coordinator or professional assistant representing ${adminName} (e.g., "I'm the virtual intake coordinator assisting ${adminName}..." or "I'm a coordinator assisting ${adminName}..."). Never write grammatically incorrect sentences like "My name is your virtual intake coordinator".`;
 
     try {
         const modelInstance = geminiClient.getGenerativeModel({
@@ -574,8 +512,8 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
             return hist.map(h => {
                 const role = h.role === 'user' ? '👤 Applicant' : '🤖 Assistant';
                 const text = (h.parts?.[0]?.text || '').substring(0, 300); // cap per turn
-                return \`\${role}: "\${text}\${text.length >= 300 ? '...' : ''}"\` ;
-            }).join('\\n');
+                return `${role}: "${text}${text.length >= 300 ? '...' : ''}"` ;
+            }).join('\n');
         };
         const transcript = buildTranscript(history);
 
@@ -585,13 +523,13 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
             await sendAdminAlert(sock, alertText);
             // Then try to generate and send screenshot image
             try {
-                const screenshotBuffer = generateChatScreenshot(history, \`+\${userPhone}\`, 'Business Hub Intake');
+                const screenshotBuffer = generateChatScreenshot(history, `+${userPhone}`, 'Business Hub Intake');
                 if (screenshotBuffer && adminAlertsGroupJid) {
                     await sock.sendMessage(adminAlertsGroupJid, {
                         image: screenshotBuffer,
-                        caption: \`📸 Chat transcript for \${userPhone}\`
+                        caption: `📸 Chat transcript for ${userPhone}`
                     });
-                    console.log(\`📸 [Screenshot] Chat image sent to admin alerts group for +\${userPhone}\`);
+                    console.log(`📸 [Screenshot] Chat image sent to admin alerts group for +${userPhone}`);
                 }
             } catch (imgErr) {
                 console.error('❌ [Screenshot] Failed to send chat image (text alert was sent):', imgErr.message);
@@ -600,7 +538,7 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
 
         // 🚫 RESIDENT DECLINED: Non-resident won't attend. Close gracefully, stop AI, notify admins
         if (isDeclined) {
-            console.log(\`🚫 [Business Hub] Non-resident declined physical attendance for +\${userPhone}. Closing intake.\`);
+            console.log(`🚫 [Business Hub] Non-resident declined physical attendance for +${userPhone}. Closing intake.`);
             humanTakeoverUsers.add(userPhone); // Stop AI responses
             businessHubConversations.delete(userPhone);
             // Clean from Supabase
@@ -612,34 +550,34 @@ IMPORTANT CONTEXT FOR YOUR IDENTITY:
                 registry[bizHubRequest.key].status = 'non_resident_declined';
                 await saveRegistryItem(bizHubRequest.key, registry[bizHubRequest.key]);
             }
-            await sendAlertWithScreenshot(\`🚫 *[NON-RESIDENT DECLINED]*\\n\\n📞 *Number:* \${userPhone}\\n🏘️ Not based in Winneba and cannot attend physical meetings.\\nIntake closed. Manual follow-up optional.\`);
+            await sendAlertWithScreenshot(`🚫 *[NON-RESIDENT DECLINED]*\n\n📞 *Number:* ${userPhone}\n🏘️ Not based in Winneba and cannot attend physical meetings.\nIntake closed. Manual follow-up optional.`);
         }
 
         // Handle [TRIGGER_HUMAN] — escalate to admin group, pause AI for this user
         if (responseText.includes(HUMAN_MARKER)) {
-            console.log(\`⚠️ [Business Hub] Human handoff triggered for +\${userPhone}. Alerting admins...\`);
+            console.log(`⚠️ [Business Hub] Human handoff triggered for +${userPhone}. Alerting admins...`);
             humanTakeoverUsers.add(userPhone);
-            const alertText = \`⚠️ *[HUMAN HANDOFF REQUIRED]* ⚠️\\n\\n📞 *Number:* \${userPhone}\\n💬 *Last message:* "\${textInput}"\\n\\nThe AI has been paused. Open a DM with \${userPhone} to take over.\`;
+            const alertText = `⚠️ *[HUMAN HANDOFF REQUIRED]* ⚠️\n\n📞 *Number:* ${userPhone}\n💬 *Last message:* "${textInput}"\n\nThe AI has been paused. Open a DM with ${userPhone} to take over.`;
             await sendAlertWithScreenshot(alertText);
         }
 
         if (isComplete && applicantData) {
-            console.log(\`✅ [Business Hub] Intake complete for +\${userPhone}. Saving applicant data...\`);
+            console.log(`✅ [Business Hub] Intake complete for +${userPhone}. Saving applicant data...`);
             await saveApplicant(applicantData);
 
             // 🔔 Alert admins with full applicant summary + transcript
             const summaryLines = [
-                \`✅ *[NEW BUSINESS HUB APPLICANT]* ✅\`,
-                \`\`,
-                \`📞 *Number:* \${userPhone}\`,
-                \`👤 *Name:* \${applicantData.name || 'N/A'}\`,
-                \`🏢 *Business:* \${applicantData.businessName || 'N/A'} (\${applicantData.businessType || 'N/A'})\`,
-                \`📍 *Location:* \${applicantData.location || 'N/A'}\`,
-                \`🛒 *Services:* \${applicantData.services || 'N/A'}\`,
-                \`🤝 *Partnerships:* \${applicantData.partnerships || 'N/A'}\`,
-                \`💡 *Benefit:* \${applicantData.benefit || 'N/A'}\`,
-                \`🏘️ *Winneba Resident:* \${applicantData.resident || 'N/A'}\`
-            ].join('\\n');
+                `✅ *[NEW BUSINESS HUB APPLICANT]* ✅`,
+                ``,
+                `📞 *Number:* ${userPhone}`,
+                `👤 *Name:* ${applicantData.name || 'N/A'}`,
+                `🏢 *Business:* ${applicantData.businessName || 'N/A'} (${applicantData.businessType || 'N/A'})`,
+                `📍 *Location:* ${applicantData.location || 'N/A'}`,
+                `🛒 *Services:* ${applicantData.services || 'N/A'}`,
+                `🤝 *Partnerships:* ${applicantData.partnerships || 'N/A'}`,
+                `💡 *Benefit:* ${applicantData.benefit || 'N/A'}`,
+                `🏘️ *Winneba Resident:* ${applicantData.resident || 'N/A'}`
+            ].join('\n');
             await sendAlertWithScreenshot(summaryLines);
 
             // Update registry status so this user is not processed again
