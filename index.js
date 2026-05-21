@@ -166,7 +166,7 @@ const deserializeDirectory = (dirPath, filesData) => {
             fs.writeFileSync(filePath, Buffer.from(base64Content, 'base64'));
         }
     } catch (e) {
-        console.error(`❌ Failed to deserialize folder \${dirPath}:`, e);
+        console.error('❌ Failed to deserialize folder ' + dirPath + ':', e);
     }
 };
 
