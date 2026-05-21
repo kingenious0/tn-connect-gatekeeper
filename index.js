@@ -51,6 +51,9 @@ const pendingVerifications = new Map(); // Gemini screenshot verification tracke
 const businessHubConversations = new Map(); // Gemini AI conversation history per user (phone -> history[])
 const humanTakeoverUsers = new Set(); // users flagged for manual admin takeover
 const joinIntroSentKeys = new Set(); // prevents re-sending requirements on rescans / restart
+const adminBroadcastStates = new Map(); // admin DM wizard: CHOOSING_GROUPS → CAPTURING_RAW_BODY
+
+const BANNED_KEYWORDS = ['scam', 'crypto investment', 'betting tips', 'giveaway'];
 
 const uploadDebounces = {}; // debounces for Supabase credentials upload
 
@@ -1486,6 +1489,30 @@ app.post('/api/auth/request-code', async (req, res) => {
     }
 });
 
+app.post('/api/admins/register', async (req, res) => {
+    let phone = String(req.body.adminPhone || req.body.phone || '').replace(/\D/g, '');
+    const adminName = (req.body.adminName || 'Admin').trim();
+    if (!phone) {
+        return res.status(400).json({ error: 'adminPhone or phone is required.' });
+    }
+    if (!supabase) {
+        return res.status(503).json({ error: 'Supabase is required to register broadcast admins.' });
+    }
+    try {
+        const { error } = await supabase.from('gatekeeper_sessions').upsert({
+            phone,
+            admin_name: adminName,
+            role: 'admin',
+            updated_at: new Date().toISOString()
+        });
+        if (error) return res.status(500).json({ error: error.message });
+        console.log('👤 [Admin] Registered broadcast admin +' + phone + ' (' + adminName + ')');
+        res.json({ success: true, phone, adminName });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.post('/api/sessions/:phone/disconnect', async (req, res) => {
     const phone = String(req.params.phone || '').replace(/\D/g, '');
     if (!phone) {
@@ -1503,16 +1530,211 @@ app.post('/api/sessions/:phone/disconnect', async (req, res) => {
 
 async function sendAntiBanMessage(socketInstance, jid, content) {
     try {
+        await socketInstance.sendPresenceUpdate('available', jid);
+        await delay(Math.floor(Math.random() * 1800) + 1200);
         await socketInstance.sendPresenceUpdate('composing', jid);
-        const durationBase = content.text ? content.text.length * 15 : 2000;
-        const randomWalkJitter = Math.floor(Math.random() * 1500) - 300;
-        await delay(Math.max(2500, durationBase + randomWalkJitter));
+        const charactersCount = content.text ? content.text.length : 40;
+        const typingDurationBase = 1200 + charactersCount * 16;
+        const patternShatterVariance = Math.floor(Math.random() * 1400) - 400;
+        await delay(Math.max(2600, typingDurationBase + patternShatterVariance));
         await socketInstance.sendPresenceUpdate('paused', jid);
         return await socketInstance.sendMessage(jid, content);
     } catch (e) {
         return await socketInstance.sendMessage(jid, content);
     }
 }
+
+const senderPhoneFromJid = (jid) => participantDigits(jidNormalizedUser(jid || ''));
+
+const isGreetingOrBroadcastIntent = (lowerText) => {
+    return /\b(hello|hi|hey|morning|evening|broadcast|announce|send)\b/.test(lowerText);
+};
+
+/** Human broadcast admins — Supabase row (role=admin) or AUTHORIZED_ADMIN_PHONES env (comma-separated) */
+const lookupBroadcastAdmin = async (senderPhone) => {
+    const envList = (process.env.AUTHORIZED_ADMIN_PHONES || '')
+        .split(',')
+        .map(p => p.replace(/\D/g, ''))
+        .filter(Boolean);
+    if (envList.includes(senderPhone)) {
+        return { phone: senderPhone, name: 'TN Admin' };
+    }
+
+    if (!supabase) return null;
+    try {
+        const { data, error } = await supabase
+            .from('gatekeeper_sessions')
+            .select('phone, admin_name, role')
+            .eq('phone', senderPhone)
+            .maybeSingle();
+        if (error || !data) return null;
+        if (data.role === 'core_gatekeeper_bot') return null;
+        if (data.role === 'admin' || (data.admin_name && data.admin_name !== 'TN Connect Assistant')) {
+            return { phone: data.phone, name: data.admin_name || 'TN Admin' };
+        }
+    } catch (e) {
+        console.warn('⚠️ [Admin Auth] Lookup failed:', e.message);
+    }
+    return null;
+};
+
+const fetchLiveMonitoredGroups = async (socket) => {
+    const groups = await socket.groupFetchAllParticipating();
+    return Object.values(groups).map(g => ({
+        jid: g.id,
+        subject: g.subject || 'Unknown Group'
+    }));
+};
+
+const handleGroupModeration = async (socket, msg, jid, sender, senderPhone, isAdmin) => {
+    if (isAdmin) return false;
+
+    const textInput = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+    const lowerText = textInput.toLowerCase();
+    const mentionedCount = msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.length || 0;
+
+    const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/');
+    const containsBadWord = BANNED_KEYWORDS.some(word => lowerText.includes(word));
+    const containsMassMention = textInput.includes('@everyone') || textInput.includes('@all') || mentionedCount > 8;
+
+    if (!containsLink && !containsBadWord && !containsMassMention) return false;
+
+    let shouldAct = containsMassMention || containsBadWord;
+
+    if (!shouldAct && containsLink && supabase) {
+        try {
+            const { data } = await supabase
+                .from('gatekeeper_sessions')
+                .select('anti_link_groups')
+                .eq('role', 'core_gatekeeper_bot')
+                .maybeSingle();
+            const protectedGroups = data?.anti_link_groups || [];
+            shouldAct = protectedGroups.includes(jid);
+        } catch (e) { /* skip link guard if config missing */ }
+    }
+
+    if (!shouldAct) return false;
+
+    try {
+        await socket.sendMessage(jid, {
+            delete: { remoteJid: jid, fromMe: false, id: msg.key.id, participant: sender }
+        });
+        let alertText = '⚠️ *TN Connect Shield:* Link sharing is restricted in this group.';
+        if (containsMassMention) {
+            alertText = '🚫 *TN Connect Shield:* Unauthorized mass mentions are not allowed.';
+        } else if (containsBadWord) {
+            alertText = '🚫 *TN Connect Shield:* This message was removed for policy violation.';
+        }
+        await sendAntiBanMessage(socket, jid, { text: alertText, mentions: [sender] });
+        console.log('🔒 [Moderation] Removed message from +' + senderPhone + ' in ' + jid);
+    } catch (e) {
+        console.error('❌ [Moderation] Failed:', e.message);
+    }
+    return true;
+};
+
+const handleAdminBroadcastDM = async (socket, jid, senderPhone, textInput, adminProfile) => {
+    const lowerText = textInput.toLowerCase();
+    let adminState = adminBroadcastStates.get(senderPhone);
+
+    if (lowerText === 'cancel') {
+        adminBroadcastStates.delete(senderPhone);
+        await sendAntiBanMessage(socket, jid, { text: '✅ Broadcast cancelled. Say hello anytime to start again.' });
+        return true;
+    }
+
+    if (!adminState && isGreetingOrBroadcastIntent(lowerText)) {
+        await socket.sendMessage(jid, { text: '⏳ Scanning groups the bot is in…' });
+        try {
+            const liveGroups = await fetchLiveMonitoredGroups(socket);
+            if (!liveGroups.length) {
+                await sendAntiBanMessage(socket, jid, {
+                    text: '⚠️ The bot is not in any groups yet. Add the bot as admin to your groups first.'
+                });
+                return true;
+            }
+            adminBroadcastStates.set(senderPhone, { step: 'CHOOSING_GROUPS', availableGroups: liveGroups });
+            let listPrompt = '👋 *Hello ' + adminProfile.name + '!* Groups I can broadcast to:\n\n' +
+                'Reply with numbers (e.g. *1, 3, 5*), or type *ALL*:\n\n';
+            liveGroups.forEach((group, idx) => {
+                listPrompt += (idx + 1) + '️⃣ *' + group.subject + '*\n';
+            });
+            listPrompt += '\n_Type *cancel* to stop._';
+            await sendAntiBanMessage(socket, jid, { text: listPrompt });
+        } catch (e) {
+            console.error('❌ [Broadcast] Group fetch failed:', e.message);
+            await sendAntiBanMessage(socket, jid, { text: '❌ Could not load group list. Try again shortly.' });
+        }
+        return true;
+    }
+
+    if (adminState?.step === 'CHOOSING_GROUPS') {
+        const available = adminState.availableGroups;
+        let mappedTargetJids = [];
+
+        if (lowerText === 'all') {
+            mappedTargetJids = available.map(g => g.jid);
+        } else {
+            const choices = textInput.split(',').map(c => parseInt(c.trim(), 10) - 1);
+            for (const index of choices) {
+                if (Number.isNaN(index) || index < 0 || index >= available.length) {
+                    await sendAntiBanMessage(socket, jid, {
+                        text: '❌ Invalid selection. Use numbers between 1 and ' + available.length + ', or type ALL.'
+                    });
+                    return true;
+                }
+                mappedTargetJids.push(available[index].jid);
+            }
+        }
+
+        if (!mappedTargetJids.length) {
+            await sendAntiBanMessage(socket, jid, { text: '❌ No groups selected. Try again (e.g. 1, 2 or ALL).' });
+            return true;
+        }
+
+        adminBroadcastStates.set(senderPhone, { step: 'CAPTURING_RAW_BODY', targetJids: mappedTargetJids });
+        await sendAntiBanMessage(socket, jid, {
+            text: '🎯 *' + mappedTargetJids.length + ' group(s) locked.*\n\nNow send the announcement text. It will be posted *exactly* as you type it — no edits.'
+        });
+        return true;
+    }
+
+    if (adminState?.step === 'CAPTURING_RAW_BODY') {
+        const destinations = adminState.targetJids;
+        const rawBody = textInput;
+
+        await socket.sendMessage(jid, {
+            text: '🚀 Broadcasting to ' + destinations.length + ' group(s) with anti-ban pacing…'
+        });
+
+        let sent = 0;
+        for (const groupJid of destinations) {
+            try {
+                await sendAntiBanMessage(socket, groupJid, { text: rawBody });
+                sent += 1;
+                const restMs = Math.floor(Math.random() * 3000) + 6000;
+                await delay(restMs);
+            } catch (e) {
+                console.error('❌ [Broadcast] Failed for ' + groupJid + ':', e.message);
+            }
+        }
+
+        adminBroadcastStates.delete(senderPhone);
+        await sendAntiBanMessage(socket, jid, {
+            text: '✅ Done! Message sent to ' + sent + '/' + destinations.length + ' groups.'
+        });
+        return true;
+    }
+
+    if (!adminState) {
+        await sendAntiBanMessage(socket, jid, {
+            text: '👋 Hi ' + adminProfile.name + '! Say *hello* or *broadcast* to send an announcement to your groups.'
+        });
+        return true;
+    }
+
+    return false;
+};
 
 function bindGroupJoinHandlers(socket) {
     socket.ev.on('group.join-request', async (event) => {
@@ -1533,10 +1755,31 @@ function bindBotMessageHandlers(socket) {
             if (!msg.message || msg.key.fromMe) continue;
 
             const jid = msg.key.remoteJid;
-            if (!jid || jid.endsWith('@g.us')) continue;
+            if (!jid) continue;
+
+            const isGroup = jid.endsWith('@g.us');
+            const sender = isGroup ? (msg.key.participant || jid) : jid;
+            const senderPhone = senderPhoneFromJid(sender);
+
+            const adminProfile = await lookupBroadcastAdmin(senderPhone);
+            const isAdmin = !!adminProfile;
+
+            if (isGroup) {
+                const moderated = await handleGroupModeration(socket, msg, jid, sender, senderPhone, isAdmin);
+                if (moderated) continue;
+                continue;
+            }
+
+            if (isAdmin) {
+                const { text: dmText } = extractIncomingPayload(msg);
+                const handled = await handleAdminBroadcastDM(socket, jid, senderPhone, dmText, adminProfile);
+                if (handled) continue;
+            }
+
+            if (adminBroadcastStates.has(senderPhone)) continue;
 
             const bizHubRequest = findBusinessHubRequest(jid);
-            if (bizHubRequest) {
+            if (bizHubRequest && !humanTakeoverUsers.has(formatPhoneNumberGH(senderPhone))) {
                 const { text, hasImage } = extractIncomingPayload(msg);
                 const textInput = text || (hasImage ? '(Applicant sent an image)' : '');
                 if (textInput) {
