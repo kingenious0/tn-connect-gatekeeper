@@ -515,7 +515,7 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
             return hist.map(h => {
                 const role = h.role === 'user' ? '👤 Applicant' : '🤖 Assistant';
                 const text = (h.parts?.[0]?.text || '').substring(0, 300); // cap per turn
-                return `${role}: "${text}${text.length >= 300 ? '...' : ''}"` ;
+                return role + ': "' + text + (text.length >= 300 ? '...' : '') + '"' ;
             }).join('\n');
         };
         const transcript = buildTranscript(history);
