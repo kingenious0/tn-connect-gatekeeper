@@ -1879,7 +1879,7 @@ function bindBotMessageHandlers(socket) {
             const senderPhone = senderPhoneFromJid(sender);
 
             // Status group-mention interceptor (stub type 210 = STATUS_MENTION)
-            if (isGroup && ALLOWED_GROUPS.includes(jid) && (msg.messageStubType === WAMessageStubType.STATUS_MENTION || msg.isMentionedInStatus)) {
+            if (isGroup && (msg.messageStubType === WAMessageStubType.STATUS_MENTION || msg.isMentionedInStatus)) {
                 try {
                     await socket.sendMessage(jid, { delete: msg.key });
                     const offender = msg.key.participant || sender;
