@@ -26,7 +26,7 @@ if (GlobalFonts) {
     for (const fp of fontPaths) {
         if (fs.existsSync(fp)) {
             GlobalFonts.registerFromPath(fp, 'Inter');
-            console.log(`🔤 [Screenshot] Registered font: ${fp}`);
+            console.log(\`🔤 [Screenshot] Registered font: \${fp}\`);
             break;
         }
     }
@@ -48,10 +48,10 @@ const COLORS = {
 
 // Font config — use Inter if registered, fallback to sans-serif
 const FONT_FAMILY = 'Inter, sans-serif';
-const FONT_MAIN = `14px ${FONT_FAMILY}`;
-const FONT_HEADER = `bold 16px ${FONT_FAMILY}`;
-const FONT_SUB = `12px ${FONT_FAMILY}`;
-const FONT_TIME = `11px ${FONT_FAMILY}`;
+const FONT_MAIN = \`14px \${FONT_FAMILY}\`;
+const FONT_HEADER = \`bold 16px \${FONT_FAMILY}\`;
+const FONT_SUB = \`12px \${FONT_FAMILY}\`;
+const FONT_TIME = \`11px \${FONT_FAMILY}\`;
 
 /**
  * Wrap text to fit within a given pixel width, handling newlines
@@ -59,7 +59,7 @@ const FONT_TIME = `11px ${FONT_FAMILY}`;
 function wrapText(ctx, text, maxWidth) {
     const lines = [];
     // Split by newlines first
-    const paragraphs = text.split('\n');
+    const paragraphs = text.split('\\n');
     
     for (const paragraph of paragraphs) {
         if (paragraph.trim() === '') {
@@ -70,7 +70,7 @@ function wrapText(ctx, text, maxWidth) {
         let currentLine = '';
 
         for (const word of words) {
-            const testLine = currentLine ? `${currentLine} ${word}` : word;
+            const testLine = currentLine ? \`\${currentLine} \${word}\` : word;
             const metrics = ctx.measureText(testLine);
             if (metrics.width > maxWidth && currentLine) {
                 lines.push(currentLine);
@@ -106,17 +106,24 @@ function generateChatScreenshot(history, contactName, subtitle = 'Business Hub A
         const HEADER_HEIGHT = 60;
         const TIME_ROW_HEIGHT = 18;
 
-        // Clean conversation entries — strip markers
+        // Clean conversation entries — strip markers and deduplicate
         const cleanEntries = [];
+        const seenTexts = new Set(); // Track unique messages to prevent duplicates
         for (const entry of history) {
             let text = (entry.parts?.[0]?.text || '')
-                .replace(/\[INTAKE_COMPLETE\].*/s, '')
-                .replace(/\[RESIDENT_DECLINED\]/g, '')
-                .replace(/\[TRIGGER_HUMAN\]/g, '')
+                .replace(/\\[INTAKE_COMPLETE\\].*/s, '')
+                .replace(/\\[RESIDENT_DECLINED\\]/g, '')
+                .replace(/\\[TRIGGER_HUMAN\\]/g, '')
                 .trim();
             if (!text) continue;
             // Cap individual messages to 500 chars for readability
             if (text.length > 500) text = text.substring(0, 497) + '...';
+            
+            // Skip duplicate messages (same role + same text)
+            const uniqueKey = \`\${entry.role}::\${text}\`;
+            if (seenTexts.has(uniqueKey)) continue;
+            seenTexts.add(uniqueKey);
+            
             cleanEntries.push({ role: entry.role, text });
         }
 
@@ -156,7 +163,7 @@ function generateChatScreenshot(history, contactName, subtitle = 'Business Hub A
 
         // Back arrow
         ctx.fillStyle = COLORS.headerSub;
-        ctx.font = `18px ${FONT_FAMILY}`;
+        ctx.font = \`18px \${FONT_FAMILY}\`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         ctx.fillText('←', 12, HEADER_HEIGHT / 2);
@@ -169,7 +176,7 @@ function generateChatScreenshot(history, contactName, subtitle = 'Business Hub A
 
         // Profile icon (person silhouette placeholder)
         ctx.fillStyle = '#8696a0';
-        ctx.font = `bold 16px ${FONT_FAMILY}`;
+        ctx.font = \`bold 16px \${FONT_FAMILY}\`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const initial = (contactName || '?').replace('+', '')[0];
@@ -249,7 +256,7 @@ function generateChatScreenshot(history, contactName, subtitle = 'Business Hub A
             
             // Check marks for user messages
             if (isUser) {
-                const checkAndTime = `${timeStr}  ✓✓`;
+                const checkAndTime = \`\${timeStr}  ✓✓\`;
                 ctx.fillText(checkAndTime, x + bubbleWidth - ctx.measureText(checkAndTime).width - 8, y + bubbleHeight - TIME_ROW_HEIGHT + 2);
             } else {
                 ctx.fillText(timeStr, x + bubbleWidth - ctx.measureText(timeStr).width - 8, y + bubbleHeight - TIME_ROW_HEIGHT + 2);
