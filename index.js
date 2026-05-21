@@ -1,6 +1,15 @@
 // Version 1.3 Pro - Single-Worker Cloud Engine with Anti-Ban & Gemini Multimodal
 require('dotenv').config();
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, delay, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason,
+    fetchLatestBaileysVersion,
+    delay,
+    downloadMediaMessage,
+    getContentType,
+    jidNormalizedUser
+} = require('@whiskeysockets/baileys');
 
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
@@ -290,7 +299,8 @@ const findPendingRequest = (senderJid) => {
     
     for (const key of Object.keys(registry)) {
         const entry = registry[key];
-        if (key.includes(cleanSender) && entry.status !== 'approved') {
+        const closedStatuses = ['approved', 'verification_complete', 'interview_complete', 'non_resident_declined'];
+        if (key.includes(cleanSender) && !closedStatuses.includes(entry.status)) {
             const isBizHub = entry.groupType === 'business_hub' || isGroupJidBusinessHub(entry.groupJid, entry.phone);
             if (!isBizHub) {
                 return { key, ...entry };
@@ -313,6 +323,313 @@ const findBusinessHubRequest = (senderJid) => {
         }
     }
     return null;
+};
+
+// ==========================================
+// 🚪 JOIN REQUEST & GATEKEEPER AUTOMATION
+// ==========================================
+const groupSubjectCache = new Map();
+const joinIntroSentKeys = new Set();
+
+const parseSpintax = (template) => {
+    return template.replace(/\{([^{}]+)\}/g, (_, options) => {
+        const parts = options.split('|');
+        return parts[Math.floor(Math.random() * parts.length)];
+    });
+};
+
+const buildGatekeeperMessage = () => parseSpintax(GATEKEEPER_MESSAGE);
+
+const participantDigits = (jid) => (jid || '').replace(/@s\.whatsapp\.net/gi, '').replace(/@lid/gi, '').replace(/\D/g, '');
+
+const buildRegistryKey = (groupJid, participantJid) => {
+    return groupJid + '_' + participantDigits(participantJid);
+};
+
+const dmJidFromParticipant = (participantJid) => {
+    const normalized = jidNormalizedUser(participantJid);
+    if (normalized.endsWith('@g.us')) return null;
+    return normalized.includes('@') ? normalized : normalized + '@s.whatsapp.net';
+};
+
+const getBotAdminContext = () => {
+    const phone = getSocketPhone() || activeSessionPhone || '';
+    const meta = loadSessionMeta()[phone] || {};
+    return {
+        phone,
+        name: meta.adminName || 'TN Connect Assistant'
+    };
+};
+
+const getGroupSubject = async (socket, groupJid) => {
+    if (groupSubjectCache.has(groupJid)) return groupSubjectCache.get(groupJid);
+
+    const botPhone = getSocketPhone();
+    const meta = loadSessionMeta()[botPhone] || {};
+    const discovered = (meta.discoveredGroups || []).find(g => g.jid === groupJid);
+    if (discovered?.subject) {
+        groupSubjectCache.set(groupJid, discovered.subject);
+        return discovered.subject;
+    }
+
+    try {
+        const metadata = await socket.groupMetadata(groupJid);
+        const subject = metadata.subject || 'Unknown Group';
+        groupSubjectCache.set(groupJid, subject);
+        return subject;
+    } catch (e) {
+        console.warn('⚠️ [Groups] Could not fetch metadata for ' + groupJid + ':', e.message);
+        return 'Unknown Group';
+    }
+};
+
+const classifyGroupType = (groupSubject, groupJid, adminPhone) => {
+    if (isBusinessHubGroup(groupSubject) || isGroupJidBusinessHub(groupJid, adminPhone)) {
+        return 'business_hub';
+    }
+    return 'niche';
+};
+
+const extractIncomingPayload = (msg) => {
+    const content = msg.message;
+    if (!content) return { text: '', hasImage: false };
+
+    const text =
+        content.conversation ||
+        content.extendedTextMessage?.text ||
+        content.imageMessage?.caption ||
+        content.documentMessage?.caption ||
+        '';
+
+    const msgType = getContentType(content);
+    const hasImage = msgType === 'imageMessage' || (msgType === 'documentMessage' && content.documentMessage?.mimetype?.startsWith('image/'));
+
+    return { text: (text || '').trim(), hasImage, msgType, content };
+};
+
+const downloadImageBuffer = async (socket, msg) => {
+    try {
+        const buffer = await downloadMediaMessage(
+            msg,
+            'buffer',
+            {},
+            { logger: P({ level: 'silent' }), reuploadRequest: socket.updateMediaMessage }
+        );
+        const mime = msg.message?.imageMessage?.mimetype || msg.message?.documentMessage?.mimetype || 'image/jpeg';
+        return { buffer, mime };
+    } catch (e) {
+        console.error('❌ [Media] Failed to download image:', e.message);
+        return null;
+    }
+};
+
+const classifyScreenshotWithGemini = async (buffer, mime) => {
+    if (!geminiClient) return [];
+    try {
+        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+        const result = await model.generateContent([
+            {
+                text: 'You verify join-request screenshots for TN Connect Ghana. ' +
+                    'Reply with ONLY comma-separated tags from this list: TIKTOK, SOCIAL, CHANNEL, UNKNOWN. ' +
+                    'TIKTOK = TikTok follow for TN FILMS GH. ' +
+                    'SOCIAL = Instagram or Facebook follow for TN UNIVERSITIES CONNECT. ' +
+                    'CHANNEL = WhatsApp channel membership. ' +
+                    'If unclear, include UNKNOWN.'
+            },
+            { inlineData: { data: buffer.toString('base64'), mimeType: mime || 'image/jpeg' } }
+        ]);
+        const raw = (result.response.text() || '').toUpperCase();
+        const tags = [];
+        if (raw.includes('TIKTOK')) tags.push('tiktok');
+        if (raw.includes('SOCIAL')) tags.push('social');
+        if (raw.includes('CHANNEL')) tags.push('channel');
+        return tags;
+    } catch (e) {
+        console.error('❌ [Gemini] Screenshot classify failed:', e.message);
+        return [];
+    }
+};
+
+const initVerificationState = (userPhone) => {
+    const state = { tiktok: false, social: false, channel: false, screenshots: 0 };
+    pendingVerifications.set(userPhone, state);
+    return state;
+};
+
+const getVerificationState = (userPhone) => {
+    if (!pendingVerifications.has(userPhone)) {
+        return initVerificationState(userPhone);
+    }
+    return pendingVerifications.get(userPhone);
+};
+
+const processJoinRequest = async (socket, groupJid, participantJid, action, groupSubjectHint) => {
+    if (!participantJid || !groupJid) return;
+    if (action && action !== 'created') {
+        console.log('ℹ️ [Join] Ignoring join action "' + action + '" for ' + participantJid);
+        return;
+    }
+
+    const dmJid = dmJidFromParticipant(participantJid);
+    if (!dmJid) {
+        console.warn('⚠️ [Join] Could not resolve DM JID for participant:', participantJid);
+        return;
+    }
+
+    const registryKey = buildRegistryKey(groupJid, participantJid);
+    if (joinIntroSentKeys.has(registryKey)) return;
+
+    const registry = loadRegistry();
+    const existing = registry[registryKey];
+    if (existing && ['intro_sent', 'pending', 'verification_complete', 'interview_complete'].includes(existing.status)) {
+        console.log('ℹ️ [Join] Already processed ' + registryKey + ' (status: ' + existing.status + ')');
+        return;
+    }
+
+    const admin = getBotAdminContext();
+    const groupSubject = groupSubjectHint || await getGroupSubject(socket, groupJid);
+    const groupType = classifyGroupType(groupSubject, groupJid, admin.phone);
+
+    const entry = {
+        admin: admin.name,
+        phone: admin.phone,
+        groupJid,
+        groupSubject,
+        groupType,
+        participantJid: dmJid,
+        status: 'intro_sent',
+        timestamp: new Date().toISOString()
+    };
+
+    await saveRegistryItem(registryKey, entry);
+    joinIntroSentKeys.add(registryKey);
+
+    console.log('📥 [Join] New ' + groupType + ' request: ' + groupSubject + ' from ' + dmJid);
+
+    try {
+        if (groupType === 'business_hub') {
+            const intro = BUSINESS_HUB_INTRO_MESSAGE();
+            await sendAntiBanMessage(socket, dmJid, { text: intro });
+            console.log('💼 [Business Hub] Intro DM sent to ' + dmJid);
+        } else {
+            const intro = buildGatekeeperMessage();
+            await sendAntiBanMessage(socket, dmJid, { text: intro });
+            initVerificationState(formatPhoneNumberGH(participantDigits(dmJid)));
+            console.log('🛡️ [Gatekeeper] Requirements DM sent to ' + dmJid);
+        }
+    } catch (e) {
+        console.error('❌ [Join] Failed to send intro DM to ' + dmJid + ':', e.message);
+        joinIntroSentKeys.delete(registryKey);
+    }
+};
+
+const scanPendingJoinRequests = async (socket) => {
+    const admin = getBotAdminContext();
+    const meta = loadSessionMeta()[admin.phone] || {};
+    const groups = meta.discoveredGroups || [];
+    if (!groups.length) return;
+
+    console.log('🔍 [Join] Scanning ' + groups.length + ' groups for pending join requests...');
+    for (const group of groups) {
+        try {
+            const pending = await socket.groupRequestParticipantsList(group.jid);
+            if (!pending?.length) continue;
+            for (const item of pending) {
+                const participantJid = item.jid || item.participant || item.requestor;
+                if (!participantJid) continue;
+                await processJoinRequest(socket, group.jid, participantJid, 'created', group.subject);
+                await delay(1500);
+            }
+        } catch (e) {
+            console.warn('⚠️ [Join] Could not list pending requests for ' + group.subject + ':', e.message);
+        }
+    }
+};
+
+const handleGatekeeperDM = async (socket, senderJid, msg, pendingRequest) => {
+    const userPhone = formatPhoneNumberGH(participantDigits(senderJid));
+    if (humanTakeoverUsers.has(userPhone)) return;
+
+    const { text, hasImage } = extractIncomingPayload(msg);
+    const verify = getVerificationState(userPhone);
+    let verificationUpdated = false;
+
+    if (hasImage) {
+        const media = await downloadImageBuffer(socket, msg);
+        if (media?.buffer) {
+            verify.screenshots += 1;
+            const tags = await classifyScreenshotWithGemini(media.buffer, media.mime);
+            if (tags.includes('tiktok')) verify.tiktok = true;
+            if (tags.includes('social')) verify.social = true;
+            if (tags.includes('channel')) verify.channel = true;
+            verificationUpdated = true;
+
+            const confirmed = [];
+            if (verify.tiktok) confirmed.push('TikTok ✓');
+            if (verify.social) confirmed.push('Instagram/Facebook ✓');
+            if (verify.channel) confirmed.push('WhatsApp Channel ✓');
+
+            let feedback = '📸 Screenshot received.';
+            if (confirmed.length) feedback += ' Verified: ' + confirmed.join(', ') + '.';
+            const missing = [];
+            if (!verify.tiktok) missing.push('TikTok (TN FILMS GH)');
+            if (!verify.social) missing.push('Facebook/Instagram (TN UNIVERSITIES CONNECT)');
+            if (!verify.channel) missing.push('WhatsApp Channel');
+            if (missing.length) feedback += ' Still needed: ' + missing.join(', ') + '.';
+            feedback += ' Reply DONE when finished.';
+
+            await sendAntiBanMessage(socket, senderJid, { text: feedback });
+        }
+    }
+
+    const saidDone = /\bdone\b/i.test(text);
+    if (saidDone || (verificationUpdated && verify.tiktok && verify.social && verify.channel)) {
+        const ready = verify.tiktok && verify.social && verify.channel;
+        if (ready || (saidDone && verify.screenshots >= 2)) {
+            const registry = loadRegistry();
+            if (registry[pendingRequest.key]) {
+                registry[pendingRequest.key].status = 'verification_complete';
+                await saveRegistryItem(pendingRequest.key, registry[pendingRequest.key]);
+            }
+
+            await sendAntiBanMessage(socket, senderJid, {
+                text: '✅ Thanks! Your proof has been received. An admin will review your request to join *' +
+                    (pendingRequest.groupSubject || 'the group') + '* shortly.'
+            });
+
+            const alertText = [
+                '✅ *[GATEKEEPER VERIFICATION COMPLETE]*',
+                '',
+                '📞 *Applicant:* ' + userPhone,
+                '🌐 *Group:* ' + (pendingRequest.groupSubject || pendingRequest.groupJid),
+                '📸 *Proof:* TikTok ' + (verify.tiktok ? '✓' : '✗') + ' | Social ' + (verify.social ? '✓' : '✗') + ' | Channel ' + (verify.channel ? '✓' : '✗'),
+                '',
+                'Review in WhatsApp and approve or reject the pending member.'
+            ].join('\n');
+            await sendAdminAlert(socket, alertText);
+            pendingVerifications.delete(userPhone);
+            return;
+        }
+
+        if (saidDone && !ready) {
+            await sendAntiBanMessage(socket, senderJid, {
+                text: '⚠️ You replied DONE but we still need proof for: ' +
+                    [
+                        !verify.tiktok ? 'TikTok' : null,
+                        !verify.social ? 'Social' : null,
+                        !verify.channel ? 'Channel' : null
+                    ].filter(Boolean).join(', ') +
+                    '. Please send clear screenshots, then reply DONE again.'
+            });
+            return;
+        }
+    }
+
+    if (text && !hasImage && !saidDone) {
+        await sendAntiBanMessage(socket, senderJid, {
+            text: 'Please follow the steps in our earlier message (TikTok, Facebook/Instagram, WhatsApp Channel), send screenshots, then reply *DONE* when finished.'
+        });
+    }
 };
 
 // ==========================================
@@ -752,6 +1069,7 @@ async function startWhatsAppSession(phone, options = {}) {
             console.log('🚀 SUCCESS: TN Connect Assistant is linked (+' + phone + ')');
             await detectAdminAlertsGroup(sock);
             await refreshDiscoveredGroups(sock, phone);
+            await scanPendingJoinRequests(sock);
         }
         if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -781,6 +1099,7 @@ async function startWhatsAppSession(phone, options = {}) {
     });
 
     bindBotMessageHandlers(sock);
+    bindGroupJoinHandlers(sock);
     return sock;
 }
 
@@ -1004,19 +1323,46 @@ async function sendAntiBanMessage(socketInstance, jid, content) {
     }
 }
 
+function bindGroupJoinHandlers(socket) {
+    socket.ev.on('group.join-request', async (event) => {
+        try {
+            const subject = await getGroupSubject(socket, event.id);
+            await processJoinRequest(socket, event.id, event.participant, event.action, subject);
+        } catch (e) {
+            console.error('❌ [Join] group.join-request error:', e.message || e);
+        }
+    });
+}
+
 function bindBotMessageHandlers(socket) {
     socket.ev.on('messages.upsert', async (chatUpdate) => {
-        const msg = chatUpdate.messages[0];
-        if (!msg.message || msg.key.fromMe) return;
+        if (chatUpdate.type && chatUpdate.type !== 'notify') return;
 
-        const jid = msg.key.remoteJid;
-        const isGroup = jid.endsWith('@g.us');
-        const textInput = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+        for (const msg of chatUpdate.messages || []) {
+            if (!msg.message || msg.key.fromMe) continue;
 
-        if (!isGroup) {
+            const jid = msg.key.remoteJid;
+            if (!jid || jid.endsWith('@g.us')) continue;
+
             const bizHubRequest = findBusinessHubRequest(jid);
             if (bizHubRequest) {
-                await handleBusinessHubConversation(socket, jid, textInput, bizHubRequest, "TN Admin");
+                const { text, hasImage } = extractIncomingPayload(msg);
+                const textInput = text || (hasImage ? '(Applicant sent an image)' : '');
+                if (textInput) {
+                    await handleBusinessHubConversation(
+                        socket,
+                        jid,
+                        textInput,
+                        bizHubRequest,
+                        bizHubRequest.admin || getBotAdminContext().name
+                    );
+                }
+                continue;
+            }
+
+            const pendingRequest = findPendingRequest(jid);
+            if (pendingRequest) {
+                await handleGatekeeperDM(socket, jid, msg, pendingRequest);
             }
         }
     });
