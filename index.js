@@ -1706,15 +1706,13 @@ const handleGroupModeration = async (socket, msg, jid, sender, senderPhone, isAd
 
     const textInput = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
     const lowerText = textInput.toLowerCase();
-    const mentionedCount = msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.length || 0;
 
     const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/');
     const containsBadWord = BANNED_KEYWORDS.some(word => lowerText.includes(word));
-    const containsMassMention = textInput.includes('@everyone') || textInput.includes('@all') || mentionedCount > 8;
 
-    if (!containsLink && !containsBadWord && !containsMassMention) return false;
+    if (!containsLink && !containsBadWord) return false;
 
-    let shouldAct = containsMassMention || containsBadWord;
+    let shouldAct = containsBadWord;
 
     if (!shouldAct && containsLink && supabase) {
         try {
@@ -1734,12 +1732,9 @@ const handleGroupModeration = async (socket, msg, jid, sender, senderPhone, isAd
         await socket.sendMessage(jid, {
             delete: { remoteJid: jid, fromMe: false, id: msg.key.id, participant: sender }
         });
-        let alertText = '⚠️ *TN Connect Shield:* Link sharing is restricted in this group.';
-        if (containsMassMention) {
-            alertText = '🚫 *TN Connect Shield:* Unauthorized mass mentions are not allowed.';
-        } else if (containsBadWord) {
-            alertText = '🚫 *TN Connect Shield:* This message was removed for policy violation.';
-        }
+        const alertText = containsBadWord
+            ? '🚫 *TN Connect Shield:* This message was removed for policy violation.'
+            : '⚠️ *TN Connect Shield:* Link sharing is restricted in this group.';
         await sendAntiBanMessage(socket, jid, { text: alertText, mentions: [sender] });
         console.log('🔒 [Moderation] Removed message from +' + senderPhone + ' in ' + jid);
     } catch (e) {
