@@ -422,7 +422,7 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
                     .single();
                 if (data?.history) {
                     history = JSON.parse(data.history);
-                    console.log(`📦 [Business Hub] Restored ${history.length} conversation turns from Supabase for +${userPhone}`);
+                    console.log('📦 [Business Hub] Restored ' + history.length + ' conversation turns from Supabase for +' + userPhone);
                 }
             } catch (e) { /* no prior history */ }
         }
