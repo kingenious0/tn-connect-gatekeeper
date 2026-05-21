@@ -3,7 +3,7 @@
 
 INSERT INTO gatekeeper_sessions (phone, admin_name, role, updated_at)
 VALUES
-  ('233264579215', 'Yhaar Bhaby', 'admin_node', NOW()),
+  ('233264579213', 'Yhaar Bhaby', 'admin_node', NOW()),
   ('233207924793', 'You mean to tell me', 'admin_node', NOW()),
   ('233246546818', 'TiLIe Nadis', 'admin_node', NOW()),
   ('233208282949', 'Manager For TN', 'admin_node', NOW()),

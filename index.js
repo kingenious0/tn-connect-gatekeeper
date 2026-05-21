@@ -1,5 +1,7 @@
 // Version 1.3 Pro - Single-Worker Cloud Engine with Anti-Ban & Gemini Multimodal
 require('dotenv').config();
+process.on('uncaughtException', (err) => console.error('💥 [Crash Guard] Uncaught:', err.message));
+process.on('unhandledRejection', (err) => console.error('💥 [Crash Guard] Rejection:', err.message));
 const {
     default: makeWASocket,
     useMultiFileAuthState,
@@ -10,7 +12,6 @@ const {
     getContentType,
     jidNormalizedUser
 } = require('@whiskeysockets/baileys');
-const { wrapSocket } = require('baileys-antiban');
 
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
@@ -84,6 +85,10 @@ const uploadDebounces = {}; // debounces for Supabase credentials upload
 // Admin Alerts Group — auto-detected by name on boot
 let adminAlertsGroupJid = null;
 
+// Cooldown to prevent aggressive reconnection scanning (rate-limit protection)
+let lastFullSyncTime = 0;
+const FULL_SYNC_COOLDOWN_MS = 120000; // 2 minutes between full sync operations
+
 // Allowed Groups — strict whitelist for auto-approval
 const ALLOWED_GROUPS = [
     '120363407690574775@g.us', // TN UNIVERSITIES CONNECT | Niche Networks
@@ -95,7 +100,6 @@ const ALLOWED_GROUPS = [
     '120363408812581114@g.us', // 2️⃣ Marketing, Publicity & Brand Awareness
     '120363408494102261@g.us', // 7️⃣ Enterprise, Leadership & Business Strategy
     '120363428438604848@g.us', // 4️⃣ Technical, Engineering & IT Support
-    '120363427529595477@g.us', // TN UNIVERSITIES CONNECT | Niche Networks
 ];
 
 // Departure Nudge Master Switch — set to true to enable safe departure DMs
@@ -827,8 +831,10 @@ const scanPendingJoinRequests = async (socket) => {
                 await processJoinRequest(socket, group.jid, participantJid, 'created', group.subject);
                 pendingJids.push(participantJid);
             }
-            if (pendingJids.length) {
-                await approveWithPacing(socket, group.jid, pendingJids);
+            if (pendingJids.length && !isBusinessHubGroup(group.subject)) {
+                (async () => {
+                    await approveWithPacing(socket, group.jid, pendingJids);
+                })();
             }
         } catch (e) {
             console.warn('⚠️ [Join] Could not list pending requests for ' + group.subject + ':', e.message);
@@ -1208,7 +1214,7 @@ const scheduleWhatsAppReconnect = (phone, options, statusCode) => {
     if (intentionalLogout || isReconnecting) return;
     if (reconnectTimers[phone]) clearTimeout(reconnectTimers[phone]);
 
-    const delayMs = statusCode === DisconnectReason.restartRequired ? 2000 : 4000;
+    const delayMs = statusCode === DisconnectReason.restartRequired ? 8000 : 30000;
     reconnectTimers[phone] = setTimeout(async () => {
         delete reconnectTimers[phone];
         if (intentionalLogout || isReconnecting) return;
@@ -1304,7 +1310,6 @@ async function startWhatsAppSession(phone, options = {}) {
         keepAliveIntervalMs: 30000,
         logger: P({ level: 'silent' })
     });
-    sock = wrapSocket(sock);
 
     sock.ev.on('creds.update', async () => {
         await saveCreds();
@@ -1334,9 +1339,16 @@ async function startWhatsAppSession(phone, options = {}) {
         const { connection, lastDisconnect } = update;
         if (connection === 'open') {
             console.log('🚀 SUCCESS: TN Connect Assistant is linked (+' + phone + ')');
-            await detectAdminAlertsGroup(sock);
-            await refreshDiscoveredGroups(sock, phone);
-            await scanPendingJoinRequests(sock);
+            const now = Date.now();
+            if (now - lastFullSyncTime > FULL_SYNC_COOLDOWN_MS) {
+                lastFullSyncTime = now;
+                await detectAdminAlertsGroup(sock);
+                await refreshDiscoveredGroups(sock, phone);
+                await scanPendingJoinRequests(sock);
+            } else {
+                const remaining = Math.round((FULL_SYNC_COOLDOWN_MS - (now - lastFullSyncTime)) / 1000);
+                console.log('⏳ [Sync] Skipping full sync — cooldown active (' + remaining + 's remaining)');
+            }
         }
         if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -1846,8 +1858,10 @@ function bindGroupJoinHandlers(socket) {
             if (!ALLOWED_GROUPS.includes(event.id)) return;
             const subject = await getGroupSubject(socket, event.id);
             await processJoinRequest(socket, event.id, event.participant, event.action, subject);
-            if (event.participant) {
-                await approveWithPacing(socket, event.id, event.participant);
+            if (event.participant && !isBusinessHubGroup(subject)) {
+                (async () => {
+                    await approveWithPacing(socket, event.id, event.participant);
+                })();
             }
         } catch (e) {
             console.error('❌ [Join] group.join-request error:', e.message || e);
