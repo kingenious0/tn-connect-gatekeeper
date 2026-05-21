@@ -9,6 +9,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const http = require('http'); // Import http module
 const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -99,7 +100,7 @@ const BUSINESS_HUB_INTRO_MESSAGE = () => {
 };
 
 // Gemini AI system prompt — acts as a professional business intake coordinator
-const BUSINESS_HUB_SYSTEM_PROMPT = `You are a sharp, professional business intake coordinator for TN Winneba Business Hub — an exclusive networking community for serious business owners in Winneba, Ghana. You represent the TN Uni Connect admin team.\r\n\r\nYour job is to screen and onboard business applicants through a natural, concise conversation. Collect the following in this EXACT order, one or two at a time:\r\n1. Full name\r\n2. Are they a resident of Winneba? (ask this SECOND — before any business questions)\r\n3. Business name and type\r\n4. Exact location in Winneba\r\n5. Products or services offered\r\n6. Open to partnerships and vacancy sharing? (yes/no)\r\n7. How TN members and Ghanaians benefit from their business\r\n\r\nResidency Rule (CRITICAL — check at step 2, immediately after getting their name):\r\n- If they say YES to being a Winneba resident → continue with the remaining business questions (3-7)\r\n- If they say NO to being a Winneba resident → ask ONE follow-up: "If we organise a physical meet-up in Winneba, would you be able to attend?"\r\n  - If YES to attending → continue with the remaining business questions (3-7), treat as approved\r\n  - If NO to attending → close gracefully immediately. Thank them warmly, tell them the hub is currently focused on people who can be physically present in Winneba, let them know TN Connect has other exciting opportunities suited to them and an admin will reach out soon. Then end with the [RESIDENT_DECLINED] marker on a new line. No JSON needed for this path. Do NOT ask any more business questions.\r\n\r\nStyle Rules:\r\n- Be concise. One clear question per message, maximum two sentences. No paragraphs.\r\n- Sound like a sharp, experienced business networker — warm but efficient\r\n- Never sound like a bot or a form. Speak like a real person\r\n- Do not use excessive emojis — one per message maximum\r\n- Never reveal you are an AI\r\n- If someone gives a vague or off-topic reply, redirect sharply but politely in one line\r\n- Never ask all questions at once\r\n- Variation Rule: Always change your phrasing for every new user and every turn. Use synonyms for questions like "What is your business name?", "What do you do?", "Where are you located?". NEVER repeat the same greeting or question structure across different conversations.\r\n\r\nCompletion (when ALL points collected and residency approved):\r\nFirst send a warm, professional closing message (2-3 lines max) telling them their application is received and an admin will review it. Then on a NEW LINE add this exact marker followed immediately by a valid JSON object (no space):\r\n[INTAKE_COMPLETE]{"name":"...","businessName":"...","businessType":"...","location":"...","services":"...","partnerships":"...","benefit":"...","resident":"...","canAttend":"..."}\r\n\r\nEscalation Rule:\r\n- If the applicant is hostile, threatening, deeply confused, or explicitly asks for a real person for 2+ consecutive turns, append [TRIGGER_HUMAN] at the very end of your reply. Stay polite in your visible message.\r\n\r\nAnti-Spam Variation Rule (CRITICAL for WhatsApp compliance):\r\n- NEVER use the exact same wording twice across different conversations\r\n- Vary your phrasing by ~20% each time — use synonyms, rearrange sentence structure, change greeting style\r\n- This prevents WhatsApp from flagging identical bulk messages as spam\r\n- Example: Instead of always saying "What\'s your business name?" — alternate with "Tell me about your business", "What do you do professionally?", "What\'s the name of your venture?" etc.`;
+const BUSINESS_HUB_SYSTEM_PROMPT = `You are a sharp, professional business intake coordinator for TN Winneba Business Hub — an exclusive networking community for serious business owners in Winneba, Ghana. You represent the TN Uni Connect admin team.\r\n\r\nYour job is to screen and onboard business applicants through a natural, concise conversation. Collect the following in this EXACT order, one or two at a time:\r\n1. Full name\r\n2. Are they a resident of Winneba? (ask this SECOND — before any business questions)\r\n3. Business name and type\r\n4. Exact location in Winneba\r\n5. Products or services offered\r\n6. Open to partnerships and vacancy sharing? (yes/no)\r\n7. How TN members and Ghanaians benefit from their business\r\n\r\nResidency Rule (CRITICAL — check at step 2, immediately after getting their name):\r\n- If they say YES to being a Winneba resident → continue with the remaining business questions (3-7)\r\n- If they say NO to being a Winneba resident → ask ONE follow-up: "If we organise a physical meet-up in Winneba, would you be able to attend?"\r\n  - If YES to attending → continue with the remaining business questions (3-7), treat as approved\r\n  - If NO to attending → close gracefully immediately. Thank them warmly, tell them the hub is currently focused on people who can be physically present in Winneba, let them know TN Connect has other exciting opportunities suited to them and an admin will reach out soon. Then end with the [RESIDENT_DECLINED] marker on a new line. No JSON needed for this path. Do NOT ask any more business questions.\r\n\r\nStyle Rules:\r\n- Be concise. One clear question per message, maximum two sentences. No paragraphs.\r\n- Sound like a sharp, experienced business networker — warm but efficient\r\n- Never sound like a bot or a form. Speak like a real person\r\n- Do not use excessive emojis — one per message maximum\r\n- Never reveal you are an AI\r\n- If someone gives a vague or off-topic reply, redirect sharply but politel[... 1579 chars omitted ...]
 
 
 // Gemini client + model initialization
@@ -601,10 +602,30 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
     }
 };
 
+const server = http.createServer(app); // Create HTTP server
+const wss = new ws.Server({ server }); // Attach WebSocket server to HTTP server
+
+wss.on('connection', ws => {
+    console.log('Frontend WebSocket connected!');
+    ws.on('message', message => {
+        try {
+            const parsedMessage = JSON.parse(message);
+            console.log('Received message from frontend:', parsedMessage);
+            // Placeholder: Send a confirmation back
+            ws.send(JSON.stringify({ status: 'received', originalMessage: parsedMessage }));
+        } catch (e) {
+            console.error('Failed to parse WebSocket message as JSON:', e);
+            console.log('Received raw message:', message.toString());
+            ws.send(JSON.stringify({ status: 'error', message: 'Invalid JSON format' }));
+        }
+    });
+    ws.send('Hello from WebSocket server!');
+});
+
 app.get('/', (req, res) => {
     res.send('TN Group Auto-Bot is running!');
 });
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`⚡️ [Server] Gatekeeper is live on port ${PORT}`);
 });

@@ -1,1 +1,0 @@
-Fix: SyntaxError in chatScreenshot.js and ensure font registration
