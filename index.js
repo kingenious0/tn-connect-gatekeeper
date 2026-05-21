@@ -169,6 +169,8 @@ const deserializeDirectory = (dirPath, filesData) => {
     }
 };
 
+
+
 // Local storage fallbacks
 const loadSessionMeta = () => {
     if (!fs.existsSync(SESSION_META_FILE)) return {};
@@ -598,3 +600,11 @@ const handleBusinessHubConversation = async (sock, senderJid, textInput, bizHubR
         // Silent failure so we don't break character or reveal the bot's existence.
     }
 };
+
+app.get('/', (req, res) => {
+    res.send('TN Group Auto-Bot is running!');
+});
+
+app.listen(PORT, () => {
+    console.log(`⚡️ [Server] Gatekeeper is live on port ${PORT}`);
+});
