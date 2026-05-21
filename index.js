@@ -247,7 +247,7 @@ const triggerSessionBackup = (phone, adminName, selectedGroups, discoveredGroups
             const dirPath = 'auth_session_' + phone;
             const files = serializeDirectory(dirPath);
 
-            console.log(`💾 [Supabase] Pushing backup for Admin node +${phone}...`);
+            console.log('💾 [Supabase] Pushing backup for Admin node +' + phone + '...');
             const { error } = await supabase
                 .from('gatekeeper_sessions')
                 .upsert({
