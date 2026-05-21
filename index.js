@@ -84,7 +84,30 @@ if (supabase) {
 // ==========================================
 // 📋 OFFICIAL MESSAGES & GROUPS REFERENCE
 // ==========================================
-const GATEKEEPER_MESSAGE = `*{hello|hi|hey}, we just got your request to join our group*\r\n🚨ACTION REQUIRED🚨\r\n\r\nComplete *at least one* of these (more is fine):\r\n\r\n• TikTok: Follow *TN FILMS GH*\r\n• Facebook/Instagram: Follow *TN UNIVERSITIES CONNECT*\r\n• WhatsApp Channel: https://whatsapp.com/channel/0029VbCNby81CYoPIpEQMD1D\r\n\r\nThen send *one clear screenshot* as proof (not view-once). Our system will verify it and approve you into the group.\r\n\r\n{If we review your request and there\'s no valid proof, it will be declined.|Invalid or fake screenshots will be rejected.} ⚠️ Delay = Cancellation.`;
+// Official account names/handles for proof verification (names differ per platform)
+const PROOF_ACCOUNTS_GUIDE = `
+TIKTOK (platform: tiktok):
+- Username/handle: @tnfilmsgh (this is the correct TikTok account — NOT a different name)
+- Display/profile name often shows: TN UNIVERSITIES CONNECT or TN UNIVERSITIES...
+- Logo: Ghana flag colours, graduation cap/book, text TN UNIVERSITIES CONNECT, tagline GUIDE · WORK · INSPIRE
+- Valid proof: screenshot of profile or Following/Follow button showing user follows @tnfilmsgh / TN UNIVERSITIES CONNECT
+
+FACEBOOK or INSTAGRAM (platform: social):
+- Page/account name: TN Universities Connect or TN UNIVERSITIES CONNECT (same brand, spelling may vary)
+- Logo: Ghana flag, graduation cap on book, TN UNIVERSITIES CONNECT
+- Category may show Social Club (Facebook)
+- Valid proof: screenshot showing Following button/state on TN Universities Connect page (Facebook or Instagram)
+
+WHATSAPP CHANNEL (platform: channel):
+- Channel name: TN Universities Connect (header may truncate e.g. TN Universities Con...)
+- Branding in posts: TN UNIVERSITIES CONNECT, TN CONNECT GROUP
+- Valid proof: screenshot inside WhatsApp Channels UI showing this channel (followed/joined or channel home with 2K+ followers typical)
+- Channel link: https://whatsapp.com/channel/0029VbCNby81CYoPIpEQMD1D
+
+IMPORTANT: Account names are NOT identical across platforms. Do NOT reject valid proof because TikTok uses @tnfilmsgh while Facebook uses TN Universities Connect — they are the same organisation.
+`;
+
+const GATEKEEPER_MESSAGE = `*{hello|hi|hey}, we just got your request to join our group*\r\n🚨ACTION REQUIRED🚨\r\n\r\nComplete *at least one* of these (more is fine):\r\n\r\n• TikTok: Follow *@tnfilmsgh* (TN Universities Connect)\r\n• Facebook / Instagram: Follow *TN Universities Connect*\r\n• WhatsApp Channel: https://whatsapp.com/channel/0029VbCNby81CYoPIpEQMD1D\r\n\r\nThen send *one clear screenshot* as proof (not view-once). Our system will verify it and approve you into the group.\r\n\r\n{If we review your request and there\'s no valid proof, it will be declined.|Invalid or fake screenshots will be rejected.} ⚠️ Delay = Cancellation.`;
 
 // Business Hub intro DM — dynamic variations to avoid WhatsApp spam detection
 const BUSINESS_HUB_INTRO_MESSAGE = () => {
@@ -443,12 +466,11 @@ const deepVerifyScreenshotEvidence = async (buffer, mime) => {
         const result = await model.generateContent([
             {
                 text: 'You are a strict fraud reviewer for TN Connect Ghana WhatsApp group joins.\n' +
-                    'Accept ONLY if this image is a real screenshot showing the user completed AT LEAST ONE of:\n' +
-                    '- Following TN FILMS GH on TikTok\n' +
-                    '- Following TN UNIVERSITIES CONNECT on Facebook or Instagram\n' +
-                    '- Joining the official TN WhatsApp update channel\n\n' +
-                    'REJECT if: unrelated photo, meme, random chat, black screen, profile with no follow proof, ' +
-                    'obvious fake/edited image, stock photo, or attempt to bypass without social proof.\n\n' +
+                    'Accept ONLY if this image is a real screenshot showing the user completed AT LEAST ONE valid proof below.\n' +
+                    PROOF_ACCOUNTS_GUIDE + '\n' +
+                    'REJECT if: unrelated photo, meme, random chat, black screen, wrong unrelated account, no follow/join proof visible, ' +
+                    'obvious fake/edited image, stock photo, or bypass attempt.\n' +
+                    'Do NOT reject solely because the account name differs between platforms (TikTok @tnfilmsgh vs Facebook TN Universities Connect is correct).\n\n' +
                     'Reply with ONLY JSON: {"valid":true|false,"reason":"one short sentence","platform":"tiktok|social|channel|none"}'
             },
             { inlineData: { data: buffer.toString('base64'), mimeType: mime || 'image/jpeg' } }
@@ -645,7 +667,7 @@ const handleGatekeeperDM = async (socket, senderJid, msg, pendingRequest) => {
         const media = await downloadImageBuffer(socket, msg);
         if (!media?.buffer) {
             await sendAntiBanMessage(socket, senderJid, {
-                text: '⚠️ We could not read that image. Please send a normal screenshot (not view-once) showing TikTok, Instagram/Facebook, or WhatsApp channel proof.'
+                text: '⚠️ We could not read that image. Please send a normal screenshot (not view-once) showing you follow @tnfilmsgh on TikTok, TN Universities Connect on Facebook/Instagram, or our WhatsApp channel.'
             });
             return;
         }
@@ -659,7 +681,10 @@ const handleGatekeeperDM = async (socket, senderJid, msg, pendingRequest) => {
             verify.rejected += 1;
             await sendAntiBanMessage(socket, senderJid, {
                 text: '❌ That image was not accepted as valid proof.\n\n*Reason:* ' + proof.reason +
-                    '\n\nPlease send a *real screenshot* of at least one step (TikTok TN FILMS GH, Facebook/Instagram TN UNIVERSITIES CONNECT, or our WhatsApp channel). No memes or random photos.'
+                    '\n\nPlease send a *real screenshot* of at least one:\n' +
+                    '• TikTok: following *@tnfilmsgh* (TN Universities Connect)\n' +
+                    '• Facebook/Instagram: following *TN Universities Connect*\n' +
+                    '• WhatsApp channel joined\n\nNo memes or unrelated photos.'
             });
             return;
         }
@@ -677,7 +702,7 @@ const handleGatekeeperDM = async (socket, senderJid, msg, pendingRequest) => {
             });
         } else {
             await sendAntiBanMessage(socket, senderJid, {
-                text: 'Please send *at least one clear screenshot* as proof first (TikTok, Facebook/Instagram, or WhatsApp channel). ' +
+                text: 'Please send *at least one clear screenshot* as proof first (@tnfilmsgh on TikTok, TN Universities Connect on Facebook/Instagram, or our WhatsApp channel). ' +
                     'Use a normal photo — not view-once. We will verify and approve you automatically.'
             });
         }
@@ -686,7 +711,7 @@ const handleGatekeeperDM = async (socket, senderJid, msg, pendingRequest) => {
 
     if (text) {
         await sendAntiBanMessage(socket, senderJid, {
-            text: 'Send *one screenshot* showing you followed TN FILMS GH (TikTok), TN UNIVERSITIES CONNECT (Facebook/Instagram), or joined our WhatsApp channel. ' +
+            text: 'Send *one screenshot* showing you follow @tnfilmsgh (TikTok), TN Universities Connect (Facebook/Instagram), or joined our WhatsApp channel. ' +
                 'We verify it and approve you into *' + (pendingRequest.groupSubject || 'the group') + '* automatically.'
         });
     }
