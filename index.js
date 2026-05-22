@@ -1427,8 +1427,6 @@ async function startWhatsAppSession(phone, options = {}) {
         }
     });
 
-    activeSessionPhone = phone;
-
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'open') {
@@ -1473,6 +1471,7 @@ async function startWhatsAppSession(phone, options = {}) {
                 await detectAdminAlertsGroup(sock);
                 await refreshDiscoveredGroups(sock, phone);
                 await scanPendingJoinRequests(sock);
+                await scanAllGroupsForOldLinks(sock);
             } else {
                 const remaining = Math.round((FULL_SYNC_COOLDOWN_MS - (now - lastFullSyncTime)) / 1000);
                 console.log('⏳ [Sync] Skipping full sync — cooldown active (' + remaining + 's remaining)');
@@ -1867,10 +1866,22 @@ const fetchLiveMonitoredGroups = async (socket) => {
 };
 
 const handleGroupModeration = async (socket, msg, jid, sender, senderPhone, isAdmin) => {
-    if (isAdmin || !sender) return false;
+    if (!sender) return false;
 
-    const textInput = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+    const textInput = (() => {
+        const m = msg.message;
+        if (!m) return '';
+        if (m.conversation) return m.conversation;
+        if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
+        try {
+            const ct = Object.keys(m).find(k => k !== 'messageContextInfo');
+            if (ct && m[ct]?.text) return m[ct].text;
+            if (ct && m[ct]?.caption) return m[ct].caption;
+        } catch (e) {}
+        return '';
+    })();
     const lowerText = textInput.toLowerCase();
+    try { fs.appendFileSync('_trace.log', 'MOD_TEXT ['+senderPhone+']: '+textInput.substring(0,80)+'\n'); } catch(e){}
 
     const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/');
     const containsBadWord = BANNED_KEYWORDS.some(word => {
@@ -1881,18 +1892,25 @@ const handleGroupModeration = async (socket, msg, jid, sender, senderPhone, isAd
 
     if (!containsLink && !containsBadWord) return false;
 
-    let shouldAct = containsBadWord;
+    let shouldAct = false;
 
-    if (!shouldAct && containsLink && supabase) {
-        try {
-            const { data } = await supabase
-                .from('gatekeeper_sessions')
-                .select('anti_link_groups')
-                .eq('role', 'core_gatekeeper_bot')
-                .maybeSingle();
-            const protectedGroups = data?.anti_link_groups || [];
-            shouldAct = protectedGroups.includes(jid);
-        } catch (e) { /* skip link guard if config missing */ }
+    if (isAdmin) {
+        // Admins: bad words get moderated, links are exempt
+        shouldAct = containsBadWord;
+    } else {
+        // Non-admins
+        shouldAct = containsBadWord;
+        if (!shouldAct && containsLink && supabase) {
+            try {
+                const { data } = await supabase
+                    .from('gatekeeper_sessions')
+                    .select('anti_link_groups')
+                    .eq('role', 'core_gatekeeper_bot')
+                    .maybeSingle();
+                const protectedGroups = data?.anti_link_groups || [];
+                shouldAct = protectedGroups.includes(jid);
+            } catch (e) { /* skip link guard if config missing */ }
+        }
     }
 
     if (!shouldAct) return false;
@@ -1902,9 +1920,17 @@ const handleGroupModeration = async (socket, msg, jid, sender, senderPhone, isAd
     await delay(humanDelay);
 
     try {
-        await socket.sendMessage(jid, {
-            delete: { remoteJid: jid, fromMe: false, id: msg.key.id, participant: sender }
-        });
+        for (let d = 0; d < 3; d++) {
+            try {
+                await socket.sendMessage(jid, {
+                    delete: { remoteJid: jid, fromMe: false, id: msg.key.id, participant: sender }
+                });
+                break;
+            } catch (de) {
+                if (d === 2) throw de;
+                await delay(2000);
+            }
+        }
         const alertText = containsBadWord
             ? '@' + senderPhone + ' 🚫 inappropriate language — deleted'
             : '⚠️ @' + senderPhone + ' link sharing restricted — deleted';
@@ -1914,6 +1940,42 @@ const handleGroupModeration = async (socket, msg, jid, sender, senderPhone, isAd
         console.error('❌ [Moderation] Failed:', e.message);
     }
     return true;
+};
+
+/** Scan all discovered groups for old links sent by non-admins */
+const scanAllGroupsForOldLinks = async (socket) => {
+    const meta = loadSessionMeta();
+    const phone = Object.keys(meta)[0];
+    const groups = meta[phone]?.discoveredGroups || [];
+    if (!groups.length) return;
+    console.log('📋 [Group Scan] Scanning ' + groups.length + ' groups for old links…');
+    for (const g of groups) {
+        await delay(2000 + Math.floor(Math.random() * 3000));
+        try {
+            const msgs = await socket.loadMessages(g.jid, 20);
+            for (const m of msgs) {
+                if (!m.message || m.key.fromMe) continue;
+                const s = m.key.participant || m.key.remoteJid;
+                const sp = senderPhoneFromJid(s);
+                const txt = m.message.conversation || m.message.extendedTextMessage?.text || '';
+                if (!txt.toLowerCase().includes('http')) continue;
+                if (await lookupBroadcastAdmin(sp, s)) continue;
+                await delay(8000 + Math.floor(Math.random() * 7000));
+                for (let d = 0; d < 3; d++) {
+                    try {
+                        await socket.sendMessage(g.jid, {
+                            delete: { remoteJid: g.jid, fromMe: false, id: m.key.id, participant: s }
+                        });
+                        console.log('🔒 [Group Scan] Cleaned old link in ' + g.subject + ' from +' + sp);
+                        break;
+                    } catch (de) { if (d === 2) throw de; await delay(2000); }
+                }
+            }
+        } catch (e) {
+            console.warn('⚠️ [Group Scan] Error in ' + (g.subject || g.jid) + ': ' + e.message);
+        }
+    }
+    console.log('📋 [Group Scan] Done');
 };
 
 const handleAdminBroadcastDM = async (socket, jid, senderPhone, textInput, adminProfile, rawSender) => {
@@ -1936,6 +1998,38 @@ function bindGroupJoinHandlers(socket) {
             console.error('❌ [Join] group.join-request error:', e.message || e);
         }
     });
+
+    // When bot is added to a new group → scan recent messages for old links
+    socket.ev.on('group-participants.update', async (event) => {
+        if (event.action !== 'add') return;
+        const botJid = socket.user?.id?.split(':')[0]?.split('@')[0];
+        const isBotAdded = event.participants?.some(p => p.startsWith(botJid));
+        if (!isBotAdded) return;
+        console.log('📋 [Group Scan] Bot added to ' + event.id + ' — scanning recent messages for links…');
+        try {
+            const msgs = await socket.loadMessages(event.id, 30);
+            for (const m of msgs) {
+                if (!m.message || m.key.fromMe) continue;
+                const s = m.key.participant || m.key.remoteJid;
+                const sp = senderPhoneFromJid(s);
+                const txt = m.message.conversation || m.message.extendedTextMessage?.text || '';
+                if (!txt.toLowerCase().includes('http')) continue;
+                if (await lookupBroadcastAdmin(sp, s)) continue;
+                await delay(8000 + Math.floor(Math.random() * 7000));
+                for (let d = 0; d < 3; d++) {
+                    try {
+                        await socket.sendMessage(event.id, {
+                            delete: { remoteJid: event.id, fromMe: false, id: m.key.id, participant: s }
+                        });
+                        console.log('🔒 [Group Scan] Cleaned old link from +' + sp);
+                        break;
+                    } catch (de) { if (d === 2) throw de; await delay(2000); }
+                }
+            }
+        } catch (e) {
+            console.warn('⚠️ [Group Scan] Error scanning ' + event.id + ': ' + e.message);
+        }
+    });
 }
 
 function bindBotMessageHandlers(socket) {
@@ -1953,7 +2047,19 @@ function bindBotMessageHandlers(socket) {
             try { fs.appendFileSync('_trace.log', 'RECV jid='+jid+' isGroup='+isGroup+' fromMe='+msg.key.fromMe+'\n'); } catch(e){}
 
             const adminProfile = await lookupBroadcastAdmin(senderPhone, sender);
-            const isAdmin = !!adminProfile;
+            let isAdmin = !!adminProfile;
+            // Fallback: resolve LID → phone for group admin detection
+            if (!isAdmin && sender && sender.endsWith('@lid') && socket.onWhatsApp) {
+                try {
+                    const waResults = await socket.onWhatsApp(sender);
+                    for (const wr of waResults) {
+                        if (wr.exists) {
+                            const wp = participantDigits(jidNormalizedUser(wr.jid));
+                            if (CAMPUS_ADMIN_ROSTER.some(a => a.phone === wp)) { isAdmin = true; break; }
+                        }
+                    }
+                } catch (e) {}
+            }
             if (isGroup) {
                 const moderated = await handleGroupModeration(socket, msg, jid, sender, senderPhone, isAdmin);
                 if (moderated) continue;
