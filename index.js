@@ -10,8 +10,7 @@ const {
     delay,
     downloadMediaMessage,
     getContentType,
-    jidNormalizedUser,
-    WAMessageStubType
+    jidNormalizedUser
 } = require('@whiskeysockets/baileys');
 
 const { Boom } = require('@hapi/boom');
@@ -56,7 +55,106 @@ const humanTakeoverUsers = new Set(); // users flagged for manual admin takeover
 const joinIntroSentKeys = new Set(); // prevents re-sending requirements on rescans / restart
 const adminBroadcastStates = new Map(); // admin DM wizard: CHOOSING_GROUPS → CAPTURING_RAW_BODY
 
-const BANNED_KEYWORDS = ['scam', 'crypto investment', 'betting tips', 'giveaway'];
+const BANNED_KEYWORDS = [
+    // English profanity — heavy hitters
+    'fuck', 'fucking', 'fuckin', 'fck', 'fuc',
+    'motherfucker', 'motherfuck', 'mf',
+    'cocksucker',
+    'shit', 's h i t', 'sh!t', 'bullshit', 'horseshit', 'bullcrap',
+    'bitch', 'b!tch', 'bich', 'bitches', 'son of a bitch', 'sonofabitch',
+    'bastard', 'bastards',
+    'cock', 'dick', 'd1ck', 'd!ck', 'dickhead',
+    'pussy', 'puss', 'pussi',
+    'whore', 'hoe', 'hoes',
+    'slut', 'sluts',
+    'damn', 'damm', 'goddamn', 'goddamm',
+    'bloody',
+    'nigga', 'nigger', 'niggas',
+    'retard', 'retarded', 'r3tard',
+    'idiot', 'idiots', 'idiotic',
+    'dumb', 'dumbo',
+    'stupid', 'st*pid',
+    'kill yourself', 'kys',
+    'suck my', 'suck my dick',
+    'blowjob', 'blow job',
+    'fag', 'faggot', 'fagg0t',
+    'douche', 'douchebag',
+    'porn', 'p0rn',
+    'anal',
+    'boner',
+    'jerk',
+    // Intelligence & capability
+    'ass', 'arse', 'a$$', 'asshole', 'assholes', 'dumbass', 'dipshit', 'shithead',
+    'jackass', 'arsewipe', 'asswipe',
+    'prick',
+    'twat',
+    'wanker',
+    'cunt',
+    // Exclamations & situations
+    'piss off', 'pissoff',
+    'shitshow', 'clusterfuck', 'cluster fuck',
+    // scam/betting
+    'scam', 'crypto investment', 'betting tips', 'giveaway', 'ponzi', 'mlm',
+    // Twi insults — Intellectual & Mental (foolishness)
+    'kwasia', 'kawasia', 'kwasia penin', 'kwasia panin', 'wo ye kwasi',
+    'gyimi', 'gyimii', 'gyimiii', 'gimi pa pa', 'wagimi papa', 'agyimi dodo',
+    'ogyimifoo', 'ogyimifoɔ',
+    'gyeese',
+    'tibonkosɔ', 'tibɔnkɔsɔ',
+    'tiri mu sum',
+    'wo tiri mu nni biribiara',
+    'adwenebɔne', 'adwenebone',
+    'wo tiri ye', 'wo tiri yɛ',
+    'okwaseaba',
+    'nkwaseadee', 'nkwaseadeɛ',
+    // Animalistic & behavior
+    'aboa', 'ahbwah', 'aboa kɔkɔɔ', 'aboa kokoo', 'aboa onipa',
+    'kraman',
+    'prako', 'prakon', 'preko',
+    'akoko nan', 'akokɔ nan',
+    'opuro',
+    'woti se kraman', 'woti sɛ kraman',
+    'kusie',
+    'aponkye ti',
+    'nantwi kotodwe',
+    // Physical appearance, odor, body
+    'wu tu bin', 'wo tu bon', 'wo tu bɔn',
+    'hwɛ w anim', 'hwe w anim', 'hwɛ w\'anim',
+    'wanim se', 'w\'anim sɛ',
+    'me bo w asom', 'me bɔ w\'asom',
+    'wo ho bon', 'wo ho bɔn',
+    'wano bon', 'w\'ano bɔn',
+    'wo tiri se cla mine', 'wu ti se cla mine',
+    'wo ntɔhwɛ', 'wo nt)hw3',
+    // General abuse
+    'ashawo', 'ashawoah',
+    'beyfu',
+    'koti', 'kotih', 'cote', 'kototi',
+    'tchwe', 'tchwaasini',
+    'ohem',
+    'nkrasinii', 'nkraseni',
+    'odjwain',
+    'adjwih',
+    'kwakuo',
+    'kainkain',
+    'taintain',
+    'dramain',
+    'sansa ni', 'sansani',
+    'nsuoba', 'nsyoh',
+    'kohweni', 'kohwenni',
+    'trumu',
+    'wo ye hwan',
+    'wabo dam', 'wa bo dam',
+    'en fa me ho', 'ɛn fa me hɔ',
+    'nkwaseasem', 'nkwaseasɛm',
+    // Curses
+    'abotchrewa',
+    'afenfri',
+    'ayanta',
+    'petainjeh',
+    'akonedi',
+    'wo maame twe',
+];
 
 /** Roles in gatekeeper_sessions that unlock the conversational broadcast wizard */
 const BROADCAST_ADMIN_ROLES = new Set(['admin', 'admin_node']);
@@ -81,7 +179,14 @@ const CAMPUS_ADMIN_ROSTER = [
     { phone: '233595802277', admin_name: 'PROPHETIC BUSINESS' }
 ];
 
+const adminLidMap = new Map(); // LID → { phone, name } (populated at boot)
 const uploadDebounces = {}; // debounces for Supabase credentials upload
+
+// Rate-limit safety globals
+const RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000; // 5 min initial silence
+let startupTime = 0; // set when socket first opens
+let lastMessageSendTime = 0;
+const MIN_MESSAGE_INTERVAL_MS = 8000; // 8s between outgoing messages
 
 // Admin Alerts Group — auto-detected by name on boot
 let adminAlertsGroupJid = null;
@@ -704,26 +809,10 @@ const processJoinRequest = async (socket, groupJid, participantJid, action, grou
 
     /*
      * ====================================================================
-     * DM REQUIREMENTS VETTING LOGIC — COMMENTED OUT
+     * DM REQUIREMENTS VETTING — COMMENTED OUT
      * The bot no longer contacts applicants via DM for screenshots or
-     * verification steps. Instead, eligible requests are auto-approved
-     * through the human-paced approval engine below.
+     * verification steps. Auto-approval handles everything.
      * ====================================================================
-    try {
-        if (groupType === 'business_hub') {
-            const intro = BUSINESS_HUB_INTRO_MESSAGE();
-            await sendAntiBanMessage(socket, dmJid, { text: intro });
-            console.log('💼 [Business Hub] Intro DM sent to ' + dmJid);
-        } else {
-            const intro = buildGatekeeperMessage();
-            await sendAntiBanMessage(socket, dmJid, { text: intro });
-            initVerificationState(formatPhoneNumberGH(participantDigits(dmJid)));
-            console.log('🛡️ [Gatekeeper] Requirements DM sent to ' + dmJid);
-        }
-    } catch (e) {
-        console.error('❌ [Join] Failed to send intro DM to ' + dmJid + ':', e.message);
-        joinIntroSentKeys.delete(registryKey);
-    }
     */
 };
 
@@ -731,6 +820,11 @@ const processJoinRequest = async (socket, groupJid, participantJid, action, grou
 // ⏱️ HUMAN-PACED AUTO-APPROVAL ENGINE
 // ==========================================
 const approveWithPacing = async (socket, groupJid, participantJids) => {
+    // Skip if still in rate-limit safe mode
+    if (startupTime && (Date.now() - startupTime) < RATE_LIMIT_COOLDOWN_MS) {
+        console.log('⏳ [Auto-Approval] Skipped (rate-limit cooldown active)');
+        return;
+    }
     const jids = Array.isArray(participantJids) ? participantJids : [participantJids];
     if (!jids.length) return;
 
@@ -1339,6 +1433,40 @@ async function startWhatsAppSession(phone, options = {}) {
         const { connection, lastDisconnect } = update;
         if (connection === 'open') {
             console.log('🚀 SUCCESS: TN Connect Assistant is linked (+' + phone + ')');
+            startupTime = Date.now();
+
+            // Populate admin LID map (only once per session)
+            if (adminLidMap.size === 0 && sock.onWhatsApp) {
+                try {
+                    const adminPhones = CAMPUS_ADMIN_ROSTER.map(a => a.phone);
+                    const results = await sock.onWhatsApp(...adminPhones);
+                    for (const r of results) {
+                        if (!r.exists) continue;
+                        const admin = CAMPUS_ADMIN_ROSTER.find(a =>
+                            r.jid.startsWith(a.phone + '@') || r.lid?.includes(a.phone)
+                        );
+                        if (admin) {
+                            adminLidMap.set(r.jid, { phone: admin.phone, name: admin.admin_name });
+                            if (r.lid) {
+                                const lidJid = r.lid.includes('@') ? r.lid : r.lid + '@lid';
+                                adminLidMap.set(lidJid, { phone: admin.phone, name: admin.admin_name });
+                            }
+                        }
+                    }
+                    if (adminLidMap.size) console.log('📞 [Admin Map] Resolved ' + (adminLidMap.size / 2) + ' admin LIDs');
+                } catch (e) {
+                    console.warn('⚠️ [Admin Map] LID resolution failed:', e.message);
+                }
+            }
+
+            // Initial silence: no API calls for RATE_LIMIT_COOLDOWN_MS
+            const remainingSilence = Math.max(0, RATE_LIMIT_COOLDOWN_MS - (Date.now() - startupTime));
+            if (remainingSilence > 0) {
+                const mins = Math.round(remainingSilence / 60000);
+                console.log('⏳ [Boot] Rate-limit cooldown: ' + mins + ' min ' + Math.round((remainingSilence % 60000) / 1000) + 's of silence…');
+                await delay(remainingSilence);
+            }
+
             const now = Date.now();
             if (now - lastFullSyncTime > FULL_SYNC_COOLDOWN_MS) {
                 lastFullSyncTime = now;
@@ -1633,19 +1761,40 @@ app.post('/api/sessions/:phone/disconnect', async (req, res) => {
     }
 });
 
-async function sendAntiBanMessage(socketInstance, jid, content) {
-    try {
-        await socketInstance.sendPresenceUpdate('available', jid);
-        await delay(Math.floor(Math.random() * 1800) + 1200);
-        await socketInstance.sendPresenceUpdate('composing', jid);
-        const charactersCount = content.text ? content.text.length : 40;
-        const typingDurationBase = 1200 + charactersCount * 16;
-        const patternShatterVariance = Math.floor(Math.random() * 1400) - 400;
-        await delay(Math.max(2600, typingDurationBase + patternShatterVariance));
-        await socketInstance.sendPresenceUpdate('paused', jid);
-        return await socketInstance.sendMessage(jid, content);
-    } catch (e) {
-        return await socketInstance.sendMessage(jid, content);
+async function sendAntiBanMessage(socketInstance, jid, content, retries = 3) {
+    // Message pacing — at least MIN_MESSAGE_INTERVAL_MS between sends
+    const sinceLast = Date.now() - lastMessageSendTime;
+    if (sinceLast < MIN_MESSAGE_INTERVAL_MS) {
+        await delay(MIN_MESSAGE_INTERVAL_MS - sinceLast);
+    }
+
+    const isDM = !jid.endsWith('@g.us');
+    for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+            if (!isDM) {
+                await socketInstance.sendPresenceUpdate('available', jid);
+                await delay(Math.floor(Math.random() * 1800) + 1200);
+                await socketInstance.sendPresenceUpdate('composing', jid);
+                const charactersCount = content.text ? content.text.length : 40;
+                const typingDurationBase = 1200 + charactersCount * 16;
+                const patternShatterVariance = Math.floor(Math.random() * 1400) - 400;
+                await delay(Math.max(2600, typingDurationBase + patternShatterVariance));
+                await socketInstance.sendPresenceUpdate('paused', jid);
+            }
+            lastMessageSendTime = Date.now();
+            return await socketInstance.sendMessage(jid, content);
+        } catch (e) {
+            const isRateLimit = e.message?.includes('rate-overlimit') || e.message?.includes('429') || e.message?.includes('Connection Closed');
+            if (isRateLimit && attempt < retries - 1) {
+                const backoff = (attempt + 1) * 5000;
+                await delay(backoff);
+                continue;
+            }
+            if (attempt === retries - 1) {
+                lastMessageSendTime = Date.now();
+                return await socketInstance.sendMessage(jid, content);
+            }
+        }
     }
 }
 
@@ -1663,46 +1812,62 @@ const resolveAdminDisplayName = (adminName) => {
 const isBroadcastAdminRole = (role) => BROADCAST_ADMIN_ROLES.has(role);
 
 /** Human broadcast admins — Supabase gatekeeper_sessions (phone + admin_name + admin_node role) */
-const lookupBroadcastAdmin = async (senderPhone) => {
-    if (!supabase) {
-        const rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === senderPhone);
-        if (rosterMatch) {
-            return { phone: senderPhone, name: resolveAdminDisplayName(rosterMatch.admin_name) };
+const lookupBroadcastAdmin = async (senderPhone, rawJid) => {
+    // Check local admin roster by phone
+    let rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === senderPhone);
+    if (!rosterMatch && rawJid) {
+        // Check by LID (LID → phone mapping from boot)
+        const lidMatch = adminLidMap.get(rawJid);
+        if (lidMatch) {
+            rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === lidMatch.phone);
         }
-        return null;
+    }
+    if (rosterMatch) {
+        return { phone: rosterMatch.phone, name: resolveAdminDisplayName(rosterMatch.admin_name) };
     }
 
-    try {
-        const { data, error } = await supabase
-            .from('gatekeeper_sessions')
-            .select('phone, admin_name, role')
-            .eq('phone', senderPhone)
-            .maybeSingle();
+    // Check Supabase if available
+    if (supabase) {
+        try {
+            const { data, error } = await supabase
+                .from('gatekeeper_sessions')
+                .select('phone, admin_name, role')
+                .eq('phone', senderPhone)
+                .maybeSingle();
 
-        if (error || !data) return null;
-        if (data.role === 'core_gatekeeper_bot') return null;
-        if (!isBroadcastAdminRole(data.role)) return null;
-
-        return {
-            phone: data.phone,
-            name: resolveAdminDisplayName(data.admin_name)
-        };
-    } catch (e) {
-        console.warn('⚠️ [Admin Auth] Lookup failed:', e.message);
+            if (data && data.role !== 'core_gatekeeper_bot' && isBroadcastAdminRole(data.role)) {
+                return { phone: data.phone, name: resolveAdminDisplayName(data.admin_name) };
+            }
+        } catch (e) {
+            console.warn('⚠️ [Admin Auth] Supabase lookup failed:', e.message);
+        }
     }
+
     return null;
 };
 
 const fetchLiveMonitoredGroups = async (socket) => {
-    const groups = await socket.groupFetchAllParticipating();
-    return Object.values(groups).map(g => ({
-        jid: g.id,
-        subject: g.subject || 'Unknown Group'
-    }));
+    // Use cached discovered groups from sessions_meta.json to avoid API hammering
+    const meta = loadSessionMeta();
+    const phone = Object.keys(meta)[0];
+    if (phone && meta[phone]?.discoveredGroups?.length) {
+        return meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
+    }
+    // Fallback: live fetch (rare)
+    try {
+        const groups = await socket.groupFetchAllParticipating();
+        return Object.values(groups).map(g => ({
+            jid: g.id,
+            subject: g.subject || 'Unknown Group'
+        }));
+    } catch (e) {
+        console.warn('⚠️ [Broadcast] Live group fetch failed:', e.message);
+        return [];
+    }
 };
 
 const handleGroupModeration = async (socket, msg, jid, sender, senderPhone, isAdmin) => {
-    if (isAdmin) return false;
+    if (isAdmin || !sender) return false;
 
     const textInput = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
     const lowerText = textInput.toLowerCase();
@@ -1728,13 +1893,17 @@ const handleGroupModeration = async (socket, msg, jid, sender, senderPhone, isAd
 
     if (!shouldAct) return false;
 
+    // Human-paced delay (8–15 seconds) to avoid anti-spam flags
+    const humanDelay = 8000 + Math.floor(Math.random() * 7000);
+    await delay(humanDelay);
+
     try {
         await socket.sendMessage(jid, {
             delete: { remoteJid: jid, fromMe: false, id: msg.key.id, participant: sender }
         });
         const alertText = containsBadWord
-            ? '🚫 *TN Connect Shield:* This message was removed for policy violation.'
-            : '⚠️ *TN Connect Shield:* Link sharing is restricted in this group.';
+            ? '@' + senderPhone + ' 🚫 inappropriate language — deleted'
+            : '⚠️ @' + senderPhone + ' link sharing restricted — deleted';
         await sendAntiBanMessage(socket, jid, { text: alertText, mentions: [sender] });
         console.log('🔒 [Moderation] Removed message from +' + senderPhone + ' in ' + jid);
     } catch (e) {
@@ -1743,107 +1912,8 @@ const handleGroupModeration = async (socket, msg, jid, sender, senderPhone, isAd
     return true;
 };
 
-const handleAdminBroadcastDM = async (socket, jid, senderPhone, textInput, adminProfile) => {
-    const lowerText = textInput.toLowerCase();
-    let adminState = adminBroadcastStates.get(senderPhone);
-
-    if (lowerText === 'cancel') {
-        adminBroadcastStates.delete(senderPhone);
-        await sendAntiBanMessage(socket, jid, { text: '✅ Broadcast cancelled. Say hello anytime to start again.' });
-        return true;
-    }
-
-    if (!adminState && isGreetingOrBroadcastIntent(lowerText)) {
-        await socket.sendMessage(jid, { text: '⏳ Scanning groups the bot is in…' });
-        try {
-            const liveGroups = await fetchLiveMonitoredGroups(socket);
-            if (!liveGroups.length) {
-                await sendAntiBanMessage(socket, jid, {
-                    text: '⚠️ The bot is not in any groups yet. Add the bot as admin to your groups first.'
-                });
-                return true;
-            }
-            adminBroadcastStates.set(senderPhone, { step: 'CHOOSING_GROUPS', availableGroups: liveGroups });
-            const displayName = resolveAdminDisplayName(adminProfile.name);
-            let listPrompt = '👋 *Hello ' + displayName + '!* Here is the live list of every single group I am currently monitoring.\n\n' +
-                'Reply with the numbers you want to target (comma-separated, e.g. *1, 3, 5*), or type *ALL*:\n\n';
-            liveGroups.forEach((group, idx) => {
-                listPrompt += (idx + 1) + '️⃣ *' + group.subject + '*\n';
-            });
-            listPrompt += '\n_Type *cancel* to stop._';
-            await sendAntiBanMessage(socket, jid, { text: listPrompt });
-        } catch (e) {
-            console.error('❌ [Broadcast] Group fetch failed:', e.message);
-            await sendAntiBanMessage(socket, jid, { text: '❌ Could not load group list. Try again shortly.' });
-        }
-        return true;
-    }
-
-    if (adminState?.step === 'CHOOSING_GROUPS') {
-        const available = adminState.availableGroups;
-        let mappedTargetJids = [];
-
-        if (lowerText === 'all') {
-            mappedTargetJids = available.map(g => g.jid);
-        } else {
-            const choices = textInput.split(',').map(c => parseInt(c.trim(), 10) - 1);
-            for (const index of choices) {
-                if (Number.isNaN(index) || index < 0 || index >= available.length) {
-                    await sendAntiBanMessage(socket, jid, {
-                        text: '❌ Invalid selection. Use numbers between 1 and ' + available.length + ', or type ALL.'
-                    });
-                    return true;
-                }
-                mappedTargetJids.push(available[index].jid);
-            }
-        }
-
-        if (!mappedTargetJids.length) {
-            await sendAntiBanMessage(socket, jid, { text: '❌ No groups selected. Try again (e.g. 1, 2 or ALL).' });
-            return true;
-        }
-
-        adminBroadcastStates.set(senderPhone, { step: 'CAPTURING_RAW_BODY', targetJids: mappedTargetJids });
-        await sendAntiBanMessage(socket, jid, {
-            text: '🎯 *' + mappedTargetJids.length + ' group(s) locked.*\n\nNow send the announcement text. It will be posted *exactly* as you type it — no edits.'
-        });
-        return true;
-    }
-
-    if (adminState?.step === 'CAPTURING_RAW_BODY') {
-        const destinations = adminState.targetJids;
-        const rawBody = textInput;
-
-        await socket.sendMessage(jid, {
-            text: '🚀 Broadcasting to ' + destinations.length + ' group(s) with anti-ban pacing…'
-        });
-
-        let sent = 0;
-        for (const groupJid of destinations) {
-            try {
-                await sendAntiBanMessage(socket, groupJid, { text: rawBody });
-                sent += 1;
-                const restMs = Math.floor(Math.random() * 3000) + 6000;
-                await delay(restMs);
-            } catch (e) {
-                console.error('❌ [Broadcast] Failed for ' + groupJid + ':', e.message);
-            }
-        }
-
-        adminBroadcastStates.delete(senderPhone);
-        await sendAntiBanMessage(socket, jid, {
-            text: '✅ Done! Message sent to ' + sent + '/' + destinations.length + ' groups.'
-        });
-        return true;
-    }
-
-    if (!adminState) {
-        await sendAntiBanMessage(socket, jid, {
-            text: '👋 Hi ' + adminProfile.name + '! Say *hello* or *broadcast* to send an announcement to your groups.'
-        });
-        return true;
-    }
-
+const handleAdminBroadcastDM = async (socket, jid, senderPhone, textInput, adminProfile, rawSender) => {
+    // Broadcast disabled — WhatsApp silently drops all outgoing sends from Baileys
     return false;
 };
 
@@ -1866,8 +1936,6 @@ function bindGroupJoinHandlers(socket) {
 
 function bindBotMessageHandlers(socket) {
     socket.ev.on('messages.upsert', async (chatUpdate) => {
-        if (chatUpdate.type && chatUpdate.type !== 'notify') return;
-
         for (const msg of chatUpdate.messages || []) {
             if (!msg.message || msg.key.fromMe) continue;
 
@@ -1875,28 +1943,13 @@ function bindBotMessageHandlers(socket) {
             if (!jid) continue;
 
             const isGroup = jid.endsWith('@g.us');
-            const sender = isGroup ? (msg.key.participant || jid) : jid;
+            const sender = isGroup ? msg.key.participant : jid;
             const senderPhone = senderPhoneFromJid(sender);
 
-            // Status group-mention interceptor (stub type 210 = STATUS_MENTION)
-            if (isGroup && (msg.messageStubType === WAMessageStubType.STATUS_MENTION || msg.isMentionedInStatus)) {
-                try {
-                    await socket.sendMessage(jid, { delete: msg.key });
-                    const offender = msg.key.participant || sender;
-                    await socket.sendMessage(jid, {
-                        text: '⚠️ *Security Alert:* @' + offender.split('@')[0] + ', mass group-tagging via Status updates is strictly prohibited in this network. The notification has been scrubbed.',
-                        mentions: [offender]
-                    });
-                    console.log('🔇 [Status Mention] Intercepted and deleted from +' + senderPhone + ' in ' + jid);
-                } catch (e) {
-                    console.error('❌ [Status Mention] Failed to intercept:', e.message);
-                }
-                continue;
-            }
+            try { fs.appendFileSync('_trace.log', 'RECV jid='+jid+' isGroup='+isGroup+' fromMe='+msg.key.fromMe+'\n'); } catch(e){}
 
-            const adminProfile = await lookupBroadcastAdmin(senderPhone);
+            const adminProfile = await lookupBroadcastAdmin(senderPhone, sender);
             const isAdmin = !!adminProfile;
-
             if (isGroup) {
                 const moderated = await handleGroupModeration(socket, msg, jid, sender, senderPhone, isAdmin);
                 if (moderated) continue;
@@ -1905,7 +1958,7 @@ function bindBotMessageHandlers(socket) {
 
             if (isAdmin) {
                 const { text: dmText } = extractIncomingPayload(msg);
-                const handled = await handleAdminBroadcastDM(socket, jid, senderPhone, dmText, adminProfile);
+                const handled = await handleAdminBroadcastDM(socket, jid, senderPhone, dmText, adminProfile, sender);
                 if (handled) continue;
             }
 
