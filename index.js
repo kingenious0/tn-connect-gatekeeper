@@ -1944,6 +1944,10 @@ const handleGroupModeration = async (socket, msg, jid, sender, senderPhone, isAd
 
 /** Scan all discovered groups for old links sent by non-admins */
 const scanAllGroupsForOldLinks = async (socket) => {
+    if (!socket.loadMessages) {
+        console.log('📋 [Group Scan] Skipped — loadMessages not available in this baileys version');
+        return;
+    }
     const meta = loadSessionMeta();
     const phone = Object.keys(meta)[0];
     const groups = meta[phone]?.discoveredGroups || [];
@@ -2001,7 +2005,7 @@ function bindGroupJoinHandlers(socket) {
 
     // When bot is added to a new group → scan recent messages for old links
     socket.ev.on('group-participants.update', async (event) => {
-        if (event.action !== 'add') return;
+        if (event.action !== 'add' || !socket.loadMessages) return;
         const botJid = socket.user?.id?.split(':')[0]?.split('@')[0];
         const isBotAdded = event.participants?.some(p => p.startsWith(botJid));
         if (!isBotAdded) return;
@@ -2034,6 +2038,14 @@ function bindGroupJoinHandlers(socket) {
 
 function bindBotMessageHandlers(socket) {
     socket.ev.on('messages.upsert', async (chatUpdate) => {
+        if (chatUpdate.type === 'append') {
+            const texts = [];
+            for (const m of chatUpdate.messages || []) {
+                const t = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
+                if (t) texts.push(t.substring(0, 40));
+            }
+            if (texts.length) console.log('📜 [History] ' + texts.length + ' old msgs: ' + texts.join(' | '));
+        }
         for (const msg of chatUpdate.messages || []) {
             if (!msg.message || msg.key.fromMe) continue;
 
