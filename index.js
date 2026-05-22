@@ -1873,7 +1873,11 @@ const handleGroupModeration = async (socket, msg, jid, sender, senderPhone, isAd
     const lowerText = textInput.toLowerCase();
 
     const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/');
-    const containsBadWord = BANNED_KEYWORDS.some(word => lowerText.includes(word));
+    const containsBadWord = BANNED_KEYWORDS.some(word => {
+        if (word.includes(' ')) return lowerText.includes(word);
+        const re = new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
+        return re.test(lowerText);
+    });
 
     if (!containsLink && !containsBadWord) return false;
 
