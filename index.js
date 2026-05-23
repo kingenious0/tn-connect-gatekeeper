@@ -1333,6 +1333,13 @@ async function processIncomingMessage(msg) {
     if (isGroup) {
         const moderated = await handleGroupModeration(msg, jid, sender, senderPhone, isAdmin);
         if (moderated) return;
+        if (isAdmin && adminAlertsGroupJid && jid === adminAlertsGroupJid) {
+            const { text: groupText } = extractIncomingPayload(msg);
+            if (groupText) {
+                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
+                if (handled) return;
+            }
+        }
         return;
     }
     const { text: dmText } = extractIncomingPayload(msg);
@@ -1359,7 +1366,7 @@ async function processIncomingMessage(msg) {
     if (isAdmin && !bizHubRequest && !pendingRequest) {
         try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL trying reply to ' + senderPhone + '\n'); } catch (e) {}
         try {
-            await sendAntiBanMessage(jid, { text: '👋 Hi ' + (adminProfile?.name || 'Admin') + '! I\'m the TN Gatekeeper bot.\n\nAvailable commands:\n• *broadcast* — Send a message to monitored groups\n• *send* — Same as broadcast\n• *announce* — Same as broadcast\n• *register* — Register/upgrade your admin account' });
+            await sendAntiBanMessage(jid, { text: '👋 Hi ' + (adminProfile?.name || 'Admin') + '! I\'m the TN Gatekeeper bot.\n\nAvailable commands:\n• *broadcast* — Send a message to monitored groups (works in Admin Alerts group too)\n• *send* — Same as broadcast\n• *announce* — Same as broadcast\n• *register* — Register/upgrade your admin account' });
             try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL reply SENT OK\n'); } catch (e) {}
         } catch (e) {
             try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL REPLY FAILED: ' + e.message + '\n'); } catch (e2) {}
