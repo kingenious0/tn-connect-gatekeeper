@@ -1455,9 +1455,8 @@ async function sendAdminAlert(alertText) {
 app.get('/qr/:instance', async (req, res) => {
     const instanceName = req.params.instance;
     try {
-        const urlObj = new URL(`${EVOLUTION_BASE_URL}/instance/connect/${instanceName}`);
-        const options = { hostname: urlObj.hostname, port: urlObj.port || 443, path: urlObj.pathname, method: 'GET', headers: { 'apikey': EVOLUTION_API_KEY }, rejectUnauthorized: false };
-        const reqEvo = https.request(options, (resp) => {
+        const apiUrl = `${EVOLUTION_BASE_URL.replace(/\/+$/, '')}/instance/connect/${encodeURIComponent(instanceName)}`;
+        https.get(apiUrl, { headers: { 'apikey': EVOLUTION_API_KEY }, rejectUnauthorized: false }, (resp) => {
             let data = '';
             resp.on('data', chunk => data += chunk);
             resp.on('end', () => {
@@ -1475,9 +1474,7 @@ app.get('/qr/:instance', async (req, res) => {
                     res.status(500).json({ error: 'Parse error', raw: data });
                 }
             });
-        });
-        reqEvo.on('error', (e) => res.status(500).json({ error: e.message }));
-        reqEvo.end();
+        }).on('error', (e) => res.status(500).json({ error: e.message }));
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
