@@ -1454,30 +1454,29 @@ async function sendAdminAlert(alertText) {
 
 app.get('/qr/:instance', async (req, res) => {
     const instanceName = req.params.instance;
-    try {
-        const apiUrl = `${EVOLUTION_BASE_URL.replace(/\/+$/, '')}/instance/connect/${encodeURIComponent(instanceName)}`;
-        https.get(apiUrl, { headers: { 'apikey': EVOLUTION_API_KEY }, rejectUnauthorized: false }, (resp) => {
-            let data = '';
-            resp.on('data', chunk => data += chunk);
-            resp.on('end', () => {
-                try {
-                    const parsed = JSON.parse(data);
-                    if (parsed.base64) {
-                        const base64Data = parsed.base64.replace(/^data:image\/png;base64,/, '');
-                        const img = Buffer.from(base64Data, 'base64');
-                        res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': img.length, 'Cache-Control': 'no-cache' });
-                        res.end(img);
-                    } else {
-                        res.status(500).json({ error: 'No QR code in response', response: parsed });
-                    }
-                } catch (e) {
-                    res.status(500).json({ error: 'Parse error', raw: data });
+    const base = EVOLUTION_BASE_URL.replace(/\/+$/, '');
+    const url = new URL(`/instance/connect/${instanceName}`, base);
+    const opts = { hostname: url.hostname, port: url.port || 443, path: url.pathname, method: 'GET', headers: { 'apikey': EVOLUTION_API_KEY }, rejectUnauthorized: false };
+    const proxyReq = https.request(opts, (proxyRes) => {
+        let raw = '';
+        proxyRes.on('data', c => raw += c);
+        proxyRes.on('end', () => {
+            try {
+                const parsed = JSON.parse(raw);
+                if (parsed.base64) {
+                    const img = Buffer.from(parsed.base64.replace(/^data:image\/png;base64,/, ''), 'base64');
+                    res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': img.length, 'Cache-Control': 'no-cache' });
+                    res.end(img);
+                } else {
+                    res.status(500).json({ error: 'No QR code in response', response: parsed });
                 }
-            });
-        }).on('error', (e) => res.status(500).json({ error: e.message }));
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
+            } catch (e) {
+                res.status(500).json({ error: 'Parse error', raw });
+            }
+        });
+    });
+    proxyReq.on('error', e => res.status(500).json({ error: e.message }));
+    proxyReq.end();
 });
 
 app.use('/api', (req, res) => {
