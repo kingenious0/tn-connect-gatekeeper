@@ -1059,20 +1059,9 @@ const fetchLiveMonitoredGroups = async () => {
 
 const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => {
     if (!sender) return false;
-    const textInput = (() => {
-        const m = msg.message;
-        if (!m) return '';
-        if (m.conversation) return m.conversation;
-        if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
-        try {
-            const ct = Object.keys(m).find(k => k !== 'messageContextInfo');
-            if (ct && m[ct]?.text) return m[ct].text;
-            if (ct && m[ct]?.caption) return m[ct].caption;
-        } catch (e) { }
-        return '';
-    })();
+    const textInput = handleGroupModerationExtractText(msg);
     const lowerText = textInput.toLowerCase();
-    try { fs.appendFileSync('_trace.log', 'MOD_TEXT [' + senderPhone + ']: ' + textInput.substring(0, 80) + '\n'); } catch (e) { }
+    try { fs.appendFileSync('_trace.log', 'MOD status=' + (msg.status || '?') + ' jid=' + jid + ' sender=' + senderPhone + ' isAdmin=' + isAdmin + ' text="' + textInput.substring(0, 80) + '" msgKeys=[' + (msg.message ? Object.keys(msg.message).join(',') : '') + ']\n'); } catch (e) { }
     const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/');
     const containsBadWord = BANNED_KEYWORDS.some(word => {
         if (word.includes(' ')) return lowerText.includes(word);
@@ -1208,12 +1197,8 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
 const webhookLog = [];
 // ==========================================
 app.post('/webhook', async (req, res) => {
-    const rawBody = JSON.stringify(req.body).substring(0, 500);
-    webhookLog.unshift({ time: Date.now(), body: rawBody, headers: req.headers['content-type'] });
-    if (webhookLog.length > 50) webhookLog.length = 50;
-    res.status(200).json({ ok: true });
     const payload = req.body;
-    if (!payload) return;
+    if (!payload) return res.status(200).json({ ok: true });
     const eventType = (payload.event || payload.Event || '').toUpperCase().replace(/\./g, '_');
     let messages = [];
     if (eventType === 'MESSAGES_UPSERT') {
@@ -1227,13 +1212,42 @@ app.post('/webhook', async (req, res) => {
     if (eventType === 'CONNECTION_UPDATE') {
         const state = payload.instance?.state || payload.data?.instance?.state || '';
         if (state === 'open') console.log(' [Webhook] Instance connected');
+        res.status(200).json({ ok: true });
         return;
     }
+    let detail = { event: eventType, time: Date.now(), count: messages.length };
+    if (messages.length && messages[0]) {
+        const m = messages[0];
+        detail.jid = m.key?.remoteJid || '';
+        detail.status = m.status || '';
+        detail.fromMe = !!m.key?.fromMe;
+        detail.msgKeys = m.message ? Object.keys(m.message).join(',') : '';
+        const tx = extractIncomingPayload(m).text || handleGroupModerationExtractText(m);
+        detail.text = (tx || '').substring(0, 80);
+        detail.participant = m.key?.participant || '';
+    }
+    webhookLog.unshift(detail);
+    if (webhookLog.length > 200) webhookLog.length = 200;
+    try { fs.appendFileSync('_trace.log', 'WEBHOOK ' + eventType + ' jid=' + (detail.jid || '') + ' status=' + (detail.status || '') + ' text="' + (detail.text || '') + '" msgKeys=[' + (detail.msgKeys || '') + ']\n'); } catch (e) { }
+    res.status(200).json({ ok: true });
     for (const msg of messages) {
         try { await processIncomingMessage(msg); }
         catch (e) { console.error(' [Webhook] Error processing message:', e.message); }
     }
 });
+
+const handleGroupModerationExtractText = (msg) => {
+    const m = msg.message;
+    if (!m) return '';
+    if (m.conversation) return m.conversation;
+    if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
+    try {
+        const ct = Object.keys(m).find(k => k !== 'messageContextInfo');
+        if (ct && m[ct]?.text) return m[ct].text;
+        if (ct && m[ct]?.caption) return m[ct].caption;
+    } catch (e) { }
+    return '';
+};
 
 async function processIncomingMessage(msg) {
     if (!msg || !msg.key || msg.key.fromMe) return;
@@ -1281,6 +1295,30 @@ async function processIncomingMessage(msg) {
 // 🌐 EXPRESS REST API ENDPOINTS
 // ==========================================
 app.get('/debug/webhook', (req, res) => { res.json(webhookLog); });
+app.get('/debug/trace', (req, res) => {
+    try {
+        const data = fs.readFileSync('_trace.log', 'utf8');
+        const lines = data.split('\n').filter(Boolean).slice(-100);
+        res.json({ lines, count: lines.length });
+    } catch (e) { res.json({ lines: [], error: e.message }); }
+});
+app.post('/debug/testmod', async (req, res) => {
+    const { groupJid, text, senderPhone } = req.body || {};
+    if (!groupJid || !text) return res.status(400).json({ error: 'groupJid and text required' });
+    const lowerText = text.toLowerCase();
+    const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/');
+    const containsBadWord = BANNED_KEYWORDS.some(word => {
+        if (word.includes(' ')) return lowerText.includes(word);
+        const re = new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
+        return re.test(lowerText);
+    });
+    const adminProfile = senderPhone ? await lookupBroadcastAdmin(senderPhone, null) : null;
+    const isAdmin = !!adminProfile;
+    let wouldAct = false;
+    if (isAdmin) wouldAct = containsBadWord;
+    else wouldAct = containsBadWord || containsLink;
+    res.json({ text, containsLink, containsBadWord, isAdmin, wouldAct, wouldDeleteLink: !isAdmin && containsLink, wouldDeleteBadWord: containsBadWord });
+});
 app.get('/api/sessions', async (req, res) => {
     try {
         const sessionArray = [];
