@@ -698,31 +698,7 @@ const completeGatekeeperApproval = async (senderJid, pendingRequest, verify, pro
 };
 
 const scanPendingJoinRequests = async () => {
-    await ensureRegistryLoaded();
-    const admin = getBotAdminContext();
-    const meta = loadSessionMeta()[admin.phone] || {};
-    const groups = (meta.discoveredGroups || []).filter(g => ALLOWED_GROUPS.includes(g.jid));
-    if (!groups.length) return;
-    console.log(' [Join] Scanning ' + groups.length + ' allowed groups for pending join requests...');
-    for (const group of groups) {
-        try {
-            const pending = await evolution._request('GET', `/group/pendingJoinRequests/${EVOLUTION_INSTANCE}?groupJid=${encodeURIComponent(group.jid)}`);
-            const items = pending?.data || pending?.pending || pending?.results || (Array.isArray(pending) ? pending : []);
-            if (!items?.length) continue;
-            const pendingJids = [];
-            for (const item of items) {
-                const participantJid = item.jid || item.participant || item.requestor;
-                if (!participantJid) continue;
-                await processJoinRequest(group.jid, participantJid, 'created', group.subject);
-                pendingJids.push(participantJid);
-            }
-            if (pendingJids.length && !isBusinessHubGroup(group.subject)) {
-                (async () => { await approveWithPacing(group.jid, pendingJids); })();
-            }
-        } catch (e) {
-            if (!e.message.includes('Cannot GET')) console.warn(' [Join] Could not list pending requests for ' + group.subject + ':', e.message);
-        }
-    }
+    // Pending join requests are handled via webhook events only (no REST endpoint in Evolution API v2)
 };
 
 const handleGatekeeperDM = async (senderJid, msg, pendingRequest) => {
@@ -1111,8 +1087,8 @@ const scanAllGroupsForOldLinks = async () => {
     for (const g of groups) {
         await delay(2000 + Math.floor(Math.random() * 3000));
         try {
-            const msgsResponse = await evolution._request('GET', `/chat/fetchMessages/${EVOLUTION_INSTANCE}?jid=${encodeURIComponent(g.jid)}&count=20`);
-            const msgs = msgsResponse?.data || msgsResponse?.messages || (Array.isArray(msgsResponse) ? msgsResponse : []);
+            const msgsResponse = await evolution.fetchMessages(g.jid, 20);
+            const msgs = msgsResponse?.records || msgsResponse?.data || msgsResponse?.messages || (Array.isArray(msgsResponse) ? msgsResponse : []);
             for (const m of msgs) {
                 if (!m.message || m.key?.fromMe) continue;
                 const s = m.key?.participant || m.key?.remoteJid;

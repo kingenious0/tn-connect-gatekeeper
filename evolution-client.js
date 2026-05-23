@@ -94,22 +94,23 @@ class EvolutionClient {
         return this._request('GET', `/group/inviteCode/${this.instanceName}?groupJid=${encodeURIComponent(groupJid)}`);
     }
 
-    async acceptJoinRequest(groupJid, participant) {
-        return this._request('POST', `/group/acceptJoinRequest/${this.instanceName}`, {
-            groupJid,
-            participant,
+    async fetchMessages(remoteJid, limit = 20) {
+        return this._request('POST', `/chat/findMessages/${this.instanceName}`, {
+            where: { key: { remoteJid } },
+            limit,
         });
     }
 
-    async rejectJoinRequest(groupJid, participant) {
-        return this._request('POST', `/group/rejectJoinRequest/${this.instanceName}`, {
+    async addGroupParticipant(groupJid, participants) {
+        return this._request('POST', `/group/updateParticipant/${this.instanceName}`, {
             groupJid,
-            participant,
+            action: 'add',
+            participants: Array.isArray(participants) ? participants : [participants],
         });
     }
 
-    async fetchProfilePicture(jid) {
-        return this._request('GET', `/chat/fetchProfilePicture/${this.instanceName}?jid=${encodeURIComponent(jid)}`);
+    async fetchProfilePicture(number) {
+        return this._request('GET', `/chat/fetchProfilePictureUrl/${this.instanceName}?number=${encodeURIComponent(number)}`);
     }
 
     async fetchInstanceStatus() {
