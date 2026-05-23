@@ -15,3 +15,8 @@ group_flows.json
 bot_output.txt
 bot_error.txt
 .DS_Store
+
+_whreset.json
+tunnel.js
+evo-api-docker/
+v1.3_documentation.md
