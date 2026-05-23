@@ -686,7 +686,7 @@ const approveWithPacing = async (groupJid, participantJids) => {
             await evolution.addGroupParticipant(groupJid, jids[i]);
             console.log(' [Auto-Approval] Approved ' + jids[i] + ' into ' + groupJid);
         } catch (e) {
-            console.error(' [Auto-Approval] Failed for ' + jids[i] + ':', e.message.substring(0, 120));
+            console.error(' [Auto-Approval] Failed for ' + jids[i] + ' in ' + groupJid + ':', e.message.substring(0, 120));
         }
     }
 };
