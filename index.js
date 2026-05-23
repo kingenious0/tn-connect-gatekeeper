@@ -28,6 +28,7 @@ const SESSION_META_FILE = './sessions_meta.json';
 const REGISTRY_FILE = './registry.json';
 const APPLICANTS_FILE = './business_hub_applicants.json';
 const GROUP_FLOWS_FILE = './group_flows.json';
+const REGISTERED_ADMINS_FILE = './registered_admins.json';
 
 // Evolution API configuration
 const EVOLUTION_BASE_URL = process.env.EVOLUTION_BASE_URL || 'https://tn-evolution-gateway.onrender.com';
@@ -46,6 +47,25 @@ const businessHubConversations = new Map();
 const humanTakeoverUsers = new Set();
 const joinIntroSentKeys = new Set();
 const adminBroadcastStates = new Map();
+const registeredAdmins = new Map(); // local fallback cache of admins registered via WhatsApp DM
+
+const loadRegisteredAdmins = () => {
+    if (!fs.existsSync(REGISTERED_ADMINS_FILE)) return {};
+    try { return JSON.parse(fs.readFileSync(REGISTERED_ADMINS_FILE, 'utf-8')); }
+    catch (e) { return {}; }
+};
+const saveRegisteredAdmins = (data) => {
+    try { fs.writeFileSync(REGISTERED_ADMINS_FILE, JSON.stringify(data, null, 2)); }
+    catch (e) { console.error('Failed to write registered_admins.json:', e); }
+};
+// hydrate local cache on boot
+(() => {
+    const data = loadRegisteredAdmins();
+    for (const [phone, entry] of Object.entries(data)) {
+        registeredAdmins.set(phone, entry);
+    }
+    if (Object.keys(data).length) console.log(' [Admin Registry] Loaded ' + Object.keys(data).length + ' registered admin(s) from disk');
+})();
 
 const BANNED_KEYWORDS = [
     'fuck', 'fucking', 'fuckin', 'fck', 'fuc',
@@ -1015,6 +1035,9 @@ const lookupBroadcastAdmin = async (senderPhone, rawJid) => {
             }
         } catch (e) { }
     }
+    // local fallback cache (admins registered via WhatsApp DM without Supabase)
+    const localAdmin = registeredAdmins.get(senderPhone);
+    if (localAdmin) return { phone: senderPhone, name: resolveAdminDisplayName(localAdmin.name) };
     return null;
 };
 
@@ -1174,6 +1197,56 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
 };
 
 // ==========================================
+// 👤 ADMIN SELF-REGISTRATION via WhatsApp DM
+// ==========================================
+const adminRegistrationStates = new Map(); // senderPhone -> { step: 'AWAITING_NAME', name?: ... }
+
+const handleAdminRegistration = async (jid, senderPhone, textInput) => {
+    const lower = (textInput || '').trim().toLowerCase();
+    const state = adminRegistrationStates.get(senderPhone);
+
+    // start registration
+    if (!state && (lower === 'register' || lower === 'admin' || lower === 'signup')) {
+        adminRegistrationStates.set(senderPhone, { step: 'AWAITING_NAME' });
+        await sendAntiBanMessage(jid, { text: '👤 *Admin Registration*\n\nReply with your full name to register as an admin.\n(Type *cancel* to abort.)' });
+        return true;
+    }
+    if (!state) return false;
+
+    // cancel
+    if (lower === 'cancel' || lower === 'stop') {
+        adminRegistrationStates.delete(senderPhone);
+        await sendAntiBanMessage(jid, { text: '❌ Registration cancelled.' });
+        return true;
+    }
+
+    if (state.step === 'AWAITING_NAME') {
+        const name = textInput.trim();
+        if (name.length < 2) {
+            await sendAntiBanMessage(jid, { text: '❌ Name must be at least 2 characters. Try again or type *cancel*.' });
+            return true;
+        }
+        // store locally
+        registeredAdmins.set(senderPhone, { name, registeredAt: new Date().toISOString() });
+        const localData = loadRegisteredAdmins();
+        localData[senderPhone] = { name, registeredAt: new Date().toISOString() };
+        saveRegisteredAdmins(localData);
+        // also try Supabase
+        if (supabase) {
+            try {
+                await supabase.from('gatekeeper_sessions').upsert({
+                    phone: senderPhone, admin_name: name, role: 'admin_node', updated_at: new Date().toISOString()
+                });
+            } catch (e) { console.warn(' [Admin] Supabase save failed (non-blocking):', e.message); }
+        }
+        adminRegistrationStates.delete(senderPhone);
+        await sendAntiBanMessage(jid, { text: '✅ *Registration successful!*\n\nYou are now a registered admin. Use these commands:\n• *broadcast* — Send a message to all monitored groups\n• *send* — Same as broadcast\n• *announce* — Same as broadcast' });
+        return true;
+    }
+    return false;
+};
+
+// ==========================================
 // 📨 WEBHOOK — RECEIVE INCOMING MESSAGES FROM EVOLUTION API
 const webhookLog = [];
 // ==========================================
@@ -1263,11 +1336,17 @@ async function processIncomingMessage(msg) {
         return;
     }
     const { text: dmText } = extractIncomingPayload(msg);
+    // admin self-registration — any user can register
+    if (dmText) {
+        const handledReg = await handleAdminRegistration(jid, senderPhone, dmText);
+        if (handledReg) return;
+    }
     if (isAdmin) {
         const handled = await handleAdminBroadcastDM(jid, senderPhone, dmText, adminProfile, sender);
         if (handled) return;
     }
     if (adminBroadcastStates.has(senderPhone)) return;
+    if (adminRegistrationStates.has(senderPhone)) return;
     const bizHubRequest = findBusinessHubRequest(jid);
     if (bizHubRequest && !humanTakeoverUsers.has(formatPhoneNumberGH(senderPhone))) {
         const { text, hasImage } = extractIncomingPayload(msg);
@@ -1280,7 +1359,7 @@ async function processIncomingMessage(msg) {
     if (isAdmin && !bizHubRequest && !pendingRequest) {
         try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL trying reply to ' + senderPhone + '\n'); } catch (e) {}
         try {
-            await sendAntiBanMessage(jid, { text: '👋 Hi ' + (adminProfile?.name || 'Admin') + '! I\'m the TN Gatekeeper bot.\n\nAvailable commands:\n• *broadcast* — Send a message to monitored groups\n• *send* — Same as broadcast\n• *announce* — Same as broadcast' });
+            await sendAntiBanMessage(jid, { text: '👋 Hi ' + (adminProfile?.name || 'Admin') + '! I\'m the TN Gatekeeper bot.\n\nAvailable commands:\n• *broadcast* — Send a message to monitored groups\n• *send* — Same as broadcast\n• *announce* — Same as broadcast\n• *register* — Register/upgrade your admin account' });
             try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL reply SENT OK\n'); } catch (e) {}
         } catch (e) {
             try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL REPLY FAILED: ' + e.message + '\n'); } catch (e2) {}
@@ -1412,6 +1491,35 @@ app.post('/api/admins/seed-campus', async (req, res) => {
         if (error) return res.status(500).json({ error: error.message });
         res.json({ success: true, count: rows.length });
     } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/admins/list', async (req, res) => {
+    const admins = [];
+    // hardcoded roster
+    for (const a of CAMPUS_ADMIN_ROSTER) {
+        admins.push({ phone: a.phone, name: a.admin_name, source: 'roster' });
+    }
+    // locally registered
+    for (const [phone, entry] of registeredAdmins) {
+        if (!admins.find(a => a.phone === phone)) {
+            admins.push({ phone, name: entry.name, source: 'local' });
+        }
+    }
+    // supabase
+    if (supabase) {
+        try {
+            const { data } = await supabase.from('gatekeeper_sessions')
+                .select('phone, admin_name, role').in('role', ['admin', 'admin_node']);
+            if (data) {
+                for (const d of data) {
+                    if (!admins.find(a => a.phone === d.phone)) {
+                        admins.push({ phone: d.phone, name: d.admin_name, source: 'supabase' });
+                    }
+                }
+            }
+        } catch (e) { }
+    }
+    res.json(admins);
 });
 
 app.post('/api/sessions/:phone/disconnect', async (req, res) => {
