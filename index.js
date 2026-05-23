@@ -1175,7 +1175,7 @@ const scanAllGroupsForOldLinks = async () => {
 };
 
 const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile, rawSender) => {
-    console.log(' [Broadcast] DM from ' + senderPhone + ': "' + (textInput || '').substring(0, 60) + '" state=' + (adminBroadcastStates.has(senderPhone) ? adminBroadcastStates.get(senderPhone).step : 'none'));
+    console.log(' [Broadcast] ' + (jid.endsWith('@g.us') ? 'Group' : 'DM') + ' from ' + senderPhone + ': "' + (textInput || '').substring(0, 60) + '" state=' + (adminBroadcastStates.has(senderPhone) ? adminBroadcastStates.get(senderPhone).step : 'none'));
     const lower = (textInput || '').trim().toLowerCase();
     if (lower === 'broadcast' || lower === 'send' || lower === 'announce') {
         const groups = await fetchLiveMonitoredGroups();
@@ -1373,11 +1373,22 @@ async function processIncomingMessage(msg) {
     if (isGroup) {
         const moderated = await handleGroupModeration(msg, jid, sender, senderPhone, isAdmin);
         if (moderated) return;
-        if (isAdmin && adminAlertsGroupJid && jid === adminAlertsGroupJid) {
+        if (isAdmin) {
             const { text: groupText } = extractIncomingPayload(msg);
-            if (groupText) {
-                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
-                if (handled) return;
+            if (groupText && isGreetingOrBroadcastIntent(groupText.trim().toLowerCase())) {
+                if (!adminAlertsGroupJid) {
+                    await detectAdminAlertsGroup();
+                }
+                if (adminAlertsGroupJid && jid === adminAlertsGroupJid) {
+                    const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
+                    if (handled) return;
+                }
+                if (!adminAlertsGroupJid) {
+                    adminAlertsGroupJid = jid;
+                    console.log(' [Alerts] Admin alerts group set dynamically to ' + jid);
+                    const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
+                    if (handled) return;
+                }
             }
         }
         return;
@@ -1667,6 +1678,12 @@ server.listen(PORT, async () => {
             const meta = loadSessionMeta()[phone] || {};
             await refreshDiscoveredGroups(phone);
             await scanPendingJoinRequests();
+            setInterval(async () => {
+                console.log(' [Timer] Periodic group refresh…');
+                await detectAdminAlertsGroup();
+                await populateLidMap();
+                await refreshDiscoveredGroups(activeSessionPhone);
+            }, 30 * 60 * 1000);
         }
     } catch (e) {
         console.warn(' [Boot] Could not verify Evolution API instance status:', e.message);
