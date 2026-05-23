@@ -1088,7 +1088,7 @@ const scanAllGroupsForOldLinks = async () => {
         await delay(2000 + Math.floor(Math.random() * 3000));
         try {
             const msgsResponse = await evolution.fetchMessages(g.jid, 20);
-            const msgs = msgsResponse?.records || msgsResponse?.data || msgsResponse?.messages || (Array.isArray(msgsResponse) ? msgsResponse : []);
+            const msgs = msgsResponse?.messages?.records || msgsResponse?.records || (Array.isArray(msgsResponse) ? msgsResponse : []);
             for (const m of msgs) {
                 if (!m.message || m.key?.fromMe) continue;
                 const s = m.key?.participant || m.key?.remoteJid;
