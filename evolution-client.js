@@ -23,7 +23,7 @@ class EvolutionClient {
                 path: url.pathname + url.search,
                 method,
                 headers,
-                timeout: 15000,
+                timeout: 60000,
             };
             const mod = url.protocol === 'https:' ? https : http;
             const req = mod.request(opts, (res) => {
