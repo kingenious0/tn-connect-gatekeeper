@@ -31,14 +31,19 @@ class EvolutionClient {
                         const errMsg = (data && typeof data === 'string') ? data : ('HTTP ' + res.statusCode);
                         return reject(new Error(String(errMsg).substring(0, 300)));
                     }
-                    try { resolve(JSON.parse(data)); }
+                    try {
+                        const parsed = JSON.parse(data);
+                        if (parsed?.status === 'error' || parsed?.error) {
+                            return reject(new Error(String(parsed.error || parsed.status).substring(0, 300)));
+                        }
+                        resolve(parsed);
+                    }
                     catch { resolve(data); }
                 });
             });
             req.on('error', reject);
             req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
-            if (body) req.write(JSON.stringify(body));
-            req.end();
+            req.end(body ? JSON.stringify(body) : undefined);
         });
     }
 
