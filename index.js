@@ -949,7 +949,7 @@ const detectAdminAlertsGroup = async () => {
         const keyword = (process.env.ADMIN_ALERTS_GROUP_KEYWORD || 'admin alert').toLowerCase();
         for (const g of Object.values(allGroups)) {
             const subject = ((g.subject || g.name || '') + '').toLowerCase();
-            if (subject.includes('admin') && (subject.includes('alert') || subject.includes(keyword))) {
+            if (subject.includes('admin') && (subject.includes('alert') || subject.includes('broadcast') || subject.includes(keyword))) {
                 adminAlertsGroupJid = g.jid || g.id;
                 console.log(' [Alerts] Admin alerts group detected: ' + (g.subject || g.name));
                 return;
