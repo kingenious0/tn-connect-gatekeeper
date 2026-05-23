@@ -11,15 +11,18 @@ class EvolutionClient {
     _request(method, path, body) {
         return new Promise((resolve, reject) => {
             const url = new URL(this.baseUrl + path);
+            const bodyStr = body ? JSON.stringify(body) : undefined;
+            const headers = {
+                'apikey': this.apiKey,
+                'Content-Type': 'application/json',
+            };
+            if (bodyStr) headers['Content-Length'] = Buffer.byteLength(bodyStr);
             const opts = {
                 hostname: url.hostname,
-                port: url.port,
+                port: url.port || undefined,
                 path: url.pathname + url.search,
                 method,
-                headers: {
-                    'apikey': this.apiKey,
-                    'Content-Type': 'application/json',
-                },
+                headers,
                 timeout: 15000,
             };
             const mod = url.protocol === 'https:' ? https : http;
@@ -43,7 +46,7 @@ class EvolutionClient {
             });
             req.on('error', reject);
             req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
-            req.end(body ? JSON.stringify(body) : undefined);
+            req.end(bodyStr);
         });
     }
 
