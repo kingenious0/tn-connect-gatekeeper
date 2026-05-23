@@ -32,7 +32,7 @@ const REGISTERED_ADMINS_FILE = './registered_admins.json';
 
 // Evolution API configuration
 const EVOLUTION_BASE_URL = process.env.EVOLUTION_BASE_URL || 'https://tn-evolution-gateway.onrender.com';
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'tn-connect-v2';
+const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'tn-connect';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'tn-connect-evo-key-2026';
 const SERVER_URL = process.env.SERVER_URL || '';
 
@@ -1647,11 +1647,10 @@ server.listen(PORT, async () => {
         const state = status?.instance?.state || 'unknown';
         console.log(' [Session] Evolution API instance status: ' + state);
         if (state === 'open') {
-            activeSessionPhone = '233536763993';
+            activeSessionPhone = '233506746307';
             startupTime = Date.now();
             const mem = process.memoryUsage();
             console.log(' [Boot] Active session: ' + activeSessionPhone + ' | RSS: ' + (mem.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (mem.heapUsed / 1024 / 1024).toFixed(1) + 'MB');
-            // log memory every 60s to detect leaks
             setInterval(() => {
                 const m = process.memoryUsage();
                 console.log(' [Memory] RSS: ' + (m.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (m.heapUsed / 1024 / 1024).toFixed(1) + 'MB | Ext: ' + (m.external / 1024 / 1024).toFixed(1) + 'MB');
@@ -1668,13 +1667,17 @@ server.listen(PORT, async () => {
             const meta = loadSessionMeta()[phone] || {};
             await refreshDiscoveredGroups(phone);
             await scanPendingJoinRequests();
-            await scanAllGroupsForOldLinks();
         }
     } catch (e) {
         console.warn(' [Boot] Could not verify Evolution API instance status:', e.message);
     }
     if (SERVER_URL) {
         console.log(' [Webhook] Configure Evolution API webhook to: ' + SERVER_URL + '/webhook');
+        try {
+            const webhookBody = { webhook: { url: SERVER_URL + '/webhook', events: ['MESSAGES_UPSERT', 'GROUP_PARTICIPANTS_UPDATE', 'CONNECTION_UPDATE', 'SEND_MESSAGE'], enabled: true } };
+            await fetch(EVOLUTION_BASE_URL.replace(/\/+$/, '') + '/webhook/set/' + EVOLUTION_INSTANCE, { method: 'POST', headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(webhookBody), timeout: 10000 });
+            console.log(' [Webhook] Evolution API webhook configured successfully');
+        } catch (e) { console.warn(' [Webhook] Could not configure Evolution API webhook:', e.message); }
     } else {
         console.log(' [Webhook] Set SERVER_URL env var to enable webhook for incoming messages');
     }
