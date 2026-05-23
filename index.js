@@ -1095,6 +1095,7 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
     if (!sender) return false;
     const textInput = handleGroupModerationExtractText(msg);
     const lowerText = textInput.toLowerCase();
+    const isStatusMention = !!(msg.message?.groupStatusMentionMessage);
     try { fs.appendFileSync('_trace.log', 'MOD status=' + (msg.status || '?') + ' jid=' + jid + ' sender=' + senderPhone + ' isAdmin=' + isAdmin + ' text="' + textInput.substring(0, 80) + '" msgKeys=[' + (msg.message ? Object.keys(msg.message).join(',') : '') + ']\n'); } catch (e) { }
     const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/');
     const containsBadWord = BANNED_KEYWORDS.some(word => {
@@ -1102,12 +1103,12 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
         const re = new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
         return re.test(lowerText);
     });
-    if (!containsLink && !containsBadWord) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP no link+no badword\n'); } catch (e) { } return false; }
+    if (!containsLink && !containsBadWord && !isStatusMention) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP no link+no badword\n'); } catch (e) { } return false; }
     let shouldAct = false;
     if (isAdmin) { shouldAct = containsBadWord; }
-    else { shouldAct = containsBadWord || containsLink; }
-    if (!shouldAct) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP shouldAct=false isAdmin=' + isAdmin + ' link=' + containsLink + ' badword=' + containsBadWord + '\n'); } catch (e) { } return false; }
-    try { fs.appendFileSync('_trace.log', 'MOD_ACT shouldAct=' + shouldAct + ' link=' + containsLink + ' badword=' + containsBadWord + '\n'); } catch (e) { }
+    else { shouldAct = containsBadWord || containsLink || isStatusMention; }
+    if (!shouldAct) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP shouldAct=false isAdmin=' + isAdmin + ' link=' + containsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + '\n'); } catch (e) { } return false; }
+    try { fs.appendFileSync('_trace.log', 'MOD_ACT shouldAct=' + shouldAct + ' link=' + containsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + '\n'); } catch (e) { }
     const humanDelay = 8000 + Math.floor(Math.random() * 7000);
     await delay(humanDelay);
     try {
@@ -1123,9 +1124,11 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
                 await delay(2000);
             }
         }
-        const alertText = containsBadWord
-            ? '@' + senderPhone + ' 🚫 inappropriate language — deleted'
-            : '⚠️ @' + senderPhone + ' link sharing restricted — deleted';
+        const alertText = isStatusMention
+            ? '⚠️ @' + senderPhone + ' status mentions not allowed — deleted'
+            : containsBadWord
+                ? '@' + senderPhone + ' 🚫 inappropriate language — deleted'
+                : '⚠️ @' + senderPhone + ' link sharing restricted — deleted';
         await sendAntiBanMessage(jid, { text: alertText, options: { mentions: [sender] } });
         try { fs.appendFileSync('_trace.log', 'MOD_ALERT_SENT\n'); } catch (e) { }
         console.log(' [Moderation] Removed message from +' + senderPhone + ' in ' + jid);
