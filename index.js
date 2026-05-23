@@ -660,10 +660,23 @@ const extractPhoneFromParticipant = (p) => {
     return String(p).replace(/[^0-9]/g, '');
 };
 
+const resolveParticipantPhone = (p) => {
+    const rawId = typeof p === 'object' ? (p.id || p.jid || '') : String(p || '');
+    const extracted = extractPhoneFromParticipant(p);
+    if (rawId.endsWith('@lid')) {
+        const lidEntry = adminLidMap.get(rawId);
+        if (lidEntry) {
+            console.log(' [LidMap] Resolved ' + rawId + ' -> ' + lidEntry.phone);
+            return lidEntry.phone;
+        }
+    }
+    return extracted;
+};
+
 const approveWithPacing = async (groupJid, participantJids) => {
     if (startupTime && (Date.now() - startupTime) < RATE_LIMIT_COOLDOWN_MS) return;
     const raw = Array.isArray(participantJids) ? participantJids : [participantJids];
-    const jids = raw.map(extractPhoneFromParticipant).filter(Boolean);
+    const jids = raw.map(resolveParticipantPhone).filter(Boolean);
     if (!jids.length) return;
     for (let i = 0; i < jids.length; i++) {
         const delayMs = i === 0
@@ -682,8 +695,8 @@ const approveWithPacing = async (groupJid, participantJids) => {
 const approveGroupJoinRequest = async (pendingRequest) => {
     const groupJid = pendingRequest.groupJid;
     const candidates = [
-        extractPhoneFromParticipant(pendingRequest.rawParticipantJid),
-        extractPhoneFromParticipant(pendingRequest.participantJid),
+        resolveParticipantPhone(pendingRequest.rawParticipantJid),
+        resolveParticipantPhone(pendingRequest.participantJid),
     ].filter((j, i, arr) => j && arr.indexOf(j) === i);
     for (const jid of candidates) {
         try {
