@@ -1253,7 +1253,7 @@ const webhookLog = [];
 app.post('/webhook', async (req, res) => {
     const payload = req.body;
     if (!payload) return res.status(200).json({ ok: true });
-    const eventType = (payload.event || payload.Event || '').toUpperCase().replace(/\./g, '_');
+    const eventType = (payload.event || payload.Event || '').toUpperCase().replace(/[.\-]/g, '_');
     let messages = [];
     if (eventType === 'MESSAGES_UPSERT') {
         const data = payload.data || payload;
@@ -1263,7 +1263,7 @@ app.post('/webhook', async (req, res) => {
     } else if (payload?.key) {
         messages = [payload];
     }
-    if (eventType === 'GROUP_PARTICIPANTS_UPDATE') {
+    if (eventType === 'GROUP_PARTICIPANTS_UPDATE' || eventType === 'GROUPS_PARTICIPANTS_UPDATE') {
         const data = payload.data || payload;
         const groupJid = data.id || data.groupJid || data.remoteJid || '';
         const participants = data.participants || [];
