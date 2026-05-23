@@ -1068,19 +1068,23 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
         const re = new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
         return re.test(lowerText);
     });
-    if (!containsLink && !containsBadWord) return false;
+    if (!containsLink && !containsBadWord) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP no link+no badword\n'); } catch (e) { } return false; }
     let shouldAct = false;
     if (isAdmin) { shouldAct = containsBadWord; }
     else { shouldAct = containsBadWord || containsLink; }
-    if (!shouldAct) return false;
+    if (!shouldAct) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP shouldAct=false isAdmin=' + isAdmin + ' link=' + containsLink + ' badword=' + containsBadWord + '\n'); } catch (e) { } return false; }
+    try { fs.appendFileSync('_trace.log', 'MOD_ACT shouldAct=' + shouldAct + ' link=' + containsLink + ' badword=' + containsBadWord + '\n'); } catch (e) { }
     const humanDelay = 8000 + Math.floor(Math.random() * 7000);
     await delay(humanDelay);
     try {
+        try { fs.appendFileSync('_trace.log', 'MOD_DELETE_ATTEMPT msgId=' + (msg.key.id || '?').substring(0, 20) + ' participant=' + (sender || '?').substring(0, 40) + '\n'); } catch (e) { }
         for (let d = 0; d < 3; d++) {
             try {
                 await evolution.sendDelete(jid, msg.key.id, sender);
+                try { fs.appendFileSync('_trace.log', 'MOD_DELETE_OK attempt=' + d + '\n'); } catch (e) { }
                 break;
             } catch (de) {
+                try { fs.appendFileSync('_trace.log', 'MOD_DELETE_FAIL attempt=' + d + ' err=' + de.message.substring(0, 100) + '\n'); } catch (e) { }
                 if (d === 2) throw de;
                 await delay(2000);
             }
@@ -1089,8 +1093,10 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
             ? '@' + senderPhone + ' 🚫 inappropriate language — deleted'
             : '⚠️ @' + senderPhone + ' link sharing restricted — deleted';
         await sendAntiBanMessage(jid, { text: alertText });
+        try { fs.appendFileSync('_trace.log', 'MOD_ALERT_SENT\n'); } catch (e) { }
         console.log(' [Moderation] Removed message from +' + senderPhone + ' in ' + jid);
     } catch (e) {
+        try { fs.appendFileSync('_trace.log', 'MOD_FAILED err=' + e.message.substring(0, 150) + '\n'); } catch (e2) { }
         console.error(' [Moderation] Failed:', e.message);
     }
     return true;

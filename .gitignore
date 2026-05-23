@@ -17,6 +17,8 @@ bot_error.txt
 .DS_Store
 
 _whreset.json
+_render_wh.json
+_wh_final.json
 tunnel.js
 evo-api-docker/
 v1.3_documentation.md
