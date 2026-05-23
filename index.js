@@ -682,11 +682,22 @@ const approveWithPacing = async (groupJid, participantJids) => {
             ? Math.floor(Math.random() * 60000) + 60000
             : Math.floor(Math.random() * 20000) + 20000;
         await new Promise(r => setTimeout(r, delayMs));
-        try {
-            await evolution.addGroupParticipant(groupJid, jids[i]);
-            console.log(' [Auto-Approval] Approved ' + jids[i] + ' into ' + groupJid);
-        } catch (e) {
-            console.error(' [Auto-Approval] Failed for ' + jids[i] + ' in ' + groupJid + ':', e.message.substring(0, 120));
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                await evolution.addGroupParticipant(groupJid, jids[i]);
+                console.log(' [Auto-Approval] Approved ' + jids[i] + ' into ' + groupJid);
+                break;
+            } catch (e) {
+                const isRetryable = e.message?.includes('Connection Closed') || e.message?.includes('rate-overlimit') || e.message?.includes('timeout');
+                if (isRetryable && attempt < 2) {
+                    const backoff = (attempt + 1) * 30000;
+                    console.log(' [Auto-Approval] Retry ' + (attempt + 1) + '/3 for ' + jids[i] + ' in ' + groupJid + ' after ' + backoff + 'ms');
+                    await new Promise(r => setTimeout(r, backoff));
+                } else {
+                    console.error(' [Auto-Approval] Failed for ' + jids[i] + ' in ' + groupJid + ':', e.message.substring(0, 120));
+                    break;
+                }
+            }
         }
     }
 };
