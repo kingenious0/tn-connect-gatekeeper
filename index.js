@@ -1554,7 +1554,7 @@ app.post('/api/admins/register', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/admins/seed-campus', async (req, res) => {
+app.all('/api/admins/seed-campus', async (req, res) => {
     if (!supabase) return res.status(503).json({ error: 'Supabase is required.' });
     try {
         const rows = CAMPUS_ADMIN_ROSTER.map(a => ({
