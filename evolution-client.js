@@ -51,11 +51,14 @@ class EvolutionClient {
     }
 
     async sendText(to, text, options = {}) {
-        return this._request('POST', `/message/sendText/${this.instanceName}`, {
+        const body = {
             number: to.endsWith('@g.us') ? to : to.replace(/[^0-9]/g, ''),
             text,
-            options: { delay: options.delay || 0, ...options },
-        });
+            delay: options.delay || 0,
+        };
+        if (options.mentions?.length) body.mentioned = options.mentions;
+        if (options.linkPreview) body.linkPreview = options.linkPreview;
+        return this._request('POST', `/message/sendText/${this.instanceName}`, body);
     }
 
     async sendMedia(to, mediaUrl, caption, options = {}) {
