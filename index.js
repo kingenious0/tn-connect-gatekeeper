@@ -31,7 +31,7 @@ const GROUP_FLOWS_FILE = './group_flows.json';
 
 // Evolution API configuration
 const EVOLUTION_BASE_URL = process.env.EVOLUTION_BASE_URL || 'https://tn-evolution-gateway.onrender.com';
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'tn-connect';
+const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'tn-connect-v2';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'tn-connect-evo-key-2026';
 const SERVER_URL = process.env.SERVER_URL || '';
 
@@ -720,7 +720,7 @@ const scanPendingJoinRequests = async () => {
                 (async () => { await approveWithPacing(group.jid, pendingJids); })();
             }
         } catch (e) {
-            console.warn(' [Join] Could not list pending requests for ' + group.subject + ':', e.message);
+            if (!e.message.includes('Cannot GET')) console.warn(' [Join] Could not list pending requests for ' + group.subject + ':', e.message);
         }
     }
 };
