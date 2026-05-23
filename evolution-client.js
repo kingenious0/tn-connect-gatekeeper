@@ -27,6 +27,10 @@ class EvolutionClient {
                 let data = '';
                 res.on('data', (chunk) => data += chunk);
                 res.on('end', () => {
+                    if (res.statusCode >= 400) {
+                        const errMsg = (data && typeof data === 'string') ? data : ('HTTP ' + res.statusCode);
+                        return reject(new Error(String(errMsg).substring(0, 300)));
+                    }
                     try { resolve(JSON.parse(data)); }
                     catch { resolve(data); }
                 });
@@ -40,7 +44,7 @@ class EvolutionClient {
 
     async sendText(to, text, options = {}) {
         return this._request('POST', `/message/sendText/${this.instanceName}`, {
-            number: to.replace(/[^0-9]/g, ''),
+            number: to.endsWith('@g.us') ? to : to.replace(/[^0-9]/g, ''),
             text,
             options: { delay: options.delay || 0, ...options },
         });
@@ -48,7 +52,7 @@ class EvolutionClient {
 
     async sendMedia(to, mediaUrl, caption, options = {}) {
         return this._request('POST', `/message/sendMedia/${this.instanceName}`, {
-            number: to.replace(/[^0-9]/g, ''),
+            number: to.endsWith('@g.us') ? to : to.replace(/[^0-9]/g, ''),
             media: mediaUrl,
             caption: caption || '',
             options: { delay: options.delay || 0 },
