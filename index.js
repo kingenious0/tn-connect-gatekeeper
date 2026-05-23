@@ -162,7 +162,7 @@ const BANNED_KEYWORDS = [
 const BROADCAST_ADMIN_ROLES = new Set(['admin', 'admin_node']);
 
 const CAMPUS_ADMIN_ROSTER = [
-    { phone: '233264579215', admin_name: 'Yhaar Bhaby' },
+    { phone: '233264579213', admin_name: 'Yhaar Bhaby' },
     { phone: '233207924793', admin_name: 'You mean to tell me' },
     { phone: '233246546818', admin_name: 'TiLIe Nadis' },
     { phone: '233208282949', admin_name: 'Manager For TN' },
@@ -177,8 +177,7 @@ const CAMPUS_ADMIN_ROSTER = [
     { phone: '233540509751', admin_name: 'Air Star' },
     { phone: '233597626090', admin_name: 'Kingenious' },
     { phone: '233538719819', admin_name: 'Mr.Gyan' },
-    { phone: '233595802277', admin_name: 'PROPHETIC BUSINESS' },
-    { phone: '233506746307', admin_name: 'The Admin🔐' }
+    { phone: '233595802277', admin_name: 'PROPHETIC BUSINESS' }
 ];
 
 const adminLidMap = new Map();
