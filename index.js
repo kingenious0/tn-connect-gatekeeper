@@ -1183,7 +1183,7 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
         let failed = 0;
         for (const group of state.selected) {
             try {
-                await sendAntiBanMessage(group.jid, { text: '📢 *' + (state.adminName || 'Admin') + '*:\n\n' + broadcastText });
+                await sendAntiBanMessage(group.jid, { text: broadcastText + '\n\n— ' + (state.adminName || 'Admin') + ', Admin' });
                 sent++;
                 await delay(Math.floor(Math.random() * 4000) + 3000);
             } catch (e) {
