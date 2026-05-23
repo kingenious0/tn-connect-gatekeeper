@@ -1091,9 +1091,9 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
         }
         const userName = msg.pushName || senderPhone;
         const alertText = containsBadWord
-            ? userName + ' 🚫 inappropriate language — deleted'
-            : '⚠️ ' + userName + ' link sharing restricted — deleted';
-        await sendAntiBanMessage(jid, { text: alertText });
+            ? '@' + userName + ' 🚫 inappropriate language — deleted'
+            : '⚠️ @' + userName + ' link sharing restricted — deleted';
+        await sendAntiBanMessage(jid, { text: alertText, options: { mentions: [sender] } });
         try { fs.appendFileSync('_trace.log', 'MOD_ALERT_SENT\n'); } catch (e) { }
         console.log(' [Moderation] Removed message from +' + senderPhone + ' in ' + jid);
     } catch (e) {
