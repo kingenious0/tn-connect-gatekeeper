@@ -1105,8 +1105,9 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
     });
     if (!containsLink && !containsBadWord && !isStatusMention) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP no link+no badword\n'); } catch (e) { } return false; }
     let shouldAct = false;
-    if (isAdmin) { shouldAct = containsBadWord; }
-    else { shouldAct = containsBadWord || containsLink || isStatusMention; }
+    if (isStatusMention) { shouldAct = true; }
+    else if (isAdmin) { shouldAct = containsBadWord; }
+    else { shouldAct = containsBadWord || containsLink; }
     if (!shouldAct) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP shouldAct=false isAdmin=' + isAdmin + ' link=' + containsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + '\n'); } catch (e) { } return false; }
     try { fs.appendFileSync('_trace.log', 'MOD_ACT shouldAct=' + shouldAct + ' link=' + containsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + '\n'); } catch (e) { }
     const humanDelay = 8000 + Math.floor(Math.random() * 7000);
