@@ -1696,6 +1696,27 @@ server.listen(PORT, async () => {
                 await populateLidMap();
                 await refreshDiscoveredGroups(activeSessionPhone);
             }, 30 * 60 * 1000);
+        } else {
+            setInterval(async () => {
+                if (activeSessionPhone) return;
+                try {
+                    const st = await evolution.fetchInstanceStatus();
+                    if (st?.instance?.state === 'open') {
+                        console.log(' [Recovery] Instance now open, initializing…');
+                        activeSessionPhone = '233506746307';
+                        startupTime = Date.now();
+                        await detectAdminAlertsGroup();
+                        await populateLidMap();
+                        await refreshDiscoveredGroups(activeSessionPhone);
+                        setInterval(async () => {
+                            console.log(' [Timer] Periodic group refresh…');
+                            await detectAdminAlertsGroup();
+                            await populateLidMap();
+                            await refreshDiscoveredGroups(activeSessionPhone);
+                        }, 30 * 60 * 1000);
+                    }
+                } catch (e) { /* ignore */ }
+            }, 15000);
         }
     } catch (e) {
         console.warn(' [Boot] Could not verify Evolution API instance status:', e.message);
