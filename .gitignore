@@ -22,3 +22,5 @@ _wh_final.json
 tunnel.js
 evo-api-docker/
 v1.3_documentation.md
+# Generated QR / screenshot images
+*.png

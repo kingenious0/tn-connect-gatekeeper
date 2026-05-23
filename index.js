@@ -1601,7 +1601,13 @@ server.listen(PORT, async () => {
         if (state === 'open') {
             activeSessionPhone = '233536763993';
             startupTime = Date.now();
-            console.log(' [Boot] Active session: ' + activeSessionPhone);
+            const mem = process.memoryUsage();
+            console.log(' [Boot] Active session: ' + activeSessionPhone + ' | RSS: ' + (mem.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (mem.heapUsed / 1024 / 1024).toFixed(1) + 'MB');
+            // log memory every 60s to detect leaks
+            setInterval(() => {
+                const m = process.memoryUsage();
+                console.log(' [Memory] RSS: ' + (m.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (m.heapUsed / 1024 / 1024).toFixed(1) + 'MB | Ext: ' + (m.external / 1024 / 1024).toFixed(1) + 'MB');
+            }, 60000);
             const remainingSilence = Math.max(0, RATE_LIMIT_COOLDOWN_MS - (Date.now() - startupTime));
             if (remainingSilence > 0) {
                 const mins = Math.round(remainingSilence / 60000);
