@@ -1214,7 +1214,7 @@ app.post('/webhook', async (req, res) => {
     res.status(200).json({ ok: true });
     const payload = req.body;
     if (!payload) return;
-    const eventType = (payload.event || payload.Event || '').toUpperCase();
+    const eventType = (payload.event || payload.Event || '').toUpperCase().replace(/\./g, '_');
     let messages = [];
     if (eventType === 'MESSAGES_UPSERT') {
         const data = payload.data || payload;
