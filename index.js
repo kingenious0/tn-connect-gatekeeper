@@ -960,6 +960,26 @@ const detectAdminAlertsGroup = async () => {
     }
 };
 
+const populateLidMap = async () => {
+    try {
+        const groups = await evolution.fetchGroups(true);
+        const allGroups = groups?.data || groups?.groups || groups?.results || (Array.isArray(groups) ? groups : []);
+        let count = 0;
+        for (const g of Object.values(allGroups)) {
+            for (const p of (g.participants || [])) {
+                if (p.id && p.id.endsWith('@lid') && p.phoneNumber) {
+                    const phone = p.phoneNumber.replace(/[^0-9]/g, '');
+                    adminLidMap.set(p.id, { phone, name: p.name || '' });
+                    count++;
+                }
+            }
+        }
+        if (count > 0) console.log(' [LidMap] Mapped ' + count + ' Lid IDs to phone numbers');
+    } catch (e) {
+        console.warn(' [LidMap] Could not populate Lid map:', e.message);
+    }
+};
+
 const refreshDiscoveredGroups = async (phone) => {
     try {
         const groups = await evolution.fetchGroups();
@@ -1464,6 +1484,7 @@ app.post('/api/auth/request-code', async (req, res) => {
         startupTime = Date.now();
         console.log(' [Session] Bot session initialized for +' + phone);
         await detectAdminAlertsGroup();
+        await populateLidMap();
         await refreshDiscoveredGroups(phone);
         await scanPendingJoinRequests();
         await scanAllGroupsForOldLinks();
@@ -1622,6 +1643,7 @@ server.listen(PORT, async () => {
                 await delay(remainingSilence);
             }
             await detectAdminAlertsGroup();
+            await populateLidMap();
             const phone = activeSessionPhone;
             const meta = loadSessionMeta()[phone] || {};
             await refreshDiscoveredGroups(phone);
