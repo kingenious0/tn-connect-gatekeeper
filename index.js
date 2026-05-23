@@ -1062,15 +1062,15 @@ const lookupBroadcastAdmin = async (senderPhone, rawJid) => {
 };
 
 const fetchLiveMonitoredGroups = async () => {
-    const meta = loadSessionMeta();
-    const phone = Object.keys(meta)[0];
-    if (phone && meta[phone]?.discoveredGroups?.length) return meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
     try {
         const groups = await evolution.fetchGroups();
         const allGroups = groups?.data || groups?.groups || groups?.results || (Array.isArray(groups) ? groups : []);
         return Object.values(allGroups).map(g => ({ jid: g.jid || g.id, subject: g.subject || g.name || 'Unknown Group' }));
     } catch (e) {
         console.warn(' [Broadcast] Live group fetch failed:', e.message);
+        const meta = loadSessionMeta();
+        const phone = Object.keys(meta)[0];
+        if (phone && meta[phone]?.discoveredGroups?.length) return meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
         return [];
     }
 };
