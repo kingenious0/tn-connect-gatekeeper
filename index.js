@@ -1387,7 +1387,9 @@ async function processIncomingMessage(msg) {
         if (moderated) return;
         if (isAdmin) {
             const { text: groupText } = extractIncomingPayload(msg);
-            if (groupText && isGreetingOrBroadcastIntent(groupText.trim().toLowerCase())) {
+            const lower = (groupText || '').trim().toLowerCase();
+            const hasActiveWizard = adminBroadcastStates.has(senderPhone);
+            if (groupText && (isGreetingOrBroadcastIntent(lower) || hasActiveWizard)) {
                 if (!adminAlertsGroupJid) {
                     await detectAdminAlertsGroup();
                 }
