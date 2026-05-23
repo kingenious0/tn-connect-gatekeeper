@@ -1205,8 +1205,12 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
 
 // ==========================================
 // 📨 WEBHOOK — RECEIVE INCOMING MESSAGES FROM EVOLUTION API
+const webhookLog = [];
 // ==========================================
 app.post('/webhook', async (req, res) => {
+    const rawBody = JSON.stringify(req.body).substring(0, 500);
+    webhookLog.unshift({ time: Date.now(), body: rawBody, headers: req.headers['content-type'] });
+    if (webhookLog.length > 50) webhookLog.length = 50;
     res.status(200).json({ ok: true });
     const payload = req.body;
     if (!payload) return;
@@ -1276,6 +1280,7 @@ async function processIncomingMessage(msg) {
 // ==========================================
 // 🌐 EXPRESS REST API ENDPOINTS
 // ==========================================
+app.get('/debug/webhook', (req, res) => { res.json(webhookLog); });
 app.get('/api/sessions', async (req, res) => {
     try {
         const sessionArray = [];
