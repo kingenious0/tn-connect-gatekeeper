@@ -524,14 +524,19 @@ const parseSpintax = (template) => {
 
 const buildGatekeeperMessage = () => parseSpintax(GATEKEEPER_MESSAGE);
 
-const participantDigits = (jid) => (jid || '').replace(/@s\.whatsapp\.net/gi, '').replace(/@lid/gi, '').replace(/\D/g, '');
+const participantDigits = (jid) => {
+    if (typeof jid === 'object') jid = jid.phoneNumber || jid.id || jid.jid || '';
+    return String(jid || '').replace(/@s\.whatsapp\.net/gi, '').replace(/@lid/gi, '').replace(/\D/g, '');
+};
 
 const buildRegistryKey = (groupJid, participantJid) => {
     return groupJid + '_' + participantDigits(participantJid);
 };
 
 const dmJidFromParticipant = (participantJid) => {
-    const normalized = (participantJid || '').replace(/@lid.*$/, '').replace(/[^0-9]/g, '');
+    if (!participantJid) return null;
+    if (typeof participantJid === 'object') participantJid = participantJid.phoneNumber || participantJid.id || participantJid.jid || '';
+    const normalized = String(participantJid || '').replace(/@lid.*$/, '').replace(/[^0-9]/g, '');
     if (!normalized) return null;
     return normalized + '@s.whatsapp.net';
 };
@@ -645,9 +650,20 @@ const processJoinRequest = async (groupJid, participantJid, action, groupSubject
     console.log(' [Join] New ' + groupType + ' request: ' + groupSubject + ' from ' + dmJid);
 };
 
+const extractPhoneFromParticipant = (p) => {
+    if (!p) return '';
+    if (typeof p === 'string') return p.replace(/[^0-9]/g, '');
+    if (typeof p === 'object') {
+        const phone = p.phoneNumber || p.id || p.jid || p.user || '';
+        return String(phone).replace(/[^0-9]/g, '');
+    }
+    return String(p).replace(/[^0-9]/g, '');
+};
+
 const approveWithPacing = async (groupJid, participantJids) => {
     if (startupTime && (Date.now() - startupTime) < RATE_LIMIT_COOLDOWN_MS) return;
-    const jids = Array.isArray(participantJids) ? participantJids : [participantJids];
+    const raw = Array.isArray(participantJids) ? participantJids : [participantJids];
+    const jids = raw.map(extractPhoneFromParticipant).filter(Boolean);
     if (!jids.length) return;
     for (let i = 0; i < jids.length; i++) {
         const delayMs = i === 0
@@ -658,7 +674,7 @@ const approveWithPacing = async (groupJid, participantJids) => {
             await evolution.addGroupParticipant(groupJid, jids[i]);
             console.log(' [Auto-Approval] Approved ' + jids[i] + ' into ' + groupJid);
         } catch (e) {
-            console.error(' [Auto-Approval] Failed for ' + jids[i] + ':', e.message);
+            console.error(' [Auto-Approval] Failed for ' + jids[i] + ':', e.message.substring(0, 120));
         }
     }
 };
@@ -666,8 +682,8 @@ const approveWithPacing = async (groupJid, participantJids) => {
 const approveGroupJoinRequest = async (pendingRequest) => {
     const groupJid = pendingRequest.groupJid;
     const candidates = [
-        pendingRequest.rawParticipantJid,
-        pendingRequest.participantJid,
+        extractPhoneFromParticipant(pendingRequest.rawParticipantJid),
+        extractPhoneFromParticipant(pendingRequest.participantJid),
     ].filter((j, i, arr) => j && arr.indexOf(j) === i);
     for (const jid of candidates) {
         try {
