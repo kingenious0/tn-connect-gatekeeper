@@ -635,7 +635,7 @@ const approveWithPacing = async (groupJid, participantJids) => {
             : Math.floor(Math.random() * 20000) + 20000;
         await new Promise(r => setTimeout(r, delayMs));
         try {
-            await evolution.acceptJoinRequest(groupJid, jids[i]);
+            await evolution.addGroupParticipant(groupJid, jids[i]);
             console.log(' [Auto-Approval] Approved ' + jids[i] + ' into ' + groupJid);
         } catch (e) {
             console.error(' [Auto-Approval] Failed for ' + jids[i] + ':', e.message);
@@ -651,8 +651,7 @@ const approveGroupJoinRequest = async (pendingRequest) => {
     ].filter((j, i, arr) => j && arr.indexOf(j) === i);
     for (const jid of candidates) {
         try {
-            await evolution.acceptJoinRequest(groupJid, jid);
-            console.log(' [Gatekeeper] Approved join for ' + jid + ' into ' + (pendingRequest.groupSubject || groupJid));
+            await evolution.addGroupParticipant(groupJid, jid);
             return { success: true, jid };
         } catch (e) {
             console.warn(' [Gatekeeper] Approve failed for ' + jid + ':', e.message);
@@ -1190,6 +1189,22 @@ app.post('/webhook', async (req, res) => {
         else if (data?.messages) messages = data.messages;
     } else if (payload?.key) {
         messages = [payload];
+    }
+    if (eventType === 'GROUP_PARTICIPANTS_UPDATE') {
+        const data = payload.data || payload;
+        const groupJid = data.id || data.groupJid || data.remoteJid || '';
+        const participants = data.participants || [];
+        const action = data.action || '';
+        if (action === 'add' && groupJid && participants.length) {
+            if (!isBusinessHubGroup(groupJid)) {
+                (async () => { await approveWithPacing(groupJid, participants); })();
+            }
+            for (const p of participants) {
+                await processJoinRequest(groupJid, p, 'created', '');
+            }
+        }
+        res.status(200).json({ ok: true });
+        return;
     }
     if (eventType === 'CONNECTION_UPDATE') {
         const state = payload.instance?.state || payload.data?.instance?.state || '';
