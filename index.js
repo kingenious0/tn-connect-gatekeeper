@@ -1452,6 +1452,37 @@ async function sendAdminAlert(alertText) {
     }
 }
 
+app.get('/qr/:instance', async (req, res) => {
+    const instanceName = req.params.instance;
+    try {
+        const urlObj = new URL(`${EVOLUTION_BASE_URL}/instance/connect/${instanceName}`);
+        const options = { hostname: urlObj.hostname, port: urlObj.port || 443, path: urlObj.pathname, method: 'GET', headers: { 'apikey': EVOLUTION_API_KEY }, rejectUnauthorized: false };
+        const reqEvo = https.request(options, (resp) => {
+            let data = '';
+            resp.on('data', chunk => data += chunk);
+            resp.on('end', () => {
+                try {
+                    const parsed = JSON.parse(data);
+                    if (parsed.base64) {
+                        const base64Data = parsed.base64.replace(/^data:image\/png;base64,/, '');
+                        const img = Buffer.from(base64Data, 'base64');
+                        res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': img.length, 'Cache-Control': 'no-cache' });
+                        res.end(img);
+                    } else {
+                        res.status(500).json({ error: 'No QR code in response', response: parsed });
+                    }
+                } catch (e) {
+                    res.status(500).json({ error: 'Parse error', raw: data });
+                }
+            });
+        });
+        reqEvo.on('error', (e) => res.status(500).json({ error: e.message }));
+        reqEvo.end();
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.use('/api', (req, res) => {
     res.status(404).json({ error: 'API Route not found.' });
 });
