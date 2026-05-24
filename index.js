@@ -1457,7 +1457,7 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
     if (!state) return false;
     if (state.step === 'MANAGING_GROUPS') {
         const hasDone = lower === 'done' || lower === 'finish' || lower === 'save' || lower.endsWith('\ndone') || lower.endsWith('\nfinish');
-        const effectiveInput = hasDone ? lower.replace(/\n(done|finish)$/, '') : lower;
+        const effectiveInput = hasDone ? lower.replace(/\n?(?:done|finish)$/, '').trim() : lower;
         if (hasDone && !effectiveInput) {
             adminBroadcastStates.delete(senderPhone);
             await sendAntiBanMessage(jid, { text: '✅ Whitelist saved with ' + getBroadcastWhitelist().length + ' groups. Next time you type *broadcast*, only these will show.' });
