@@ -589,7 +589,7 @@ const parseGeminiJson = (text) => {
 const deepVerifyScreenshotEvidence = async (buffer, mime) => {
     if (!geminiClient) return { valid: false, reason: 'Verification service is temporarily unavailable.', platform: null };
     try {
-        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+        const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash' });
         const result = await model.generateContent([
             {
                 text: 'You are a strict fraud reviewer for TN Connect Ghana WhatsApp group joins.\n' +
@@ -1332,10 +1332,11 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
             }
             const mime = msg.message.imageMessage.mimetype || contentType || 'image/jpeg';
             const model = geminiClient.getGenerativeModel({
-                model: 'gemini-2.5-flash-lite',
+                model: 'gemini-1.5-flash',
                 systemInstruction: 'You are a professional WhatsApp reply assistant for TN Universities Connect admins. You will be shown a screenshot of a conversation. Analyze it and suggest a professional, helpful reply the admin can send. Be concise and natural. Format your response as: **Suggested reply:** [your suggestion]'
             });
             const result = await model.generateContent([
+                { text: 'Analyze this conversation screenshot and suggest a professional reply.' },
                 { inlineData: { data: buffer.toString('base64'), mimeType: mime } }
             ]);
             const suggestion = result.response.text();
@@ -1353,12 +1354,12 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
         const instruction = text.trim().slice('rewrite:'.length).trim();
         try {
             const model = geminiClient.getGenerativeModel({
-                model: 'gemini-2.5-flash-lite',
+                model: 'gemini-1.5-flash',
                 systemInstruction: 'You are a professional reply assistant. The admin is asking you to revise a suggested reply. Rewrite it based on their instruction. Keep it natural and professional.'
             });
             const result = await model.generateContent([
-                { inlineData: { data: state.imageBuffer.toString('base64'), mimeType: state.mime } },
-                { text: 'Based on this conversation screenshot, revise the reply with this instruction: ' + instruction }
+                { text: 'Based on this conversation screenshot, revise the reply with this instruction: ' + instruction },
+                { inlineData: { data: state.imageBuffer.toString('base64'), mimeType: state.mime } }
             ]);
             const revised = result.response.text();
             adminReplyStates.set(senderPhone, { ...state, lastSuggestion: revised });
