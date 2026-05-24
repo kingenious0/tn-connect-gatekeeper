@@ -1364,12 +1364,15 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
             }
             const rawMime = msg.message.imageMessage.mimetype || contentType || 'image/jpeg';
             const header = buffer.slice(0, 4).toString('hex').toUpperCase();
+            if (!['FFD8', '8950', '4749', '5249'].some(h => header.startsWith(h))) {
+                console.log(' [ReplyAssistant] Non-image body (snippet): ' + buffer.slice(0, 200).toString('utf-8').replace(/\n/g, ' ').slice(0, 200));
+            }
             let detectedMime = rawMime;
             if (header.startsWith('FFD8')) detectedMime = 'image/jpeg';
             else if (header.startsWith('89504E47')) detectedMime = 'image/png';
             else if (header.startsWith('474946')) detectedMime = 'image/gif';
             else if (header.startsWith('524946') && buffer.slice(8, 12).toString() === 'WEBP') detectedMime = 'image/webp';
-            console.log(' [ReplyAssistant] Image: ' + (buffer.length / 1024).toFixed(1) + 'KB, header=' + header.slice(0, 8) + ', declared=' + rawMime + ', detected=' + detectedMime);
+            console.log(' [ReplyAssistant] Image: ' + (buffer.length / 1024).toFixed(1) + 'KB, header=' + header.slice(0, 8) + ', declared=' + rawMime + ', detected=' + detectedMime + ', url=' + (msg.message.imageMessage.url || '').slice(0, 120));
             const SYSTEM_PROMPT = 'You are a professional WhatsApp reply assistant for TN Universities Connect admins. You will be shown a screenshot of a conversation. Analyze it and suggest a professional, helpful reply the admin can send. Be concise and natural. Format your response as: **Suggested reply:** [your suggestion]';
             const suggestion = await analyzeScreenshotWithProvider(buffer, detectedMime, SYSTEM_PROMPT, 'Analyze this conversation screenshot and suggest a professional reply the admin can send.', 1000);
             if (!suggestion) throw new Error('No response from AI');
