@@ -13,6 +13,7 @@ const http = require('http');
 const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
 const { generateChatScreenshot } = require('./chatScreenshot');
 
 // ==========================================
@@ -284,11 +285,17 @@ const geminiModel = geminiClient ? geminiClient.getGenerativeModel({
     model: 'gemini-2.5-flash-lite',
     systemInstruction: BUSINESS_HUB_SYSTEM_PROMPT
 }) : null;
+const groqClient = process.env.GROQ_API_KEY ? new OpenAI({ apiKey: process.env.GROQ_API_KEY, baseURL: 'https://api.groq.com/openai/v1' }) : null;
 
 if (geminiModel) {
     console.log(' [Gemini] AI intake engine is ACTIVE for Business Hub groups.');
 } else {
     console.log(' [Gemini] GEMINI_API_KEY missing. Business Hub AI intake will be DISABLED.');
+}
+if (groqClient) {
+    console.log(' [Groq] Vision engine ACTIVE for Reply Assistant.');
+} else {
+    console.log(' [Groq] GROQ_API_KEY missing. Reply Assistant will use Gemini fallback.');
 }
 
 const OFFICIAL_NICHE_GROUPS = [
@@ -1311,8 +1318,31 @@ const handleNicheFinder = async (jid, senderPhone, textInput) => {
 // ==========================================
 // 🤖 AI REPLY ASSISTANT — admin sends screenshot, bot suggests a reply
 // ==========================================
+const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userText) => {
+    const b64 = buffer.toString('base64');
+    if (groqClient) {
+        const response = await groqClient.chat.completions.create({
+            model: 'llama-3.2-11b-vision-preview',
+            messages: [{ role: 'user', content: [
+                { type: 'text', text: userText || 'Analyze this image.' },
+                { type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } }
+            ]}],
+            max_tokens: 500,
+        });
+        return response.choices[0]?.message?.content || '';
+    }
+    if (geminiClient) {
+        const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash', systemInstruction: systemPrompt });
+        const result = await model.generateContent([
+            { text: userText || 'Analyze this image.' },
+            { inlineData: { data: b64, mimeType: mime } }
+        ]);
+        return result.response.text();
+    }
+    return null;
+};
 const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
-    if (!geminiClient) return false;
+    if (!groqClient && !geminiClient) return false;
     const { text, hasImage } = extractIncomingPayload(msg);
     const state = adminReplyStates.get(senderPhone);
 
@@ -1331,37 +1361,25 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
                 return true;
             }
             const mime = msg.message.imageMessage.mimetype || contentType || 'image/jpeg';
-            const model = geminiClient.getGenerativeModel({
-                model: 'gemini-1.5-flash',
-                systemInstruction: 'You are a professional WhatsApp reply assistant for TN Universities Connect admins. You will be shown a screenshot of a conversation. Analyze it and suggest a professional, helpful reply the admin can send. Be concise and natural. Format your response as: **Suggested reply:** [your suggestion]'
-            });
-            const result = await model.generateContent([
-                { text: 'Analyze this conversation screenshot and suggest a professional reply.' },
-                { inlineData: { data: buffer.toString('base64'), mimeType: mime } }
-            ]);
-            const suggestion = result.response.text();
+            const SYSTEM_PROMPT = 'You are a professional WhatsApp reply assistant for TN Universities Connect admins. You will be shown a screenshot of a conversation. Analyze it and suggest a professional, helpful reply the admin can send. Be concise and natural. Format your response as: **Suggested reply:** [your suggestion]';
+            const suggestion = await analyzeScreenshotWithProvider(buffer, mime, SYSTEM_PROMPT, 'Analyze this conversation screenshot and suggest a professional reply the admin can send.');
+            if (!suggestion) throw new Error('No response from AI');
             adminReplyStates.set(senderPhone, { imageBuffer: buffer, mime, lastSuggestion: suggestion });
             await sendAntiBanMessage(jid, { text: suggestion + '\n\nType *rewrite: [instructions]* to tweak it, or just copy and send.' });
             return true;
         } catch (e) {
-            console.error(' [ReplyAssistant] Gemini error:', e.message, '- stack:', e.stack?.split('\n')[0]);
-            const errMsg = (e.message || '').replace(/\[.*?\]/g, '').trim() || 'unknown error';
-            await sendAntiBanMessage(jid, { text: '⚠️ Could not analyze that screenshot (' + errMsg.slice(0, 80) + '). Try sending as a regular photo (not view-once).' });
+            const provider = groqClient ? 'Groq' : 'Gemini';
+            console.error(' [ReplyAssistant] ' + provider + ' error:', e.message);
+            await sendAntiBanMessage(jid, { text: '⚠️ Could not analyze that screenshot. Try sending as a regular photo (not view-once).' });
             return true;
         }
     }
     if (state && text.trim().toLowerCase().startsWith('rewrite:')) {
         const instruction = text.trim().slice('rewrite:'.length).trim();
         try {
-            const model = geminiClient.getGenerativeModel({
-                model: 'gemini-1.5-flash',
-                systemInstruction: 'You are a professional reply assistant. The admin is asking you to revise a suggested reply. Rewrite it based on their instruction. Keep it natural and professional.'
-            });
-            const result = await model.generateContent([
-                { text: 'Based on this conversation screenshot, revise the reply with this instruction: ' + instruction },
-                { inlineData: { data: state.imageBuffer.toString('base64'), mimeType: state.mime } }
-            ]);
-            const revised = result.response.text();
+            const SYSTEM_PROMPT = 'You are a professional reply assistant. The admin is asking you to revise a suggested reply. Rewrite it based on their instruction. Keep it natural and professional.';
+            const revised = await analyzeScreenshotWithProvider(state.imageBuffer, state.mime, SYSTEM_PROMPT, 'Based on this conversation screenshot, revise the reply with this instruction: ' + instruction);
+            if (!revised) throw new Error('No response from AI');
             adminReplyStates.set(senderPhone, { ...state, lastSuggestion: revised });
             await sendAntiBanMessage(jid, { text: revised + '\n\nType *rewrite: [instructions]* to tweak further, or just copy and send.' });
             return true;
