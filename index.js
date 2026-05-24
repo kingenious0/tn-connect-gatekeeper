@@ -1468,13 +1468,18 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
                 await sendAntiBanMessage(jid, { text: '❌ No groups found.' });
                 return true;
             }
+            let wl = getBroadcastWhitelist();
+            if (!wl.length) {
+                // Auto-populate whitelist with all groups so user can remove the ones they don't want
+                wl = allGroups.map(g => g.jid);
+                setBroadcastWhitelist(wl);
+            }
             adminBroadcastStates.set(senderPhone, {
                 step: 'MANAGING_GROUPS',
                 groups: allGroups,
                 selected: [],
                 adminName: adminProfile?.name || 'Admin'
             });
-            const wl = getBroadcastWhitelist();
             const list = allGroups.map((g, i) => (i + 1) + '. ' + (wl.includes(g.jid) ? '✓ ' : '  ') + g.subject).join('\n');
             await sendAntiBanMessage(jid, { text: '📋 *Broadcast Group Manager*\n\nReply with numbers to REMOVE groups from broadcast (e.g., "1,3,5").\nType *done* when finished. Type *cancel* to abort.\n\n' + list });
             return true;
