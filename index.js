@@ -42,7 +42,6 @@ let evolution = new EvolutionClient(EVOLUTION_BASE_URL, EVOLUTION_INSTANCE, EVOL
 
 // Global variables
 let activeSessionPhone = null;
-let isReconnecting = false;
 const pendingApprovals = new Map();
 const pendingVerifications = new Map();
 const businessHubConversations = new Map();
@@ -788,10 +787,13 @@ const handleGatekeeperDM = async (senderJid, msg, pendingRequest) => {
     if (hasImage) {
         verify.attempts += 1;
         console.log(' [Gatekeeper] Image from ' + userPhone + ' (attempt ' + verify.attempts + ') — verifying via Gemini...');
-        if (msg.message?.imageMessage?.url) {
+        if (msg.key?.id) {
             try {
-                const resp = await fetch(msg.message.imageMessage.url, { headers: { 'apikey': EVOLUTION_API_KEY } });
-                const buffer = Buffer.from(await resp.arrayBuffer());
+                const mediaResult = await evolution.getMediaBase64(msg.key.id);
+                let b64 = mediaResult.base64 || '';
+                if (b64.includes(',')) b64 = b64.split(',')[1];
+                const buffer = Buffer.from(b64, 'base64');
+                if (buffer.length < 100) throw new Error('Empty image data');
                 const mime = msg.message.imageMessage.mimetype || 'image/jpeg';
                 const proof = await deepVerifyScreenshotEvidence(buffer, mime);
                 if (!proof.valid) {
@@ -1337,7 +1339,7 @@ const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userTex
     if (groqClient) {
         try {
             const response = await groqClient.chat.completions.create({
-                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                model: 'llama-3.2-11b-vision-preview',
                 messages: [
                     { role: 'system', content: systemPrompt || 'You are a helpful assistant.' },
                     { role: 'user', content: [
@@ -1368,31 +1370,24 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
     const { text, hasImage } = extractIncomingPayload(msg);
     const state = adminReplyStates.get(senderPhone);
 
-    if (hasImage && msg.message?.imageMessage?.url) {
+    if (hasImage && msg.key?.id) {
         try {
-            const resp = await fetch(msg.message.imageMessage.url, { headers: { 'apikey': EVOLUTION_API_KEY } });
-            const contentType = resp.headers.get('content-type') || '';
-            if (!contentType.startsWith('image/') && !contentType.startsWith('application/octet-stream')) {
-                console.error(' [ReplyAssistant] Non-image response:', contentType, 'from', msg.message.imageMessage.url);
-                await sendAntiBanMessage(jid, { text: '⚠️ Could not access that image — the URL returned ' + contentType + '. Try sending the screenshot as a regular photo.' });
-                return true;
-            }
-            const buffer = Buffer.from(await resp.arrayBuffer());
+            const mediaResult = await evolution.getMediaBase64(msg.key.id);
+            let b64 = mediaResult.base64 || '';
+            if (b64.includes(',')) b64 = b64.split(',')[1];
+            const buffer = Buffer.from(b64, 'base64');
             if (buffer.length < 100) {
-                await sendAntiBanMessage(jid, { text: '⚠️ Downloaded image is empty (' + buffer.length + ' bytes). Try sending again.' });
+                await sendAntiBanMessage(jid, { text: '⚠️ Could not download that image properly. Try sending again.' });
                 return true;
             }
-            const rawMime = msg.message.imageMessage.mimetype || contentType || 'image/jpeg';
+            const rawMime = msg.message.imageMessage.mimetype || 'image/jpeg';
             const header = buffer.slice(0, 4).toString('hex').toUpperCase();
-            if (!['FFD8', '8950', '4749', '5249'].some(h => header.startsWith(h))) {
-                console.log(' [ReplyAssistant] Non-image body (snippet): ' + buffer.slice(0, 200).toString('utf-8').replace(/\n/g, ' ').slice(0, 200));
-            }
             let detectedMime = rawMime;
             if (header.startsWith('FFD8')) detectedMime = 'image/jpeg';
             else if (header.startsWith('89504E47')) detectedMime = 'image/png';
             else if (header.startsWith('474946')) detectedMime = 'image/gif';
             else if (header.startsWith('524946') && buffer.slice(8, 12).toString() === 'WEBP') detectedMime = 'image/webp';
-            console.log(' [ReplyAssistant] Image: ' + (buffer.length / 1024).toFixed(1) + 'KB, header=' + header.slice(0, 8) + ', declared=' + rawMime + ', detected=' + detectedMime + ', url=' + (msg.message.imageMessage.url || '').slice(0, 120));
+            console.log(' [ReplyAssistant] Image: ' + (buffer.length / 1024).toFixed(1) + 'KB, mime=' + detectedMime);
             const SYSTEM_PROMPT = 'You are a professional WhatsApp reply assistant for TN Universities Connect admins. You will be shown a screenshot of a conversation. Analyze it and suggest a professional, helpful reply the admin can send. Be concise and natural. Format your response as: **Suggested reply:** [your suggestion]';
             const suggestion = await analyzeScreenshotWithProvider(buffer, detectedMime, SYSTEM_PROMPT, 'Analyze this conversation screenshot and suggest a professional reply the admin can send.', 1000);
             if (!suggestion) throw new Error('No response from AI');
@@ -1401,7 +1396,7 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
             return true;
         } catch (e) {
             const provider = groqClient ? 'Groq' : 'Gemini';
-            console.error(' [ReplyAssistant] ' + provider + ' error:', e.message);
+            console.error(' [ReplyAssistant] ' + provider + ' error:', e.message.substring(0, 120));
             await sendAntiBanMessage(jid, { text: '⚠️ Could not analyze that screenshot. Try sending as a regular photo (not view-once).' });
             return true;
         }
@@ -2057,14 +2052,21 @@ server.listen(PORT, async () => {
     console.log(' [Session] Using Evolution API instance: ' + EVOLUTION_INSTANCE);
     try {
         const status = await evolution.fetchInstanceStatus();
-        const state = status?.instance?.state || 'unknown';
+        let state = status?.instance?.state || 'unknown';
         console.log(' [Session] Evolution API instance status: ' + state);
         if (state === 'close' || state === 'connecting' || state === 'reconnecting') {
             try {
-                await evolution._request('POST', `/instance/connect/${EVOLUTION_INSTANCE}`);
-                console.log(' [Session] Reconnect triggered');
-                await delay(10000);
-            } catch (e) { console.log(' [Session] Cannot reconnect:', e.message.slice(0, 60)); }
+                const qr = await evolution._request('GET', `/instance/connect/${EVOLUTION_INSTANCE}`);
+                if (qr?.instance?.state === 'open') {
+                    console.log(' [Session] Instance is actually open (connectionState was stale)');
+                    state = 'open';
+                } else if (qr?.base64) {
+                    console.log(' [Session] QR code generated. Open /qr/' + EVOLUTION_INSTANCE + ' to scan.');
+                    await delay(10000);
+                } else {
+                    console.log(' [Session] Connect triggered, waiting for QR…');
+                }
+            } catch (e) { console.log(' [Session] Cannot reconnect:', e.message.slice(0, 80)); }
         }
         if (state === 'open') {
             activeSessionPhone = '233506746307';
@@ -2098,13 +2100,17 @@ server.listen(PORT, async () => {
                 try {
                     const st = await evolution.fetchInstanceStatus();
                     if (st?.instance?.state === 'open') return;
-                    console.log(' [Health] Connection state is "' + (st?.instance?.state || 'unknown') + '", reconnecting…');
+                    console.log(' [Health] connectionState says "' + (st?.instance?.state || 'unknown') + '", confirming via connect…');
                 } catch (e) { /* ignore */ }
                 try {
-                    await evolution._request('POST', `/instance/connect/${EVOLUTION_INSTANCE}`);
-                    console.log(' [Health] Reconnect triggered');
+                    const qr = await evolution._request('GET', `/instance/connect/${EVOLUTION_INSTANCE}`);
+                    if (qr?.instance?.state === 'open') {
+                        return; // connectionState was stale, actually open
+                    }
+                    if (qr?.base64) console.log(' [Health] New QR code generated. Scan at /qr/' + EVOLUTION_INSTANCE);
+                    else console.log(' [Health] No QR yet, connection may be pending');
                 } catch (e2) {
-                    console.error(' [Health] Reconnect failed:', e2.message.slice(0, 80));
+                    console.error(' [Health] Reconnect failed:', e2.message.slice(0, 100));
                 }
             }, 5 * 60 * 1000);
             // Retry queued failed approvals every 2 minutes

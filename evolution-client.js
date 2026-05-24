@@ -116,6 +116,13 @@ class EvolutionClient {
     async fetchInstanceStatus() {
         return this._request('GET', `/instance/connectionState/${this.instanceName}`);
     }
+
+    async getMediaBase64(messageKeyId) {
+        return this._request('POST', `/chat/getBase64FromMediaMessage/${this.instanceName}`, {
+            message: { key: { id: messageKeyId } },
+            convertToMp4: false,
+        });
+    }
 }
 
 module.exports = { EvolutionClient };
