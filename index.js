@@ -774,7 +774,7 @@ const handleGatekeeperDM = async (senderJid, msg, pendingRequest) => {
         console.log(' [Gatekeeper] Image from ' + userPhone + ' (attempt ' + verify.attempts + ') — verifying via Gemini...');
         if (msg.message?.imageMessage?.url) {
             try {
-                const resp = await fetch(msg.message.imageMessage.url);
+                const resp = await fetch(msg.message.imageMessage.url, { headers: { 'apikey': EVOLUTION_API_KEY } });
                 const buffer = Buffer.from(await resp.arrayBuffer());
                 const mime = msg.message.imageMessage.mimetype || 'image/jpeg';
                 const proof = await deepVerifyScreenshotEvidence(buffer, mime);
@@ -1350,7 +1350,7 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
 
     if (hasImage && msg.message?.imageMessage?.url) {
         try {
-            const resp = await fetch(msg.message.imageMessage.url);
+            const resp = await fetch(msg.message.imageMessage.url, { headers: { 'apikey': EVOLUTION_API_KEY } });
             const contentType = resp.headers.get('content-type') || '';
             if (!contentType.startsWith('image/') && !contentType.startsWith('application/octet-stream')) {
                 console.error(' [ReplyAssistant] Non-image response:', contentType, 'from', msg.message.imageMessage.url);
