@@ -116,6 +116,10 @@ class EvolutionClient {
     async fetchInstanceStatus() {
         return this._request('GET', `/instance/connectionState/${this.instanceName}`);
     }
+
+    async updateSettings(settings) {
+        return this._request('PUT', `/instance/updateSettings/${this.instanceName}`, settings);
+    }
 }
 
 module.exports = { EvolutionClient };

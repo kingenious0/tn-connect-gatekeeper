@@ -1112,6 +1112,10 @@ const refreshGroupCache = async () => {
         cachedGroupsLastRefresh = Date.now();
         console.log(' [Cache] Refreshed ' + cachedGroups.length + ' groups from Evolution API');
     } catch (e) {
+        if (e.message?.includes('Connection Closed') && cachedGroups.length) {
+            console.warn(' [Cache] Connection closed, will retry on next cycle. Using ' + cachedGroups.length + ' cached groups.');
+            return;
+        }
         console.warn(' [Cache] Group refresh failed, using fallback:', e.message.substring(0, 80));
         if (!cachedGroups.length) {
             const meta = loadSessionMeta();
@@ -2032,6 +2036,13 @@ server.listen(PORT, async () => {
         const status = await evolution.fetchInstanceStatus();
         const state = status?.instance?.state || 'unknown';
         console.log(' [Session] Evolution API instance status: ' + state);
+        // Enforce alwaysOnline on every boot
+        try {
+            await evolution.updateSettings({ alwaysOnline: true });
+            console.log(' [Session] alwaysOnline enforced to true');
+        } catch (e) {
+            console.log(' [Session] Could not set alwaysOnline: ' + e.message);
+        }
         if (state === 'open') {
             activeSessionPhone = '233506746307';
             startupTime = Date.now();
@@ -2059,6 +2070,22 @@ server.listen(PORT, async () => {
             await refreshDiscoveredGroups(phone);
             await delay(5000);
             await scanPendingJoinRequests();
+            // Periodic connection health check — reconnect if dropped
+            setInterval(async () => {
+                try {
+                    const st = await evolution.fetchInstanceStatus();
+                    if (st?.instance?.state === 'open') return;
+                    console.log(' [Health] Connection state is "' + (st?.instance?.state || 'unknown') + '", reconnecting…');
+                } catch (e) { /* ignore */ }
+                try {
+                    await evolution.updateSettings({ alwaysOnline: true });
+                    await delay(2000);
+                    await evolution._request('POST', `/instance/connect/${EVOLUTION_INSTANCE}`);
+                    console.log(' [Health] Reconnect triggered');
+                } catch (e2) {
+                    console.error(' [Health] Reconnect failed:', e2.message.slice(0, 80));
+                }
+            }, 5 * 60 * 1000);
             setInterval(async () => {
                 console.log(' [Timer] Periodic group refresh…');
                 await detectAdminAlertsGroup();
