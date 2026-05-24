@@ -1450,7 +1450,7 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
             return true;
         }
         const wl = getBroadcastWhitelist();
-        const indices = lower.split(',').map(s => parseInt(s.trim()) - 1).filter(i => i >= 0 && i < state.groups.length);
+        const indices = lower.replace(/\./g, ',').split(',').map(s => parseInt(s.trim()) - 1).filter(i => i >= 0 && i < state.groups.length);
         if (!indices.length) {
             await sendAntiBanMessage(jid, { text: '❌ No valid group numbers. Reply with numbers to toggle (e.g., "1,3,5") or *done* to finish.' });
             return true;
@@ -1469,12 +1469,12 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
         if (lower === 'all') {
             state.selected = state.groups;
         } else {
-            const indices = lower.split(',').map(s => parseInt(s.trim()) - 1).filter(i => i >= 0 && i < state.groups.length);
-            if (!indices.length) {
-                await sendAntiBanMessage(jid, { text: '❌ No valid group numbers found. Try again (e.g., "1,3,5" or "all").' });
-                return true;
-            }
-            state.selected = indices.map(i => state.groups[i]);
+const indices = lower.replace(/\./g, ',').split(',').map(s => parseInt(s.trim()) - 1).filter(i => i >= 0 && i < state.groups.length);
+        if (!indices.length) {
+            await sendAntiBanMessage(jid, { text: '❌ No valid group numbers found. Try again (e.g., "1,3,5" or "all").' });
+            return true;
+        }
+        state.selected = indices.map(i => state.groups[i]);
         }
         state.step = 'CAPTURING_RAW_BODY';
         const groupNames = state.selected.map(g => '• ' + g.subject).join('\n');
