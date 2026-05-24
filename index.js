@@ -1362,11 +1362,18 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
                 await sendAntiBanMessage(jid, { text: '⚠️ Downloaded image is empty (' + buffer.length + ' bytes). Try sending again.' });
                 return true;
             }
-            const mime = msg.message.imageMessage.mimetype || contentType || 'image/jpeg';
+            const rawMime = msg.message.imageMessage.mimetype || contentType || 'image/jpeg';
+            const header = buffer.slice(0, 4).toString('hex').toUpperCase();
+            let detectedMime = rawMime;
+            if (header.startsWith('FFD8')) detectedMime = 'image/jpeg';
+            else if (header.startsWith('89504E47')) detectedMime = 'image/png';
+            else if (header.startsWith('474946')) detectedMime = 'image/gif';
+            else if (header.startsWith('524946') && buffer.slice(8, 12).toString() === 'WEBP') detectedMime = 'image/webp';
+            console.log(' [ReplyAssistant] Image: ' + (buffer.length / 1024).toFixed(1) + 'KB, header=' + header.slice(0, 8) + ', declared=' + rawMime + ', detected=' + detectedMime);
             const SYSTEM_PROMPT = 'You are a professional WhatsApp reply assistant for TN Universities Connect admins. You will be shown a screenshot of a conversation. Analyze it and suggest a professional, helpful reply the admin can send. Be concise and natural. Format your response as: **Suggested reply:** [your suggestion]';
-            const suggestion = await analyzeScreenshotWithProvider(buffer, mime, SYSTEM_PROMPT, 'Analyze this conversation screenshot and suggest a professional reply the admin can send.', 1000);
+            const suggestion = await analyzeScreenshotWithProvider(buffer, detectedMime, SYSTEM_PROMPT, 'Analyze this conversation screenshot and suggest a professional reply the admin can send.', 1000);
             if (!suggestion) throw new Error('No response from AI');
-            adminReplyStates.set(senderPhone, { imageBuffer: buffer, mime, lastSuggestion: suggestion });
+            adminReplyStates.set(senderPhone, { imageBuffer: buffer, mime: detectedMime, lastSuggestion: suggestion });
             await sendAntiBanMessage(jid, { text: suggestion + '\n\nType *rewrite: [instructions]* to tweak it, or just copy and send.' });
             return true;
         } catch (e) {
