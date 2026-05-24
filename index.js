@@ -1067,8 +1067,8 @@ async function sendAntiBanMessage(jid, content, retries = 3) {
 
 const senderPhoneFromJid = (jid) => participantDigits(jid || '');
 
-const isGreetingOrBroadcastIntent = (lowerText) => {
-    return /\b(hello|hi|hey|morning|evening|broadcast|announce|send)\b/.test(lowerText);
+const isBroadcastIntent = (lowerText) => {
+    return /\b(broadcast|announce|send)\b/.test(lowerText);
 };
 
 const resolveAdminDisplayName = (adminName) => {
@@ -1243,8 +1243,11 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
         let sent = 0;
         let failed = 0;
         for (const group of state.selected) {
+            const msgText = broadcastText + '\n\n— ' + (state.adminName || 'Admin') + ', Admin';
+            console.log(' [Broadcast] Sending to ' + group.subject + ' (' + group.jid + '): text="' + msgText.substring(0, 80) + '"');
             try {
-                await sendAntiBanMessage(group.jid, { text: broadcastText + '\n\n— ' + (state.adminName || 'Admin') + ', Admin' });
+                await sendAntiBanMessage(group.jid, { text: msgText });
+                console.log(' [Broadcast] Sent OK to ' + group.subject);
                 sent++;
                 await delay(Math.floor(Math.random() * 4000) + 3000);
             } catch (e) {
@@ -1400,7 +1403,11 @@ async function processIncomingMessage(msg) {
             const { text: groupText } = extractIncomingPayload(msg);
             const lower = (groupText || '').trim().toLowerCase();
             const hasActiveWizard = adminBroadcastStates.has(senderPhone);
-            if (groupText && (isGreetingOrBroadcastIntent(lower) || hasActiveWizard)) {
+            if (groupText && (isBroadcastIntent(lower) || hasActiveWizard)) {
+                if (hasActiveWizard) {
+                    const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
+                    if (handled) return;
+                }
                 if (!adminAlertsGroupJid) {
                     await detectAdminAlertsGroup();
                 }
