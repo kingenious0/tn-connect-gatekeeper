@@ -185,7 +185,7 @@ const CAMPUS_ADMIN_ROSTER = [
 const adminLidMap = new Map();
 const uploadDebounces = {};
 
-const RATE_LIMIT_COOLDOWN_MS = parseInt(process.env.RATE_LIMIT_COOLDOWN_MS || '') || 5000;
+const RATE_LIMIT_COOLDOWN_MS = parseInt(process.env.RATE_LIMIT_COOLDOWN_MS || '') || 20000;
 let startupTime = 0;
 let lastMessageSendTime = 0;
 const MIN_MESSAGE_INTERVAL_MS = 8000;
@@ -2048,15 +2048,20 @@ server.listen(PORT, async () => {
                 await delay(remainingSilence);
             }
             await detectAdminAlertsGroup();
+            await delay(5000);
             await populateLidMap();
             const phone = activeSessionPhone;
             const meta = loadSessionMeta()[phone] || {};
+            await delay(5000);
             await refreshDiscoveredGroups(phone);
+            await delay(5000);
             await scanPendingJoinRequests();
             setInterval(async () => {
                 console.log(' [Timer] Periodic group refresh…');
                 await detectAdminAlertsGroup();
+                await delay(5000);
                 await populateLidMap();
+                await delay(5000);
                 await refreshDiscoveredGroups(activeSessionPhone);
             }, 30 * 60 * 1000);
         } else {
