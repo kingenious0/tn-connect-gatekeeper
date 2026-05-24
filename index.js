@@ -1671,6 +1671,15 @@ app.get('/', (req, res) => {
 });
 
 // ==========================================
+// ⏰ KEEP-AWAKE — pings self every 5 min so Render never spins down
+// ==========================================
+const KEEP_AWAKE_URL = SERVER_URL || ('http://localhost:' + PORT);
+setInterval(() => {
+    const mod = KEEP_AWAKE_URL.startsWith('https') ? https : http;
+    mod.get(KEEP_AWAKE_URL + '/', (res) => res.resume()).on('error', () => {});
+}, 5 * 60 * 1000);
+
+// ==========================================
 // 🚀 SERVER START
 // ==========================================
 const server = http.createServer(app);
