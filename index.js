@@ -1434,6 +1434,16 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
     const firstWord = (textInput || '').trim().split(/\s+/)[0].toLowerCase();
     if (firstWord === 'broadcast' || firstWord === 'send' || firstWord === 'announce') {
         const secondWord = (textInput || '').trim().split(/\s+/)[1];
+        if (secondWord === 'reset' || secondWord === 'all') {
+            const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+            if (!allGroups.length) {
+                await sendAntiBanMessage(jid, { text: '❌ No groups found.' });
+                return true;
+            }
+            setBroadcastWhitelist(allGroups.map(g => g.jid));
+            await sendAntiBanMessage(jid, { text: '✅ Whitelist reset — all ' + allGroups.length + ' groups are now available for broadcast. Use *broadcast manage* to remove specific ones.' });
+            return true;
+        }
         if (secondWord === 'manage' || secondWord === 'setup' || secondWord === 'whitelist' || secondWord === 'list') {
             const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
             if (!allGroups.length) {
@@ -1448,7 +1458,7 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
             });
             const wl = getBroadcastWhitelist();
             const list = allGroups.map((g, i) => (i + 1) + '. ' + (wl.includes(g.jid) ? '✓ ' : '  ') + g.subject).join('\n');
-            await sendAntiBanMessage(jid, { text: '📋 *Broadcast Group Manager*\n\nReply with numbers to toggle groups on/off (e.g., "1,3,5").\nType *done* when finished. Type *cancel* to abort.\n\n' + list });
+            await sendAntiBanMessage(jid, { text: '📋 *Broadcast Group Manager*\n\nReply with numbers to REMOVE groups from broadcast (e.g., "1,3,5").\nType *done* when finished. Type *cancel* to abort.\n\n' + list });
             return true;
         }
         const groups = await fetchLiveMonitoredGroups();
@@ -1482,15 +1492,25 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
             return true;
         }
         const wl = getBroadcastWhitelist();
+        if (effectiveInput === 'all') {
+            setBroadcastWhitelist(state.groups.map(g => g.jid));
+            if (hasDone) {
+                adminBroadcastStates.delete(senderPhone);
+                await sendAntiBanMessage(jid, { text: '✅ All groups whitelisted (' + state.groups.length + '). Next time you type *broadcast*, all will show.' });
+            } else {
+                const list = state.groups.map((g, i) => (i + 1) + '. ✓ ' + g.subject).join('\n');
+                await sendAntiBanMessage(jid, { text: '✅ All groups whitelisted. Reply with numbers to REMOVE specific groups, or *done* to finish.\n\n' + list });
+            }
+            return true;
+        }
         const indices = effectiveInput.replace(/\./g, ',').split(',').map(s => parseInt(s.trim()) - 1).filter(i => i >= 0 && i < state.groups.length);
         if (!indices.length) {
-            await sendAntiBanMessage(jid, { text: '❌ No valid group numbers. Reply with numbers to toggle (e.g., "1,3,5") or *done* to finish.' });
+            await sendAntiBanMessage(jid, { text: '❌ No valid group numbers. Reply with numbers to REMOVE from whitelist (e.g., "1,3,5") or *done* to finish.' });
             return true;
         }
         for (const idx of indices) {
             const g = state.groups[idx];
             if (wl.includes(g.jid)) wl.splice(wl.indexOf(g.jid), 1);
-            else wl.push(g.jid);
         }
         setBroadcastWhitelist(wl);
         if (hasDone) {
@@ -1498,7 +1518,7 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
             await sendAntiBanMessage(jid, { text: '✅ Whitelist saved with ' + wl.length + ' groups. Next time you type *broadcast*, only these will show.' });
         } else {
             const list = state.groups.map((g, i) => (i + 1) + '. ' + (wl.includes(g.jid) ? '✓ ' : '  ') + g.subject).join('\n');
-            await sendAntiBanMessage(jid, { text: '✅ Toggled ' + indices.length + ' group(s). Current whitelist: ' + wl.length + ' groups.\n\nReply with more numbers, or type *done* to finish.\n\n' + list });
+            await sendAntiBanMessage(jid, { text: '✅ Removed ' + indices.length + ' group(s) from broadcast. Current whitelist: ' + wl.length + ' groups.\n\nReply with more numbers to REMOVE, or *done* to finish.\n\n' + list });
         }
         return true;
     }
