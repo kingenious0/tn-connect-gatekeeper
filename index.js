@@ -1319,8 +1319,18 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
     if (hasImage && msg.message?.imageMessage?.url) {
         try {
             const resp = await fetch(msg.message.imageMessage.url);
+            const contentType = resp.headers.get('content-type') || '';
+            if (!contentType.startsWith('image/') && !contentType.startsWith('application/octet-stream')) {
+                console.error(' [ReplyAssistant] Non-image response:', contentType, 'from', msg.message.imageMessage.url);
+                await sendAntiBanMessage(jid, { text: '⚠️ Could not access that image — the URL returned ' + contentType + '. Try sending the screenshot as a regular photo.' });
+                return true;
+            }
             const buffer = Buffer.from(await resp.arrayBuffer());
-            const mime = msg.message.imageMessage.mimetype || 'image/jpeg';
+            if (buffer.length < 100) {
+                await sendAntiBanMessage(jid, { text: '⚠️ Downloaded image is empty (' + buffer.length + ' bytes). Try sending again.' });
+                return true;
+            }
+            const mime = msg.message.imageMessage.mimetype || contentType || 'image/jpeg';
             const model = geminiClient.getGenerativeModel({
                 model: 'gemini-2.5-flash-lite',
                 systemInstruction: 'You are a professional WhatsApp reply assistant for TN Universities Connect admins. You will be shown a screenshot of a conversation. Analyze it and suggest a professional, helpful reply the admin can send. Be concise and natural. Format your response as: **Suggested reply:** [your suggestion]'
@@ -1333,8 +1343,9 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
             await sendAntiBanMessage(jid, { text: suggestion + '\n\nType *rewrite: [instructions]* to tweak it, or just copy and send.' });
             return true;
         } catch (e) {
-            console.error(' [ReplyAssistant] Gemini error:', e.message);
-            await sendAntiBanMessage(jid, { text: '⚠️ Could not analyze that screenshot. Please try again.' });
+            console.error(' [ReplyAssistant] Gemini error:', e.message, '- stack:', e.stack?.split('\n')[0]);
+            const errMsg = (e.message || '').replace(/\[.*?\]/g, '').trim() || 'unknown error';
+            await sendAntiBanMessage(jid, { text: '⚠️ Could not analyze that screenshot (' + errMsg.slice(0, 80) + '). Try sending as a regular photo (not view-once).' });
             return true;
         }
     }
