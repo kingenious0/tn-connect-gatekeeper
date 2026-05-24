@@ -1417,14 +1417,16 @@ const saveBroadcastConfig = (cfg) => {
     try { fs.writeFileSync(BROADCAST_CONFIG_FILE, JSON.stringify(cfg, null, 2)); }
     catch (e) { console.error(' [Broadcast] Failed to save config:', e.message); }
     if (supabase) {
-        supabase.from('gatekeeper_sessions').upsert({
-            phone: '_config_broadcast_whitelist',
-            admin_name: 'config',
-            selected_groups: [],
-            discovered_groups: cfg.whitelist || [],
-            files: [],
-            updated_at: new Date().toISOString()
-        }).catch(() => {});
+        try {
+            supabase.from('gatekeeper_sessions').upsert({
+                phone: '_config_broadcast_whitelist',
+                admin_name: 'config',
+                selected_groups: [],
+                discovered_groups: cfg.whitelist || [],
+                files: [],
+                updated_at: new Date().toISOString()
+            });
+        } catch (_) {}
     }
 };
 const loadBroadcastWhitelistFromSupabase = async () => {
@@ -2036,12 +2038,12 @@ server.listen(PORT, async () => {
         const status = await evolution.fetchInstanceStatus();
         const state = status?.instance?.state || 'unknown';
         console.log(' [Session] Evolution API instance status: ' + state);
-        // Enforce alwaysOnline on every boot
-        try {
-            await evolution.updateSettings({ alwaysOnline: true });
-            console.log(' [Session] alwaysOnline enforced to true');
-        } catch (e) {
-            console.log(' [Session] Could not set alwaysOnline: ' + e.message);
+        if (state === 'close' || state === 'connecting' || state === 'reconnecting') {
+            try {
+                await evolution._request('POST', `/instance/connect/${EVOLUTION_INSTANCE}`);
+                console.log(' [Session] Reconnect triggered');
+                await delay(10000);
+            } catch (e) { console.log(' [Session] Cannot reconnect:', e.message.slice(0, 60)); }
         }
         if (state === 'open') {
             activeSessionPhone = '233506746307';
@@ -2078,8 +2080,6 @@ server.listen(PORT, async () => {
                     console.log(' [Health] Connection state is "' + (st?.instance?.state || 'unknown') + '", reconnecting…');
                 } catch (e) { /* ignore */ }
                 try {
-                    await evolution.updateSettings({ alwaysOnline: true });
-                    await delay(2000);
                     await evolution._request('POST', `/instance/connect/${EVOLUTION_INSTANCE}`);
                     console.log(' [Health] Reconnect triggered');
                 } catch (e2) {
