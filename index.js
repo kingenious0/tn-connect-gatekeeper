@@ -690,6 +690,9 @@ const approveWithPacing = async (groupJid, participantJids) => {
             try {
                 await evolution.addGroupParticipant(groupJid, jids[i]);
                 console.log(' [Auto-Approval] Approved ' + jids[i] + ' into ' + groupJid);
+                // Remove from retry queue if it was there
+                const qKey = groupJid + '|' + jids[i];
+                pendingApprovals.delete(qKey);
                 break;
             } catch (e) {
                 const isRetryable = e.message?.includes('Connection Closed') || e.message?.includes('rate-overlimit') || e.message?.includes('timeout');
@@ -699,6 +702,9 @@ const approveWithPacing = async (groupJid, participantJids) => {
                     await new Promise(r => setTimeout(r, backoff));
                 } else {
                     console.error(' [Auto-Approval] Failed for ' + jids[i] + ' in ' + groupJid + ':', e.message.substring(0, 120));
+                    // Queue for later retry
+                    const qKey = groupJid + '|' + jids[i];
+                    pendingApprovals.set(qKey, { groupJid, jid: jids[i], time: Date.now(), attempts: 0 });
                     break;
                 }
             }
@@ -713,11 +719,21 @@ const approveGroupJoinRequest = async (pendingRequest) => {
         resolveParticipantPhone(pendingRequest.participantJid),
     ].filter((j, i, arr) => j && arr.indexOf(j) === i);
     for (const jid of candidates) {
-        try {
-            await evolution.addGroupParticipant(groupJid, jid);
-            return { success: true, jid };
-        } catch (e) {
-            console.warn(' [Gatekeeper] Approve failed for ' + jid + ':', e.message);
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                await evolution.addGroupParticipant(groupJid, jid);
+                return { success: true, jid };
+            } catch (e) {
+                const isRetryable = e.message?.includes('Connection Closed') || e.message?.includes('rate-overlimit') || e.message?.includes('timeout');
+                if (isRetryable && attempt < 2) {
+                    const backoff = (attempt + 1) * 30000;
+                    console.log(' [Gatekeeper] Retry ' + (attempt + 1) + '/3 for ' + jid + ' in ' + groupJid + ' after ' + backoff + 'ms');
+                    await new Promise(r => setTimeout(r, backoff));
+                } else {
+                    console.warn(' [Gatekeeper] Approve failed for ' + jid + ':', e.message.substring(0, 120));
+                    break;
+                }
+            }
         }
     }
     return { success: false, jid: null };
@@ -2091,6 +2107,26 @@ server.listen(PORT, async () => {
                     console.error(' [Health] Reconnect failed:', e2.message.slice(0, 80));
                 }
             }, 5 * 60 * 1000);
+            // Retry queued failed approvals every 2 minutes
+            setInterval(async () => {
+                if (!pendingApprovals.size) return;
+                const now = Date.now();
+                for (const [key, q] of pendingApprovals) {
+                    if (now - q.time < 120000 || q.attempts >= 5) continue;
+                    q.attempts++;
+                    q.time = now;
+                    try {
+                        await evolution.addGroupParticipant(q.groupJid, q.jid);
+                        console.log(' [Auto-Approval] Queued approval succeeded for ' + q.jid + ' into ' + q.groupJid);
+                        pendingApprovals.delete(key);
+                    } catch (e) {
+                        if (!e.message?.includes('Connection Closed') && !e.message?.includes('timeout')) {
+                            console.log(' [Auto-Approval] Queued approval failed permanently for ' + q.jid + ': ' + e.message.slice(0, 80));
+                            pendingApprovals.delete(key);
+                        }
+                    }
+                }
+            }, 120000);
             setInterval(async () => {
                 console.log(' [Timer] Periodic group refresh…');
                 await detectAdminAlertsGroup();
