@@ -1261,26 +1261,25 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
         await sendAntiBanMessage(jid, { text: '🚫 Broadcast cancelled.' });
         return true;
     }
-    if (lower === 'broadcast' || lower === 'send' || lower === 'announce') {
-        if (lower === 'broadcast' && textInput.length > 9) {
-            const secondWord = textInput.trim().split(/\s+/)[1];
-            if (secondWord === 'manage' || secondWord === 'setup' || secondWord === 'whitelist') {
-                const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
-                if (!allGroups.length) {
-                    await sendAntiBanMessage(jid, { text: '❌ No groups found.' });
-                    return true;
-                }
-                adminBroadcastStates.set(senderPhone, {
-                    step: 'MANAGING_GROUPS',
-                    groups: allGroups,
-                    selected: [],
-                    adminName: adminProfile?.name || 'Admin'
-                });
-                const wl = getBroadcastWhitelist();
-                const list = allGroups.map((g, i) => (i + 1) + '. ' + (wl.includes(g.jid) ? '✓ ' : '  ') + g.subject).join('\n');
-                await sendAntiBanMessage(jid, { text: '📋 *Broadcast Group Manager*\n\nReply with numbers to toggle groups on/off (e.g., "1,3,5").\nType *done* when finished. Type *cancel* to abort.\n\n' + list });
+    const firstWord = (textInput || '').trim().split(/\s+/)[0].toLowerCase();
+    if (firstWord === 'broadcast' || firstWord === 'send' || firstWord === 'announce') {
+        const secondWord = (textInput || '').trim().split(/\s+/)[1];
+        if (secondWord === 'manage' || secondWord === 'setup' || secondWord === 'whitelist' || secondWord === 'list') {
+            const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+            if (!allGroups.length) {
+                await sendAntiBanMessage(jid, { text: '❌ No groups found.' });
                 return true;
             }
+            adminBroadcastStates.set(senderPhone, {
+                step: 'MANAGING_GROUPS',
+                groups: allGroups,
+                selected: [],
+                adminName: adminProfile?.name || 'Admin'
+            });
+            const wl = getBroadcastWhitelist();
+            const list = allGroups.map((g, i) => (i + 1) + '. ' + (wl.includes(g.jid) ? '✓ ' : '  ') + g.subject).join('\n');
+            await sendAntiBanMessage(jid, { text: '📋 *Broadcast Group Manager*\n\nReply with numbers to toggle groups on/off (e.g., "1,3,5").\nType *done* when finished. Type *cancel* to abort.\n\n' + list });
+            return true;
         }
         const groups = await fetchLiveMonitoredGroups();
         if (!groups.length) {
