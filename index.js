@@ -1316,7 +1316,7 @@ const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userTex
     const b64 = buffer.toString('base64');
     if (groqClient) {
         const response = await groqClient.chat.completions.create({
-            model: 'llama-3.2-11b-vision-preview',
+            model: 'meta-llama/llama-4-scout-17b-16e-instruct',
             messages: [
                 { role: 'system', content: systemPrompt || 'You are a helpful assistant.' },
                 { role: 'user', content: [
