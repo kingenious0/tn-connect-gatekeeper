@@ -189,6 +189,8 @@ let lastMessageSendTime = 0;
 const MIN_MESSAGE_INTERVAL_MS = 8000;
 
 let adminAlertsGroupJid = null;
+let cachedGroups = [];
+let cachedGroupsLastRefresh = 0;
 
 let lastFullSyncTime = 0;
 const FULL_SYNC_COOLDOWN_MS = 120000;
@@ -1100,18 +1102,27 @@ const lookupBroadcastAdmin = async (senderPhone, rawJid) => {
     return null;
 };
 
-const fetchLiveMonitoredGroups = async () => {
+const refreshGroupCache = async () => {
     try {
         const groups = await evolution.fetchGroups();
         const allGroups = groups?.data || groups?.groups || groups?.results || (Array.isArray(groups) ? groups : []);
-        return Object.values(allGroups).map(g => ({ jid: g.jid || g.id, subject: g.subject || g.name || 'Unknown Group' }));
+        cachedGroups = Object.values(allGroups).map(g => ({ jid: g.jid || g.id, subject: g.subject || g.name || 'Unknown Group' }));
+        cachedGroupsLastRefresh = Date.now();
+        console.log(' [Cache] Refreshed ' + cachedGroups.length + ' groups from Evolution API');
     } catch (e) {
-        console.warn(' [Broadcast] Live group fetch failed:', e.message);
-        const meta = loadSessionMeta();
-        const phone = Object.keys(meta)[0];
-        if (phone && meta[phone]?.discoveredGroups?.length) return meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
-        return [];
+        console.warn(' [Cache] Group refresh failed, using fallback:', e.message.substring(0, 80));
+        if (!cachedGroups.length) {
+            const meta = loadSessionMeta();
+            const phone = Object.keys(meta)[0];
+            if (phone && meta[phone]?.discoveredGroups?.length) cachedGroups = meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
+        }
     }
+};
+
+const fetchLiveMonitoredGroups = async () => {
+    if (cachedGroups.length) return cachedGroups;
+    await refreshGroupCache();
+    return cachedGroups || [];
 };
 
 const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => {
@@ -1710,10 +1721,12 @@ server.listen(PORT, async () => {
             startupTime = Date.now();
             const mem = process.memoryUsage();
             console.log(' [Boot] Active session: ' + activeSessionPhone + ' | RSS: ' + (mem.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (mem.heapUsed / 1024 / 1024).toFixed(1) + 'MB');
+            refreshGroupCache();
             setInterval(() => {
                 const m = process.memoryUsage();
                 console.log(' [Memory] RSS: ' + (m.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (m.heapUsed / 1024 / 1024).toFixed(1) + 'MB | Ext: ' + (m.external / 1024 / 1024).toFixed(1) + 'MB');
             }, 60000);
+            setInterval(() => refreshGroupCache(), 10 * 60 * 1000);
             const remainingSilence = Math.max(0, RATE_LIMIT_COOLDOWN_MS - (Date.now() - startupTime));
             if (remainingSilence > 0) {
                 const mins = Math.round(remainingSilence / 60000);
@@ -1744,11 +1757,13 @@ server.listen(PORT, async () => {
                         await detectAdminAlertsGroup();
                         await populateLidMap();
                         await refreshDiscoveredGroups(activeSessionPhone);
+                        refreshGroupCache();
                         setInterval(async () => {
                             console.log(' [Timer] Periodic group refresh…');
                             await detectAdminAlertsGroup();
                             await populateLidMap();
                             await refreshDiscoveredGroups(activeSessionPhone);
+                            refreshGroupCache();
                         }, 30 * 60 * 1000);
                     }
                 } catch (e) { /* ignore */ }
