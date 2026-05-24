@@ -34,7 +34,7 @@ const BROADCAST_CONFIG_FILE = './broadcast_config.json';
 
 // Evolution API configuration
 const EVOLUTION_BASE_URL = process.env.EVOLUTION_BASE_URL || 'https://tn-evolution-gateway.onrender.com';
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'tn-connect';
+const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'tn-connect-v2';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'tn-connect-evo-key-2026';
 const SERVER_URL = process.env.SERVER_URL || '';
 
@@ -1339,7 +1339,7 @@ const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userTex
     if (groqClient) {
         try {
             const response = await groqClient.chat.completions.create({
-                model: 'llama-3.2-11b-vision-preview',
+                model: 'qwen/qwen3-vl-32b-instruct',
                 messages: [
                     { role: 'system', content: systemPrompt || 'You are a helpful assistant.' },
                     { role: 'user', content: [
