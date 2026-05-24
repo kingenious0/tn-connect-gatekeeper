@@ -71,7 +71,7 @@ class EvolutionClient {
     }
 
     async sendDelete(remoteJid, id, participant, fromMe = false) {
-        return this._request('DELETE', `/chat/deleteMessageForEveryone/${this.instanceName}`, {
+        return this._request('POST', `/message/deleteForEveryone/${this.instanceName}`, {
             id,
             remoteJid,
             fromMe,
