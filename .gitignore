@@ -24,3 +24,4 @@ evo-api-docker/
 v1.3_documentation.md
 # Generated QR / screenshot images
 *.png
+broadcast_config.json

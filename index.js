@@ -29,6 +29,7 @@ const REGISTRY_FILE = './registry.json';
 const APPLICANTS_FILE = './business_hub_applicants.json';
 const GROUP_FLOWS_FILE = './group_flows.json';
 const REGISTERED_ADMINS_FILE = './registered_admins.json';
+const BROADCAST_CONFIG_FILE = './broadcast_config.json';
 
 // Evolution API configuration
 const EVOLUTION_BASE_URL = process.env.EVOLUTION_BASE_URL || 'https://tn-evolution-gateway.onrender.com';
@@ -1119,10 +1120,23 @@ const refreshGroupCache = async () => {
     }
 };
 
+const getBroadcastWhitelist = () => {
+    const cfg = loadBroadcastConfig();
+    return cfg.whitelist || [];
+};
+const setBroadcastWhitelist = (jids) => {
+    saveBroadcastConfig({ whitelist: jids });
+};
+const isGroupWhitelisted = (jid) => {
+    const wl = getBroadcastWhitelist();
+    return !wl.length || wl.includes(jid);
+};
+
 const fetchLiveMonitoredGroups = async () => {
-    if (cachedGroups.length) return cachedGroups;
-    await refreshGroupCache();
-    return cachedGroups || [];
+    if (!cachedGroups.length) await refreshGroupCache();
+    const wl = getBroadcastWhitelist();
+    if (!wl.length) return cachedGroups;
+    return cachedGroups.filter(g => wl.includes(g.jid));
 };
 
 const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => {
@@ -1208,6 +1222,36 @@ const scanAllGroupsForOldLinks = async () => {
     console.log(' [Group Scan] Done');
 };
 
+const loadBroadcastConfig = () => {
+    if (!fs.existsSync(BROADCAST_CONFIG_FILE)) return { whitelist: [] };
+    try { return JSON.parse(fs.readFileSync(BROADCAST_CONFIG_FILE, 'utf-8')); }
+    catch { return { whitelist: [] }; }
+};
+const saveBroadcastConfig = (cfg) => {
+    try { fs.writeFileSync(BROADCAST_CONFIG_FILE, JSON.stringify(cfg, null, 2)); }
+    catch (e) { console.error(' [Broadcast] Failed to save config:', e.message); }
+    if (supabase) {
+        supabase.from('gatekeeper_sessions').upsert({
+            phone: '_config_broadcast_whitelist',
+            admin_name: 'config',
+            selected_groups: [],
+            discovered_groups: cfg.whitelist || [],
+            files: [],
+            updated_at: new Date().toISOString()
+        }).catch(() => {});
+    }
+};
+const loadBroadcastWhitelistFromSupabase = async () => {
+    if (!supabase) return;
+    try {
+        const { data } = await supabase.from('gatekeeper_sessions').select('discovered_groups').eq('phone', '_config_broadcast_whitelist').single();
+        if (data?.discovered_groups?.length) {
+            saveBroadcastConfig({ whitelist: data.discovered_groups });
+            console.log(' [Broadcast] Loaded ' + data.discovered_groups.length + ' whitelisted groups from Supabase');
+        }
+    } catch (e) { /* table or row may not exist yet */ }
+};
+
 const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile, rawSender) => {
     console.log(' [Broadcast] ' + (jid.endsWith('@g.us') ? 'Group' : 'DM') + ' from ' + senderPhone + ': "' + (textInput || '').substring(0, 60) + '" state=' + (adminBroadcastStates.has(senderPhone) ? adminBroadcastStates.get(senderPhone).step : 'none'));
     const lower = (textInput || '').trim().toLowerCase();
@@ -1218,8 +1262,33 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
         return true;
     }
     if (lower === 'broadcast' || lower === 'send' || lower === 'announce') {
+        if (lower === 'broadcast' && textInput.length > 9) {
+            const secondWord = textInput.trim().split(/\s+/)[1];
+            if (secondWord === 'manage' || secondWord === 'setup' || secondWord === 'whitelist') {
+                const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+                if (!allGroups.length) {
+                    await sendAntiBanMessage(jid, { text: '❌ No groups found.' });
+                    return true;
+                }
+                adminBroadcastStates.set(senderPhone, {
+                    step: 'MANAGING_GROUPS',
+                    groups: allGroups,
+                    selected: [],
+                    adminName: adminProfile?.name || 'Admin'
+                });
+                const wl = getBroadcastWhitelist();
+                const list = allGroups.map((g, i) => (i + 1) + '. ' + (wl.includes(g.jid) ? '✓ ' : '  ') + g.subject).join('\n');
+                await sendAntiBanMessage(jid, { text: '📋 *Broadcast Group Manager*\n\nReply with numbers to toggle groups on/off (e.g., "1,3,5").\nType *done* when finished. Type *cancel* to abort.\n\n' + list });
+                return true;
+            }
+        }
         const groups = await fetchLiveMonitoredGroups();
         if (!groups.length) {
+            const wl = getBroadcastWhitelist();
+            if (wl.length) {
+                await sendAntiBanMessage(jid, { text: '❌ None of your whitelisted groups are in the cache yet. Try *broadcast manage* to check or wait for cache refresh.' });
+                return true;
+            }
             await sendAntiBanMessage(jid, { text: '❌ No monitored groups found. Make sure the bot has discovered groups.' });
             return true;
         }
@@ -1230,11 +1299,33 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
             adminName: adminProfile?.name || 'Admin'
         });
         const list = groups.map((g, i) => (i + 1) + '. ' + g.subject).join('\n');
-        await sendAntiBanMessage(jid, { text: '📢 *Broadcast Wizard*\n\nSelect groups by replying with numbers (e.g., "1,3,5") or "all" for all groups. Type *cancel* to abort:\n\n' + list });
+        await sendAntiBanMessage(jid, { text: '📢 *Broadcast Wizard*\n\nSelect groups by replying with numbers (e.g., "1,3,5") or "all" for all groups.\nType *broadcast manage* to control which groups appear here. Type *cancel* to abort:\n\n' + list });
         return true;
     }
     const state = adminBroadcastStates.get(senderPhone);
     if (!state) return false;
+    if (state.step === 'MANAGING_GROUPS') {
+        if (lower === 'done' || lower === 'finish' || lower === 'save') {
+            adminBroadcastStates.delete(senderPhone);
+            await sendAntiBanMessage(jid, { text: '✅ Whitelist saved with ' + getBroadcastWhitelist().length + ' groups. Next time you type *broadcast*, only these will show.' });
+            return true;
+        }
+        const wl = getBroadcastWhitelist();
+        const indices = lower.split(',').map(s => parseInt(s.trim()) - 1).filter(i => i >= 0 && i < state.groups.length);
+        if (!indices.length) {
+            await sendAntiBanMessage(jid, { text: '❌ No valid group numbers. Reply with numbers to toggle (e.g., "1,3,5") or *done* to finish.' });
+            return true;
+        }
+        for (const idx of indices) {
+            const g = state.groups[idx];
+            if (wl.includes(g.jid)) wl.splice(wl.indexOf(g.jid), 1);
+            else wl.push(g.jid);
+        }
+        setBroadcastWhitelist(wl);
+        const list = state.groups.map((g, i) => (i + 1) + '. ' + (wl.includes(g.jid) ? '✓ ' : '  ') + g.subject).join('\n');
+        await sendAntiBanMessage(jid, { text: '✅ Toggled ' + indices.length + ' group(s). Current whitelist: ' + wl.length + ' groups.\n\nReply with more numbers, or type *done* to finish.\n\n' + list });
+        return true;
+    }
     if (state.step === 'CHOOSING_GROUPS') {
         if (lower === 'all') {
             state.selected = state.groups;
@@ -1722,6 +1813,7 @@ server.listen(PORT, async () => {
             const mem = process.memoryUsage();
             console.log(' [Boot] Active session: ' + activeSessionPhone + ' | RSS: ' + (mem.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (mem.heapUsed / 1024 / 1024).toFixed(1) + 'MB');
             refreshGroupCache();
+            loadBroadcastWhitelistFromSupabase();
             setInterval(() => {
                 const m = process.memoryUsage();
                 console.log(' [Memory] RSS: ' + (m.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (m.heapUsed / 1024 / 1024).toFixed(1) + 'MB | Ext: ' + (m.external / 1024 / 1024).toFixed(1) + 'MB');
@@ -1758,6 +1850,7 @@ server.listen(PORT, async () => {
                         await populateLidMap();
                         await refreshDiscoveredGroups(activeSessionPhone);
                         refreshGroupCache();
+                        loadBroadcastWhitelistFromSupabase();
                         setInterval(async () => {
                             console.log(' [Timer] Periodic group refresh…');
                             await detectAdminAlertsGroup();
