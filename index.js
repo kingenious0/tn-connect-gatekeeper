@@ -1200,6 +1200,12 @@ const scanAllGroupsForOldLinks = async () => {
 const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile, rawSender) => {
     console.log(' [Broadcast] ' + (jid.endsWith('@g.us') ? 'Group' : 'DM') + ' from ' + senderPhone + ': "' + (textInput || '').substring(0, 60) + '" state=' + (adminBroadcastStates.has(senderPhone) ? adminBroadcastStates.get(senderPhone).step : 'none'));
     const lower = (textInput || '').trim().toLowerCase();
+    if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
+        adminBroadcastStates.delete(senderPhone);
+        adminRegistrationStates.delete(senderPhone);
+        await sendAntiBanMessage(jid, { text: '🚫 Broadcast cancelled.' });
+        return true;
+    }
     if (lower === 'broadcast' || lower === 'send' || lower === 'announce') {
         const groups = await fetchLiveMonitoredGroups();
         if (!groups.length) {
@@ -1213,7 +1219,7 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
             adminName: adminProfile?.name || 'Admin'
         });
         const list = groups.map((g, i) => (i + 1) + '. ' + g.subject).join('\n');
-        await sendAntiBanMessage(jid, { text: '📢 *Broadcast Wizard*\n\nSelect groups by replying with numbers (e.g., "1,3,5") or "all" for all groups:\n\n' + list });
+        await sendAntiBanMessage(jid, { text: '📢 *Broadcast Wizard*\n\nSelect groups by replying with numbers (e.g., "1,3,5") or "all" for all groups. Type *cancel* to abort:\n\n' + list });
         return true;
     }
     const state = adminBroadcastStates.get(senderPhone);
@@ -1230,7 +1236,8 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
             state.selected = indices.map(i => state.groups[i]);
         }
         state.step = 'CAPTURING_RAW_BODY';
-        await sendAntiBanMessage(jid, { text: '✅ ' + state.selected.length + ' group(s) selected. Now send the broadcast message you want to send.' });
+        const groupNames = state.selected.map(g => '• ' + g.subject).join('\n');
+        await sendAntiBanMessage(jid, { text: '✅ ' + state.selected.length + ' group(s) selected:\n' + groupNames + '\n\nNow send the broadcast message. (Type *cancel* to abort.)' });
         return true;
     }
     if (state.step === 'CAPTURING_RAW_BODY') {
