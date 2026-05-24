@@ -594,30 +594,24 @@ const parseGeminiJson = (text) => {
 };
 
 const deepVerifyScreenshotEvidence = async (buffer, mime) => {
-    if (!geminiClient) return { valid: false, reason: 'Verification service is temporarily unavailable.', platform: null };
+    if (!groqClient && !geminiClient) return { valid: false, reason: 'Verification service is temporarily unavailable.', platform: null };
     try {
-        const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        const result = await model.generateContent([
-            {
-                text: 'You are a strict fraud reviewer for TN Connect Ghana WhatsApp group joins.\n' +
-                    'Accept ONLY if this image is a real screenshot showing the user completed AT LEAST ONE valid proof below.\n' +
-                    PROOF_ACCOUNTS_GUIDE + '\n' +
-                    'REJECT if: unrelated photo, meme, random chat, black screen, wrong unrelated account, no follow/join proof visible, ' +
-                    'obvious fake/edited image, stock photo, or bypass attempt.\n' +
-                    'Do NOT reject solely because the account name differs between platforms (TikTok @tnfilmsgh vs Facebook TN Universities Connect is correct).\n\n' +
-                    'Reply with ONLY JSON: {"valid":true|false,"reason":"one short sentence","platform":"tiktok|social|channel|none"}'
-            },
-            { inlineData: { data: buffer.toString('base64'), mimeType: mime || 'image/jpeg' } }
-        ]);
-        const parsed = parseGeminiJson(result.response.text());
+        const SYSTEM_PROMPT = 'You are a strict fraud reviewer for TN Connect Ghana WhatsApp group joins. Accept ONLY if this image is a real screenshot showing the user completed AT LEAST ONE valid proof below.\n' +
+            PROOF_ACCOUNTS_GUIDE + '\n' +
+            'REJECT if: unrelated photo, meme, random chat, black screen, wrong unrelated account, no follow/join proof visible, obvious fake/edited image, stock photo, or bypass attempt.\n' +
+            'Do NOT reject solely because the account name differs between platforms (TikTok @tnfilmsgh vs Facebook TN Universities Connect is correct).\n\n' +
+            'Reply with ONLY JSON: {"valid":true|false,"reason":"one short sentence","platform":"tiktok|social|channel|none"}';
+        const raw = await analyzeScreenshotWithProvider(buffer, mime || 'image/jpeg', SYSTEM_PROMPT, 'Verify this proof screenshot.', 300);
+        if (!raw) throw new Error('No response from AI');
+        const parsed = parseGeminiJson(raw);
         if (parsed && typeof parsed.valid === 'boolean') {
             return { valid: parsed.valid, reason: String(parsed.reason || '').trim() || (parsed.valid ? 'Valid proof detected.' : 'Invalid proof.'), platform: parsed.platform || null };
         }
-        const raw = (result.response.text() || '').toLowerCase();
-        const valid = raw.includes('"valid":true') || raw.includes('"valid": true');
+        const lower = raw.toLowerCase();
+        const valid = lower.includes('"valid":true') || lower.includes('"valid": true');
         return { valid, reason: valid ? 'Proof accepted.' : 'Could not verify this image as legitimate proof.', platform: null };
     } catch (e) {
-        console.error(' [Gemini] Deep screenshot verify failed:', e.message);
+        console.error(' [DeepVerify] AI screenshot verify failed:', e.message);
         return { valid: false, reason: 'Verification failed. Please send a clearer screenshot.', platform: null };
     }
 };
@@ -1318,21 +1312,24 @@ const handleNicheFinder = async (jid, senderPhone, textInput) => {
 // ==========================================
 // 🤖 AI REPLY ASSISTANT — admin sends screenshot, bot suggests a reply
 // ==========================================
-const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userText) => {
+const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userText, maxTokens) => {
     const b64 = buffer.toString('base64');
     if (groqClient) {
         const response = await groqClient.chat.completions.create({
             model: 'llama-3.2-11b-vision-preview',
-            messages: [{ role: 'user', content: [
-                { type: 'text', text: userText || 'Analyze this image.' },
-                { type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } }
-            ]}],
-            max_tokens: 500,
+            messages: [
+                { role: 'system', content: systemPrompt || 'You are a helpful assistant.' },
+                { role: 'user', content: [
+                    { type: 'text', text: userText || 'Analyze this image.' },
+                    { type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } }
+                ]}
+            ],
+            max_tokens: maxTokens || 500,
         });
         return response.choices[0]?.message?.content || '';
     }
     if (geminiClient) {
-        const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash', systemInstruction: systemPrompt });
+        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.0-flash', systemInstruction: systemPrompt });
         const result = await model.generateContent([
             { text: userText || 'Analyze this image.' },
             { inlineData: { data: b64, mimeType: mime } }
