@@ -1444,13 +1444,15 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
     const state = adminBroadcastStates.get(senderPhone);
     if (!state) return false;
     if (state.step === 'MANAGING_GROUPS') {
-        if (lower === 'done' || lower === 'finish' || lower === 'save') {
+        const hasDone = lower === 'done' || lower === 'finish' || lower === 'save' || lower.endsWith('\ndone') || lower.endsWith('\nfinish');
+        const effectiveInput = hasDone ? lower.replace(/\n(done|finish)$/, '') : lower;
+        if (hasDone && !effectiveInput) {
             adminBroadcastStates.delete(senderPhone);
             await sendAntiBanMessage(jid, { text: '✅ Whitelist saved with ' + getBroadcastWhitelist().length + ' groups. Next time you type *broadcast*, only these will show.' });
             return true;
         }
         const wl = getBroadcastWhitelist();
-        const indices = lower.replace(/\./g, ',').split(',').map(s => parseInt(s.trim()) - 1).filter(i => i >= 0 && i < state.groups.length);
+        const indices = effectiveInput.replace(/\./g, ',').split(',').map(s => parseInt(s.trim()) - 1).filter(i => i >= 0 && i < state.groups.length);
         if (!indices.length) {
             await sendAntiBanMessage(jid, { text: '❌ No valid group numbers. Reply with numbers to toggle (e.g., "1,3,5") or *done* to finish.' });
             return true;
@@ -1461,8 +1463,13 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
             else wl.push(g.jid);
         }
         setBroadcastWhitelist(wl);
-        const list = state.groups.map((g, i) => (i + 1) + '. ' + (wl.includes(g.jid) ? '✓ ' : '  ') + g.subject).join('\n');
-        await sendAntiBanMessage(jid, { text: '✅ Toggled ' + indices.length + ' group(s). Current whitelist: ' + wl.length + ' groups.\n\nReply with more numbers, or type *done* to finish.\n\n' + list });
+        if (hasDone) {
+            adminBroadcastStates.delete(senderPhone);
+            await sendAntiBanMessage(jid, { text: '✅ Whitelist saved with ' + wl.length + ' groups. Next time you type *broadcast*, only these will show.' });
+        } else {
+            const list = state.groups.map((g, i) => (i + 1) + '. ' + (wl.includes(g.jid) ? '✓ ' : '  ') + g.subject).join('\n');
+            await sendAntiBanMessage(jid, { text: '✅ Toggled ' + indices.length + ' group(s). Current whitelist: ' + wl.length + ' groups.\n\nReply with more numbers, or type *done* to finish.\n\n' + list });
+        }
         return true;
     }
     if (state.step === 'CHOOSING_GROUPS') {
