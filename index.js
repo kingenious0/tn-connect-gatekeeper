@@ -1222,6 +1222,146 @@ const scanAllGroupsForOldLinks = async () => {
     console.log(' [Group Scan] Done');
 };
 
+// ==========================================
+// 🔍 NICHE GROUP FINDER — auto-match users to niche groups via Gemini
+// ==========================================
+const NICHE_FINDER_SYSTEM_PROMPT = `You are a helpful academic and career advisor for TN Universities Connect. Your ONLY task is to match a student's field of study or interest to the MOST relevant niche groups from this list. You MUST respond with ONLY a JSON array of matching group names.
+
+Available groups:
+${OFFICIAL_NICHE_GROUPS.map((g, i) => (i + 1) + '. ' + g).join('\n')}
+
+Rules:
+- Match 1-3 most relevant groups based on the user's stated field or interest
+- If unsure, pick the closest match and explain briefly
+- Respond with ONLY valid JSON like: ["Group Name 1", "Group Name 2"]
+- If the user says something unrelated or you cannot match, respond with: []`;
+
+const handleNicheFinder = async (jid, senderPhone, textInput) => {
+    if (!geminiClient) return false;
+    const state = nicheFinderStates.get(senderPhone);
+    if (!state) {
+        nicheFinderStates.set(senderPhone, { step: 'AWAITING_FIELD' });
+        await sendAntiBanMessage(jid, { text: '👋 Welcome! What do you study or what field are you interested in?\n\nTell me your course, profession, or interest and I\'ll match you to the right niche groups automatically.' });
+        return true;
+    }
+    if (state.step === 'AWAITING_FIELD' || state.step === 'REMATCH') {
+        try {
+            const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash-lite', systemInstruction: NICHE_FINDER_SYSTEM_PROMPT });
+            const result = await model.generateContent(textInput);
+            const raw = result.response.text().trim();
+            const jsonMatch = raw.match(/\[.*?\]/s);
+            const matchedNames = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+            if (!matchedNames.length) {
+                await sendAntiBanMessage(jid, { text: '🤔 I couldn\'t find a perfect match. Could you tell me more about what you study or do? (e.g., "I study nursing", "I\'m a graphic designer", "I love coding")' });
+                nicheFinderStates.set(senderPhone, { step: 'REMATCH' });
+                return true;
+            }
+            const matchedGroups = matchedNames.map(name => {
+                const idx = OFFICIAL_NICHE_GROUPS.indexOf(name);
+                if (idx === -1) return null;
+                const allGroups = cachedGroups;
+                return allGroups.find(g => g.subject.toLowerCase().includes(name.toLowerCase().substring(0, 15)));
+            }).filter(Boolean);
+
+            if (!matchedGroups.length) {
+                await sendAntiBanMessage(jid, { text: '🤔 I found matching groups but couldn\'t locate their invite links. An admin will help you shortly.' });
+                nicheFinderStates.delete(senderPhone);
+                return true;
+            }
+            const groupLinks = matchedGroups.map(g => g.jid).join(', ');
+            const groupNames = matchedGroups.map(g => '• ' + g.subject).join('\n');
+            await sendAntiBanMessage(jid, { text: '📚 *Based on your interest, here are your recommended niche groups:*\n\n' + groupNames + '\n\nReply *yes* to join these groups, or *no* to try a different field.' });
+            nicheFinderStates.set(senderPhone, { step: 'CONFIRM', matchedGroups });
+            return true;
+        } catch (e) {
+            console.error(' [NicheFinder] Gemini error:', e.message);
+            await sendAntiBanMessage(jid, { text: '⚠️ Sorry, I couldn\'t process that. Please try again or contact an admin.' });
+            nicheFinderStates.delete(senderPhone);
+            return true;
+        }
+    }
+    if (state.step === 'CONFIRM') {
+        const lower = textInput.trim().toLowerCase();
+        if (lower === 'yes' || lower === 'yep' || lower === 'ok' || lower === 'sure') {
+            const groups = state.matchedGroups;
+            for (const g of groups) {
+                try {
+                    await evolution.addGroupParticipant(g.jid, [jid]);
+                    console.log(' [NicheFinder] Auto-approved ' + senderPhone + ' into ' + g.subject);
+                } catch (e) {
+                    console.warn(' [NicheFinder] Failed to add to ' + g.subject + ':', e.message.substring(0, 80));
+                }
+                await delay(5000 + Math.floor(Math.random() * 5000));
+            }
+            await sendAntiBanMessage(jid, { text: '✅ *Done!* I\'ve added you to the groups above. Welcome to TN Universities Connect! 🎉\n\nIf you have any questions, feel free to ask an admin.' });
+            nicheFinderStates.delete(senderPhone);
+            return true;
+        }
+        if (lower === 'no' || lower === 'nope' || lower === 'try again') {
+            nicheFinderStates.set(senderPhone, { step: 'AWAITING_FIELD' });
+            await sendAntiBanMessage(jid, { text: 'No problem! Tell me your field of study or interest again:' });
+            return true;
+        }
+        await sendAntiBanMessage(jid, { text: 'Reply *yes* to join or *no* to try a different field.' });
+        return true;
+    }
+    return false;
+};
+
+// ==========================================
+// 🤖 AI REPLY ASSISTANT — admin sends screenshot, bot suggests a reply
+// ==========================================
+const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
+    if (!geminiClient) return false;
+    const { text, hasImage } = extractIncomingPayload(msg);
+    const state = adminReplyStates.get(senderPhone);
+
+    if (hasImage && msg.message?.imageMessage?.url) {
+        try {
+            const resp = await fetch(msg.message.imageMessage.url);
+            const buffer = Buffer.from(await resp.arrayBuffer());
+            const mime = msg.message.imageMessage.mimetype || 'image/jpeg';
+            const model = geminiClient.getGenerativeModel({
+                model: 'gemini-2.5-flash-lite',
+                systemInstruction: 'You are a professional WhatsApp reply assistant for TN Universities Connect admins. You will be shown a screenshot of a conversation. Analyze it and suggest a professional, helpful reply the admin can send. Be concise and natural. Format your response as: **Suggested reply:** [your suggestion]'
+            });
+            const result = await model.generateContent([
+                { inlineData: { data: buffer.toString('base64'), mimeType: mime } }
+            ]);
+            const suggestion = result.response.text();
+            adminReplyStates.set(senderPhone, { imageBuffer: buffer, mime, lastSuggestion: suggestion });
+            await sendAntiBanMessage(jid, { text: suggestion + '\n\nType *rewrite: [instructions]* to tweak it, or just copy and send.' });
+            return true;
+        } catch (e) {
+            console.error(' [ReplyAssistant] Gemini error:', e.message);
+            await sendAntiBanMessage(jid, { text: '⚠️ Could not analyze that screenshot. Please try again.' });
+            return true;
+        }
+    }
+    if (state && text.trim().toLowerCase().startsWith('rewrite:')) {
+        const instruction = text.trim().slice('rewrite:'.length).trim();
+        try {
+            const model = geminiClient.getGenerativeModel({
+                model: 'gemini-2.5-flash-lite',
+                systemInstruction: 'You are a professional reply assistant. The admin is asking you to revise a suggested reply. Rewrite it based on their instruction. Keep it natural and professional.'
+            });
+            const result = await model.generateContent([
+                { inlineData: { data: state.imageBuffer.toString('base64'), mimeType: state.mime } },
+                { text: 'Based on this conversation screenshot, revise the reply with this instruction: ' + instruction }
+            ]);
+            const revised = result.response.text();
+            adminReplyStates.set(senderPhone, { ...state, lastSuggestion: revised });
+            await sendAntiBanMessage(jid, { text: revised + '\n\nType *rewrite: [instructions]* to tweak further, or just copy and send.' });
+            return true;
+        } catch (e) {
+            console.error(' [ReplyAssistant] Rewrite failed:', e.message);
+            await sendAntiBanMessage(jid, { text: '⚠️ Could not rewrite. Please try again.' });
+            return true;
+        }
+    }
+    return false;
+};
+
 const loadBroadcastConfig = () => {
     if (!fs.existsSync(BROADCAST_CONFIG_FILE)) return { whitelist: [] };
     try { return JSON.parse(fs.readFileSync(BROADCAST_CONFIG_FILE, 'utf-8')); }
@@ -1374,6 +1514,8 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
 // 👤 ADMIN SELF-REGISTRATION via WhatsApp DM
 // ==========================================
 const adminRegistrationStates = new Map(); // senderPhone -> { step: 'AWAITING_NAME', name?: ... }
+const nicheFinderStates = new Map(); // phone -> { step, matchedGroups, ... }
+const adminReplyStates = new Map(); // phone -> { imageBuffer, mime, lastSuggestion, ... }
 
 const handleAdminRegistration = async (jid, senderPhone, textInput) => {
     const lower = (textInput || '').trim().toLowerCase();
@@ -1554,10 +1696,25 @@ async function processIncomingMessage(msg) {
     }
     const pendingRequest = findPendingRequest(jid);
     if (pendingRequest) await handleGatekeeperDM(jid, msg, pendingRequest);
+    if (pendingRequest) return;
+    // 🤖 AI Reply Assistant — admin sends screenshot
+    if (isAdmin) {
+        const handledReply = await handleAdminReplyAssistant(jid, senderPhone, msg, adminProfile?.name || 'Admin');
+        if (handledReply) return;
+    }
+    // 🔍 Niche Group Finder — non-admin users DMs
+    if (nicheFinderStates.has(senderPhone)) {
+        if (dmText) await handleNicheFinder(jid, senderPhone, dmText);
+        return;
+    }
+    if (!isAdmin && dmText) {
+        const handledNiche = await handleNicheFinder(jid, senderPhone, dmText);
+        if (handledNiche) return;
+    }
     if (isAdmin && !bizHubRequest && !pendingRequest) {
         try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL trying reply to ' + senderPhone + '\n'); } catch (e) {}
         try {
-            await sendAntiBanMessage(jid, { text: '👋 Hi ' + (adminProfile?.name || 'Admin') + '! I\'m the TN Gatekeeper bot.\n\nAvailable commands:\n• *broadcast* — Send a message to monitored groups (works in Admin Alerts group too)\n• *send* — Same as broadcast\n• *announce* — Same as broadcast\n• *register* — Register/upgrade your admin account' });
+            await sendAntiBanMessage(jid, { text: '👋 Hi ' + (adminProfile?.name || 'Admin') + '! I\'m the TN Gatekeeper bot.\n\nAvailable commands:\n• *broadcast* — Send a message to monitored groups\n• *send* — Same as broadcast\n• *announce* — Same as broadcast\n• *register* — Register/upgrade your admin account\n• Send a *screenshot* of a chat — I\'ll suggest a professional reply' });
             try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL reply SENT OK\n'); } catch (e) {}
         } catch (e) {
             try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL REPLY FAILED: ' + e.message + '\n'); } catch (e2) {}
