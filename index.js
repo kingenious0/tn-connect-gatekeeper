@@ -1139,8 +1139,8 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
         try { fs.appendFileSync('_trace.log', 'MOD_DELETE_ATTEMPT msgId=' + (msg.key.id || '?').substring(0, 20) + ' participant=' + (sender || '?').substring(0, 40) + '\n'); } catch (e) { }
         for (let d = 0; d < 3; d++) {
             try {
-                await evolution.sendDelete(jid, msg.key.id, sender);
-                try { fs.appendFileSync('_trace.log', 'MOD_DELETE_OK attempt=' + d + '\n'); } catch (e) { }
+                const delRes = await evolution.sendDelete(jid, msg.key.id, sender);
+                try { fs.appendFileSync('_trace.log', 'MOD_DELETE_OK attempt=' + d + ' resp=' + JSON.stringify(delRes).substring(0, 200) + '\n'); } catch (e) { }
                 break;
             } catch (de) {
                 try { fs.appendFileSync('_trace.log', 'MOD_DELETE_FAIL attempt=' + d + ' err=' + de.message.substring(0, 100) + '\n'); } catch (e) { }
