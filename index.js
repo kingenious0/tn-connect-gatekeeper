@@ -1315,18 +1315,23 @@ const handleNicheFinder = async (jid, senderPhone, textInput) => {
 const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userText, maxTokens) => {
     const b64 = buffer.toString('base64');
     if (groqClient) {
-        const response = await groqClient.chat.completions.create({
-            model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-            messages: [
-                { role: 'system', content: systemPrompt || 'You are a helpful assistant.' },
-                { role: 'user', content: [
-                    { type: 'text', text: userText || 'Analyze this image.' },
-                    { type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } }
-                ]}
-            ],
-            max_tokens: maxTokens || 500,
-        });
-        return response.choices[0]?.message?.content || '';
+        try {
+            const response = await groqClient.chat.completions.create({
+                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                messages: [
+                    { role: 'system', content: systemPrompt || 'You are a helpful assistant.' },
+                    { role: 'user', content: [
+                        { type: 'text', text: userText || 'Analyze this image.' },
+                        { type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } }
+                    ]}
+                ],
+                max_tokens: maxTokens || 500,
+            });
+            const content = response.choices[0]?.message?.content;
+            if (content) return content;
+        } catch (e) {
+            console.error(' [Vision] Groq failed (' + e.message.slice(0, 80) + '), falling back to Gemini');
+        }
     }
     if (geminiClient) {
         const model = geminiClient.getGenerativeModel({ model: 'gemini-2.0-flash', systemInstruction: systemPrompt });
@@ -1359,7 +1364,7 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
             }
             const mime = msg.message.imageMessage.mimetype || contentType || 'image/jpeg';
             const SYSTEM_PROMPT = 'You are a professional WhatsApp reply assistant for TN Universities Connect admins. You will be shown a screenshot of a conversation. Analyze it and suggest a professional, helpful reply the admin can send. Be concise and natural. Format your response as: **Suggested reply:** [your suggestion]';
-            const suggestion = await analyzeScreenshotWithProvider(buffer, mime, SYSTEM_PROMPT, 'Analyze this conversation screenshot and suggest a professional reply the admin can send.');
+            const suggestion = await analyzeScreenshotWithProvider(buffer, mime, SYSTEM_PROMPT, 'Analyze this conversation screenshot and suggest a professional reply the admin can send.', 1000);
             if (!suggestion) throw new Error('No response from AI');
             adminReplyStates.set(senderPhone, { imageBuffer: buffer, mime, lastSuggestion: suggestion });
             await sendAntiBanMessage(jid, { text: suggestion + '\n\nType *rewrite: [instructions]* to tweak it, or just copy and send.' });
