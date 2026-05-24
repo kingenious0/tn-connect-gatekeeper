@@ -1339,7 +1339,7 @@ const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userTex
     if (groqClient) {
         try {
             const response = await groqClient.chat.completions.create({
-                model: 'qwen/qwen3-vl-32b-instruct',
+                model: 'groq/compound',
                 messages: [
                     { role: 'system', content: systemPrompt || 'You are a helpful assistant.' },
                     { role: 'user', content: [
