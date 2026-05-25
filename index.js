@@ -1,7 +1,7 @@
 require('dotenv').config();
 process.on('uncaughtException', (err) => console.error(' [Crash Guard] Uncaught:', err.message));
 process.on('unhandledRejection', (err) => console.error(' [Crash Guard] Rejection:', err.message));
-const { EvolutionClient } = require('./evolution-client');
+const { WPPClient, mediaBase64Cache } = require('./wppconnect-client');
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
 const express = require('express');
@@ -32,13 +32,13 @@ const GROUP_FLOWS_FILE = './group_flows.json';
 const REGISTERED_ADMINS_FILE = './registered_admins.json';
 const BROADCAST_CONFIG_FILE = './broadcast_config.json';
 
-// Evolution API configuration
-const EVOLUTION_BASE_URL = process.env.EVOLUTION_BASE_URL || 'https://tn-evolution-gateway.onrender.com';
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'tn-connect-v2';
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'tn-connect-evo-key-2026';
+// WPPConnect Server configuration
+const WPP_BASE_URL = process.env.WPP_BASE_URL || 'http://localhost:21465';
+const WPP_SESSION = process.env.WPP_SESSION || 'tn-connect';
+const WPP_TOKEN = process.env.WPP_TOKEN || '';
 const SERVER_URL = process.env.SERVER_URL || '';
 
-let evolution = new EvolutionClient(EVOLUTION_BASE_URL, EVOLUTION_INSTANCE, EVOLUTION_API_KEY);
+let client = new WPPClient(WPP_BASE_URL, WPP_SESSION, WPP_TOKEN);
 
 // Global variables
 let activeSessionPhone = null;
@@ -687,7 +687,7 @@ const approveWithPacing = async (groupJid, participantJids) => {
         await new Promise(r => setTimeout(r, delayMs));
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
-                await evolution.addGroupParticipant(groupJid, jids[i]);
+                await client.addGroupParticipant(groupJid, jids[i]);
                 console.log(' [Auto-Approval] Approved ' + jids[i] + ' into ' + groupJid);
                 // Remove from retry queue if it was there
                 const qKey = groupJid + '|' + jids[i];
@@ -720,7 +720,7 @@ const approveGroupJoinRequest = async (pendingRequest) => {
     for (const jid of candidates) {
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
-                await evolution.addGroupParticipant(groupJid, jid);
+                await client.addGroupParticipant(groupJid, jid);
                 return { success: true, jid };
             } catch (e) {
                 const isRetryable = e.message?.includes('Connection Closed') || e.message?.includes('rate-overlimit') || e.message?.includes('timeout');
@@ -789,7 +789,7 @@ const handleGatekeeperDM = async (senderJid, msg, pendingRequest) => {
         console.log(' [Gatekeeper] Image from ' + userPhone + ' (attempt ' + verify.attempts + ') — verifying via Gemini...');
         if (msg.key?.id) {
             try {
-                const mediaResult = await evolution.getMediaBase64(msg.key.id);
+                const mediaResult = await client.getMediaBase64(msg.key.id);
                 let b64 = mediaResult.base64 || '';
                 if (b64.includes(',')) b64 = b64.split(',')[1];
                 const buffer = Buffer.from(b64, 'base64');
@@ -1005,7 +1005,7 @@ const normalizeApplicant = (row) => ({
 
 const detectAdminAlertsGroup = async () => {
     try {
-        const groups = await evolution.fetchGroups();
+        const groups = await client.fetchGroups();
         const allGroups = groups?.data || groups?.groups || groups?.results || (Array.isArray(groups) ? groups : []);
         const keyword = (process.env.ADMIN_ALERTS_GROUP_KEYWORD || 'admin alert').toLowerCase();
         for (const g of Object.values(allGroups)) {
@@ -1023,7 +1023,7 @@ const detectAdminAlertsGroup = async () => {
 
 const populateLidMap = async () => {
     try {
-        const groups = await evolution.fetchGroups(true);
+        const groups = await client.fetchGroups(true);
         const allGroups = groups?.data || groups?.groups || groups?.results || (Array.isArray(groups) ? groups : []);
         let count = 0;
         for (const g of Object.values(allGroups)) {
@@ -1043,7 +1043,7 @@ const populateLidMap = async () => {
 
 const refreshDiscoveredGroups = async (phone) => {
     try {
-        const groups = await evolution.fetchGroups();
+        const groups = await client.fetchGroups();
         const allGroups = groups?.data || groups?.groups || groups?.results || (Array.isArray(groups) ? groups : []);
         const discoveredGroups = Object.values(allGroups).map(g => ({
             jid: g.jid || g.id,
@@ -1072,7 +1072,7 @@ async function sendAntiBanMessage(jid, content, retries = 3) {
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
             lastMessageSendTime = Date.now();
-            return await evolution.sendText(jid, content.text || content, content.options || {});
+            return await client.sendText(jid, content.text || content, content.options || {});
         } catch (e) {
             const isRateLimit = e.message?.includes('rate-overlimit') || e.message?.includes('429') || e.message?.includes('Connection Closed');
             if (isRateLimit && attempt < retries - 1) {
@@ -1081,7 +1081,7 @@ async function sendAntiBanMessage(jid, content, retries = 3) {
             }
             if (attempt === retries - 1) {
                 lastMessageSendTime = Date.now();
-                return await evolution.sendText(jid, content.text || content, content.options || {});
+                return await client.sendText(jid, content.text || content, content.options || {});
             }
         }
     }
@@ -1124,7 +1124,7 @@ const lookupBroadcastAdmin = async (senderPhone, rawJid) => {
 
 const refreshGroupCache = async () => {
     try {
-        const groups = await evolution.fetchGroups();
+        const groups = await client.fetchGroups();
         const allGroups = groups?.data || groups?.groups || groups?.results || (Array.isArray(groups) ? groups : []);
         cachedGroups = Object.values(allGroups).map(g => ({ jid: g.jid || g.id, subject: g.subject || g.name || 'Unknown Group' }));
         cachedGroupsLastRefresh = Date.now();
@@ -1187,7 +1187,7 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
         try { fs.appendFileSync('_trace.log', 'MOD_DELETE_ATTEMPT msgId=' + (msg.key.id || '?').substring(0, 20) + ' participant=' + (sender || '?').substring(0, 40) + '\n'); } catch (e) { }
         for (let d = 0; d < 3; d++) {
             try {
-                const delRes = await evolution.sendDelete(jid, msg.key.id, sender);
+                const delRes = await client.sendDelete(jid, msg.key.id, sender);
                 try { fs.appendFileSync('_trace.log', 'MOD_DELETE_OK attempt=' + d + ' resp=' + JSON.stringify(delRes).substring(0, 200) + '\n'); } catch (e) { }
                 break;
             } catch (de) {
@@ -1220,7 +1220,7 @@ const scanAllGroupsForOldLinks = async () => {
     for (const g of groups) {
         await delay(2000 + Math.floor(Math.random() * 3000));
         try {
-            const msgsResponse = await evolution.fetchMessages(g.jid, 20);
+            const msgsResponse = await client.fetchMessages(g.jid, 20);
             const msgs = msgsResponse?.messages?.records || msgsResponse?.records || (Array.isArray(msgsResponse) ? msgsResponse : []);
             for (const m of msgs) {
                 if (!m.message || m.key?.fromMe) continue;
@@ -1232,7 +1232,7 @@ const scanAllGroupsForOldLinks = async () => {
                 await delay(8000 + Math.floor(Math.random() * 7000));
                 for (let d = 0; d < 3; d++) {
                     try {
-                        await evolution.sendDelete(g.jid, m.key.id, s);
+                        await client.sendDelete(g.jid, m.key.id, s);
                         console.log(' [Group Scan] Cleaned old link in ' + g.subject + ' from +' + sp);
                         break;
                     } catch (de) { if (d === 2) throw de; await delay(2000); }
@@ -1309,7 +1309,7 @@ const handleNicheFinder = async (jid, senderPhone, textInput) => {
             const groups = state.matchedGroups;
             for (const g of groups) {
                 try {
-                    await evolution.addGroupParticipant(g.jid, [jid]);
+                    await client.addGroupParticipant(g.jid, [jid]);
                     console.log(' [NicheFinder] Auto-approved ' + senderPhone + ' into ' + g.subject);
                 } catch (e) {
                     console.warn(' [NicheFinder] Failed to add to ' + g.subject + ':', e.message.substring(0, 80));
@@ -1372,7 +1372,7 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
 
     if (hasImage && msg.key?.id) {
         try {
-            const mediaResult = await evolution.getMediaBase64(msg.key.id);
+            const mediaResult = await client.getMediaBase64(msg.key.id);
             let b64 = mediaResult.base64 || '';
             if (b64.includes(',')) b64 = b64.split(',')[1];
             const buffer = Buffer.from(b64, 'base64');
@@ -1654,27 +1654,64 @@ const handleAdminRegistration = async (jid, senderPhone, textInput) => {
 };
 
 // ==========================================
-// 📨 WEBHOOK — RECEIVE INCOMING MESSAGES FROM EVOLUTION API
+// 📨 WEBHOOK — RECEIVE INCOMING MESSAGES FROM WPPCONNECT SERVER
+// WPPConnect webhook payload → WhatsApp proto format normalization
+const normalizeWppMessage = (data) => {
+    const isGroup = data.isGroup || data.from?.endsWith('@g.us');
+    const msg = {
+        key: {
+            remoteJid: data.from,
+            fromMe: false,
+            id: data.id,
+            participant: isGroup ? (data.sender?.id || data.from) : undefined,
+        },
+        message: {},
+        messageTimestamp: data.timestamp,
+    };
+    switch (data.type) {
+        case 'chat':
+            msg.message.conversation = data.body || '';
+            break;
+        case 'image':
+            if (data.caption) msg.message.conversation = data.caption;
+            msg.message.imageMessage = { mimetype: data.mimetype || 'image/jpeg', caption: data.caption || '' };
+            if (data.body) mediaBase64Cache.set(data.id, data.body);
+            break;
+        case 'video':
+            if (data.caption) msg.message.conversation = data.caption;
+            msg.message.videoMessage = { mimetype: data.mimetype || 'video/mp4', caption: data.caption || '' };
+            if (data.body) mediaBase64Cache.set(data.id, data.body);
+            break;
+        case 'document':
+            if (data.caption) msg.message.conversation = data.caption;
+            msg.message.documentMessage = { mimetype: data.mimetype || 'application/octet-stream', caption: data.caption || '' };
+            if (data.body) mediaBase64Cache.set(data.id, data.body);
+            break;
+        case 'ptt':
+            msg.message.audioMessage = { mimetype: data.mimetype || 'audio/ogg; codecs=opus' };
+            break;
+        case 'sticker':
+            msg.message.stickerMessage = {};
+            break;
+        default:
+            if (data.body) msg.message.conversation = data.body;
+            break;
+    }
+    return msg;
+};
+
 const webhookLog = [];
 // ==========================================
 app.post('/webhook', async (req, res) => {
     const payload = req.body;
     if (!payload) return res.status(200).json({ ok: true });
-    const eventType = (payload.event || payload.Event || '').toUpperCase().replace(/[.\-]/g, '_');
-    let messages = [];
-    if (eventType === 'MESSAGES_UPSERT') {
-        const data = payload.data || payload;
-        if (Array.isArray(data)) messages = data;
-        else if (data?.key) messages = [data];
-        else if (data?.messages) messages = data.messages;
-    } else if (payload?.key) {
-        messages = [payload];
-    }
-    if (eventType === 'GROUP_PARTICIPANTS_UPDATE' || eventType === 'GROUPS_PARTICIPANTS_UPDATE') {
-        const data = payload.data || payload;
-        const groupJid = data.id || data.groupJid || data.remoteJid || '';
+    const event = (payload.event || '').toLowerCase();
+    const data = payload.data || payload;
+    // Group participants update
+    if (event === 'onparticipantschanged') {
+        const groupJid = data.id || '';
         const participants = data.participants || [];
-        const action = data.action || '';
+        const action = (data.action || '').toLowerCase();
         if (action === 'add' && groupJid && participants.length) {
             if (!isBusinessHubGroup(groupJid)) {
                 (async () => { await approveWithPacing(groupJid, participants); })();
@@ -1686,31 +1723,30 @@ app.post('/webhook', async (req, res) => {
         res.status(200).json({ ok: true });
         return;
     }
-    if (eventType === 'CONNECTION_UPDATE') {
-        const state = payload.instance?.state || payload.data?.instance?.state || '';
-        if (state === 'open') console.log(' [Webhook] Instance connected');
+    // Connection update
+    if (event === 'onpresencechanged' || event === 'onconnectionstate') {
         res.status(200).json({ ok: true });
         return;
     }
-    let detail = { event: eventType, time: Date.now(), count: messages.length };
-    if (messages.length && messages[0]) {
-        const m = messages[0];
-        detail.jid = m.key?.remoteJid || '';
-        detail.status = m.status || '';
-        detail.fromMe = !!m.key?.fromMe;
-        detail.msgKeys = m.message ? Object.keys(m.message).join(',') : '';
-        const tx = extractIncomingPayload(m).text || handleGroupModerationExtractText(m);
+    // Incoming messages
+    if (event === 'onmessage' || event === 'onanymessage') {
+        const msg = normalizeWppMessage(data);
+        let detail = { event, time: Date.now(), count: 1 };
+        detail.jid = msg.key.remoteJid || '';
+        detail.fromMe = false;
+        detail.msgKeys = msg.message ? Object.keys(msg.message).join(',') : '';
+        const tx = extractIncomingPayload(msg).text || handleGroupModerationExtractText(msg);
         detail.text = (tx || '').substring(0, 80);
-        detail.participant = m.key?.participant || '';
-    }
-    webhookLog.unshift(detail);
-    if (webhookLog.length > 200) webhookLog.length = 200;
-    try { fs.appendFileSync('_trace.log', 'WEBHOOK ' + eventType + ' jid=' + (detail.jid || '') + ' status=' + (detail.status || '') + ' text="' + (detail.text || '') + '" msgKeys=[' + (detail.msgKeys || '') + ']\n'); } catch (e) { }
-    res.status(200).json({ ok: true });
-    for (const msg of messages) {
+        detail.participant = msg.key.participant || '';
+        webhookLog.unshift(detail);
+        if (webhookLog.length > 200) webhookLog.length = 200;
+        try { fs.appendFileSync('_trace.log', 'WEBHOOK ' + event + ' jid=' + (detail.jid || '') + ' text="' + (detail.text || '') + '" type=' + (data.type || '') + '\n'); } catch (e) { }
+        res.status(200).json({ ok: true });
         try { await processIncomingMessage(msg); }
         catch (e) { console.error(' [Webhook] Error processing message:', e.message); }
+        return;
     }
+    res.status(200).json({ ok: true });
 });
 
 const handleGroupModerationExtractText = (msg) => {
@@ -1989,7 +2025,7 @@ app.post('/api/sessions/:phone/disconnect', async (req, res) => {
 async function sendAdminAlert(alertText) {
     if (adminAlertsGroupJid) {
         try {
-            await evolution.sendText(adminAlertsGroupJid, alertText);
+            await client.sendText(adminAlertsGroupJid, alertText);
         } catch (e) {
             console.error("Failed to send message to admin group:", e.message);
         }
@@ -1999,30 +2035,20 @@ async function sendAdminAlert(alertText) {
 }
 
 app.get('/qr/:instance', async (req, res) => {
-    const instanceName = req.params.instance;
-    const base = EVOLUTION_BASE_URL.replace(/\/+$/, '');
-    const url = new URL(`/instance/connect/${instanceName}`, base);
-    const opts = { hostname: url.hostname, port: url.port || 443, path: url.pathname, method: 'GET', headers: { 'apikey': EVOLUTION_API_KEY }, rejectUnauthorized: false };
-    const proxyReq = https.request(opts, (proxyRes) => {
-        let raw = '';
-        proxyRes.on('data', c => raw += c);
-        proxyRes.on('end', () => {
-            try {
-                const parsed = JSON.parse(raw);
-                if (parsed.base64) {
-                    const img = Buffer.from(parsed.base64.replace(/^data:image\/png;base64,/, ''), 'base64');
-                    res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': img.length, 'Cache-Control': 'no-cache' });
-                    res.end(img);
-                } else {
-                    res.status(500).json({ error: 'No QR code in response', response: parsed });
-                }
-            } catch (e) {
-                res.status(500).json({ error: 'Parse error', raw });
-            }
-        });
-    });
-    proxyReq.on('error', e => res.status(500).json({ error: e.message }));
-    proxyReq.end();
+    const instanceName = req.params.instance || WPP_SESSION;
+    try {
+        const result = await (instanceName === WPP_SESSION ? client.getQrCode() : new WPPClient(WPP_BASE_URL, instanceName, WPP_TOKEN).getQrCode());
+        const qrBase64 = result?.base64 || result?.qrCode || '';
+        if (qrBase64) {
+            const img = Buffer.from(qrBase64.replace(/^data:image\/png;base64,/, ''), 'base64');
+            res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': img.length, 'Cache-Control': 'no-cache' });
+            res.end(img);
+        } else {
+            res.status(500).json({ error: 'No QR code available', status: result?.status || 'unknown' });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 app.use('/api', (req, res) => {
@@ -2047,28 +2073,15 @@ setInterval(() => {
 // ==========================================
 const server = http.createServer(app);
 server.listen(PORT, async () => {
-    console.log(' [Server] Gatekeeper v1.4 (Evolution API) is live on port ' + PORT);
+    console.log(' [Server] Gatekeeper v2.0 (WPPConnect) is live on port ' + PORT);
     await ensureRegistryLoaded();
-    console.log(' [Session] Using Evolution API instance: ' + EVOLUTION_INSTANCE);
+    console.log(' [Session] Using WPPConnect session: ' + WPP_SESSION + ' at ' + WPP_BASE_URL);
     try {
-        const status = await evolution.fetchInstanceStatus();
-        let state = status?.instance?.state || 'unknown';
-        console.log(' [Session] Evolution API instance status: ' + state);
-        if (state === 'close' || state === 'connecting' || state === 'reconnecting') {
-            try {
-                const qr = await evolution._request('GET', `/instance/connect/${EVOLUTION_INSTANCE}`);
-                if (qr?.instance?.state === 'open') {
-                    console.log(' [Session] Instance is actually open (connectionState was stale)');
-                    state = 'open';
-                } else if (qr?.base64) {
-                    console.log(' [Session] QR code generated. Open /qr/' + EVOLUTION_INSTANCE + ' to scan.');
-                    await delay(10000);
-                } else {
-                    console.log(' [Session] Connect triggered, waiting for QR…');
-                }
-            } catch (e) { console.log(' [Session] Cannot reconnect:', e.message.slice(0, 80)); }
-        }
-        if (state === 'open') {
+        const status = await client.fetchInstanceStatus();
+        let state = typeof status === 'object' ? (status.status || status.state || '').toLowerCase() : 'unknown';
+        if (!state) state = 'unknown';
+        console.log(' [Session] WPPConnect session status: ' + state);
+        if (state === 'open' || state === 'connected' || state === 'islogged') {
             activeSessionPhone = '233506746307';
             startupTime = Date.now();
             const mem = process.memoryUsage();
@@ -2095,23 +2108,14 @@ server.listen(PORT, async () => {
             await refreshDiscoveredGroups(phone);
             await delay(5000);
             await scanPendingJoinRequests();
-            // Periodic connection health check — reconnect if dropped
+            // Periodic connection health check
             setInterval(async () => {
                 try {
-                    const st = await evolution.fetchInstanceStatus();
-                    if (st?.instance?.state === 'open') return;
-                    console.log(' [Health] connectionState says "' + (st?.instance?.state || 'unknown') + '", confirming via connect…');
+                    const st = await client.fetchInstanceStatus();
+                    const s = typeof st === 'object' ? (st.status || st.state || '').toLowerCase() : '';
+                    if (s === 'open' || s === 'connected' || s === 'islogged') return;
+                    console.log(' [Health] Session state: "' + (s || 'unknown') + '"');
                 } catch (e) { /* ignore */ }
-                try {
-                    const qr = await evolution._request('GET', `/instance/connect/${EVOLUTION_INSTANCE}`);
-                    if (qr?.instance?.state === 'open') {
-                        return; // connectionState was stale, actually open
-                    }
-                    if (qr?.base64) console.log(' [Health] New QR code generated. Scan at /qr/' + EVOLUTION_INSTANCE);
-                    else console.log(' [Health] No QR yet, connection may be pending');
-                } catch (e2) {
-                    console.error(' [Health] Reconnect failed:', e2.message.slice(0, 100));
-                }
             }, 5 * 60 * 1000);
             // Retry queued failed approvals every 2 minutes
             setInterval(async () => {
@@ -2122,7 +2126,7 @@ server.listen(PORT, async () => {
                     q.attempts++;
                     q.time = now;
                     try {
-                        await evolution.addGroupParticipant(q.groupJid, q.jid);
+                        await client.addGroupParticipant(q.groupJid, q.jid);
                         console.log(' [Auto-Approval] Queued approval succeeded for ' + q.jid + ' into ' + q.groupJid);
                         pendingApprovals.delete(key);
                     } catch (e) {
@@ -2142,12 +2146,27 @@ server.listen(PORT, async () => {
                 await refreshDiscoveredGroups(activeSessionPhone);
             }, 30 * 60 * 1000);
         } else {
+            // Session not connected — try to start it or show QR
+            console.log(' [Session] Session not connected. Attempting to start session…');
+            try {
+                const startResult = await client.startSession(SERVER_URL ? SERVER_URL + '/webhook' : undefined);
+                const qrBase64 = startResult?.base64 || startResult?.qrCode || '';
+                if (qrBase64) {
+                    console.log(' [Session] QR code available. Open /qr/' + WPP_SESSION + ' to scan.');
+                } else {
+                    console.log(' [Session] Start session response: ' + JSON.stringify(startResult).substring(0, 200));
+                }
+            } catch (e) {
+                console.warn(' [Session] Could not start session:', e.message.slice(0, 120));
+            }
+            // Poll for connection
             setInterval(async () => {
                 if (activeSessionPhone) return;
                 try {
-                    const st = await evolution.fetchInstanceStatus();
-                    if (st?.instance?.state === 'open') {
-                        console.log(' [Recovery] Instance now open, initializing…');
+                    const st = await client.fetchInstanceStatus();
+                    const s = typeof st === 'object' ? (st.status || st.state || '').toLowerCase() : '';
+                    if (s === 'open' || s === 'connected' || s === 'islogged') {
+                        console.log(' [Recovery] Session now connected, initializing…');
                         activeSessionPhone = '233506746307';
                         startupTime = Date.now();
                         await detectAdminAlertsGroup();
@@ -2167,15 +2186,11 @@ server.listen(PORT, async () => {
             }, 15000);
         }
     } catch (e) {
-        console.warn(' [Boot] Could not verify Evolution API instance status:', e.message);
+        console.warn(' [Boot] Could not verify WPPConnect session status:', e.message);
     }
     if (SERVER_URL) {
-        console.log(' [Webhook] Configure Evolution API webhook to: ' + SERVER_URL + '/webhook');
-        try {
-            const webhookBody = { webhook: { url: SERVER_URL + '/webhook', events: ['MESSAGES_UPSERT', 'GROUP_PARTICIPANTS_UPDATE', 'CONNECTION_UPDATE', 'SEND_MESSAGE'], enabled: true } };
-            await fetch(EVOLUTION_BASE_URL.replace(/\/+$/, '') + '/webhook/set/' + EVOLUTION_INSTANCE, { method: 'POST', headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(webhookBody), timeout: 10000 });
-            console.log(' [Webhook] Evolution API webhook configured successfully');
-        } catch (e) { console.warn(' [Webhook] Could not configure Evolution API webhook:', e.message); }
+        console.log(' [Webhook] Ensure WPPConnect server webhook is configured to: ' + SERVER_URL + '/webhook');
+        console.log(' [Webhook] Webhook URL cannot be set via API; configure in WPPConnect server config.ts or use start-session with webhook param.');
     } else {
         console.log(' [Webhook] Set SERVER_URL env var to enable webhook for incoming messages');
     }
