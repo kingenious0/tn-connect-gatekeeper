@@ -210,7 +210,7 @@ class WPPClient {
     }
 
     async startSession(webhookUrl) {
-        const body = {};
+        const body = { waitQrCode: true };
         if (webhookUrl) body.webhook = webhookUrl;
         return this._request('POST', `/api/${this.sessionName}/start-session`, body);
     }

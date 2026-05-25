@@ -2036,16 +2036,25 @@ async function sendAdminAlert(alertText) {
 
 app.get('/qr/:instance', async (req, res) => {
     const instanceName = req.params.instance || WPP_SESSION;
+    const wpp = instanceName === WPP_SESSION ? client : new WPPClient(WPP_BASE_URL, instanceName, WPP_TOKEN);
     try {
-        const result = await (instanceName === WPP_SESSION ? client.getQrCode() : new WPPClient(WPP_BASE_URL, instanceName, WPP_TOKEN).getQrCode());
-        const qrBase64 = result?.base64 || result?.qrCode || '';
+        // First try to start the session (returns QR if waiting for scan)
+        const startResult = await wpp.startSession(SERVER_URL ? SERVER_URL + '/webhook' : undefined);
+        const qrBase64 = startResult?.base64 || startResult?.qrCode || '';
         if (qrBase64) {
             const img = Buffer.from(qrBase64.replace(/^data:image\/png;base64,/, ''), 'base64');
             res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': img.length, 'Cache-Control': 'no-cache' });
-            res.end(img);
-        } else {
-            res.status(500).json({ error: 'No QR code available', status: result?.status || 'unknown' });
+            return res.end(img);
         }
+        // If startSession didn't return QR, try getQrCode
+        const qrResult = await wpp.getQrCode();
+        const qr2 = qrResult?.base64 || qrResult?.qrCode || '';
+        if (qr2) {
+            const img = Buffer.from(qr2.replace(/^data:image\/png;base64,/, ''), 'base64');
+            res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': img.length, 'Cache-Control': 'no-cache' });
+            return res.end(img);
+        }
+        res.status(500).json({ error: 'No QR code yet', startResponse: startResult, qrResponse: qrResult });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
