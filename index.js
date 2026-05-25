@@ -31,6 +31,7 @@ const APPLICANTS_FILE = './business_hub_applicants.json';
 const GROUP_FLOWS_FILE = './group_flows.json';
 const REGISTERED_ADMINS_FILE = './registered_admins.json';
 const BROADCAST_CONFIG_FILE = './broadcast_config.json';
+const LOCKED_GROUPS_FILE = './locked_groups.json';
 
 // WPPConnect Server configuration
 const WPP_BASE_URL = process.env.WPP_BASE_URL || 'http://localhost:21465';
@@ -48,6 +49,7 @@ const businessHubConversations = new Map();
 const humanTakeoverUsers = new Set();
 const joinIntroSentKeys = new Set();
 const adminBroadcastStates = new Map();
+const groupLockStates = new Map(); // lock/unlock wizard states per admin
 const registeredAdmins = new Map(); // local fallback cache of admins registered via WhatsApp DM
 
 const loadRegisteredAdmins = () => {
@@ -1451,6 +1453,101 @@ const loadBroadcastWhitelistFromSupabase = async () => {
     } catch (e) { /* table or row may not exist yet */ }
 };
 
+// ==========================================
+// 🔒 GROUP LOCK/UNLOCK — admins toggle group to messages-admins-only
+// ==========================================
+const loadLockedGroups = () => {
+    if (!fs.existsSync(LOCKED_GROUPS_FILE)) return [];
+    try { return JSON.parse(fs.readFileSync(LOCKED_GROUPS_FILE, 'utf-8')); }
+    catch { return []; }
+};
+const saveLockedGroups = (jids) => {
+    try { fs.writeFileSync(LOCKED_GROUPS_FILE, JSON.stringify(jids, null, 2)); }
+    catch (e) { console.error(' [Lock] Failed to save:', e.message); }
+};
+
+const LOCKED_GROUPS_DESC = 'locked_groups';
+
+const isGroupLockIntent = (lowerText) => {
+    const word = lowerText.trim().split(/\s+/)[0].toLowerCase();
+    return word === 'lock' || word === 'unlock' || word === 'locks' || word === 'unlocks';
+};
+
+const handleGroupLockDM = async (jid, senderPhone, textInput, adminProfile) => {
+    const lower = (textInput || '').trim().toLowerCase();
+    if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
+        groupLockStates.delete(senderPhone);
+        await sendAntiBanMessage(jid, { text: '🚫 Lock/unlock cancelled.' });
+        return true;
+    }
+    const firstWord = lower.split(/\s+/)[0];
+    const isLock = firstWord === 'lock' || firstWord === 'locks';
+    const state = groupLockStates.get(senderPhone);
+    const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+    if (!allGroups.length) {
+        await sendAntiBanMessage(jid, { text: '❌ No groups available.' });
+        groupLockStates.delete(senderPhone);
+        return true;
+    }
+    if (!state) {
+        const locked = loadLockedGroups();
+        const lines = allGroups.map((g, i) => {
+            const isLocked = locked.includes(g.jid);
+            return (i + 1) + '. ' + (g.subject || 'Unknown') + (isLocked ? ' 🔒' : '');
+        });
+        const action = isLock ? 'lock' : 'unlock';
+        groupLockStates.set(senderPhone, { step: 'choose_groups', action, groupJids: allGroups.map(g => g.jid), groupSubjects: allGroups.map(g => g.subject || 'Unknown') });
+        await sendAntiBanMessage(jid, {
+            text: '📋 *Groups to ' + action + '* (reply with numbers like "1,3" or "all"):\n\n' + lines.join('\n')
+        });
+        return true;
+    }
+    if (state.step === 'choose_groups') {
+        const locked = loadLockedGroups();
+        let selectedJids = [];
+        if (lower === 'all') {
+            selectedJids = state.groupJids;
+        } else {
+            const indices = lower.split(/[,\s]+/).map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0 && n <= state.groupJids.length);
+            if (!indices.length) {
+                await sendAntiBanMessage(jid, { text: '❌ No valid numbers. Try again or type *cancel*.' });
+                return true;
+            }
+            selectedJids = indices.map(i => state.groupJids[i - 1]);
+        }
+        if (state.action === 'lock') {
+            const newLocked = [...new Set([...locked, ...selectedJids])];
+            saveLockedGroups(newLocked);
+            const results = [];
+            for (const gjid of selectedJids) {
+                try {
+                    await client.setGroupAdminsOnly(gjid, true);
+                    results.push('✅ ' + (state.groupSubjects[state.groupJids.indexOf(gjid)] || gjid) + ' → Locked (only admins)');
+                } catch (e) {
+                    results.push('❌ ' + (state.groupSubjects[state.groupJids.indexOf(gjid)] || gjid) + ' → ' + e.message.substring(0, 60));
+                }
+            }
+            await sendAntiBanMessage(jid, { text: results.join('\n') });
+        } else {
+            const newLocked = locked.filter(j => !selectedJids.includes(j));
+            saveLockedGroups(newLocked);
+            const results = [];
+            for (const gjid of selectedJids) {
+                try {
+                    await client.setGroupAdminsOnly(gjid, false);
+                    results.push('✅ ' + (state.groupSubjects[state.groupJids.indexOf(gjid)] || gjid) + ' → Unlocked (everyone can message)');
+                } catch (e) {
+                    results.push('❌ ' + (state.groupSubjects[state.groupJids.indexOf(gjid)] || gjid) + ' → ' + e.message.substring(0, 60));
+                }
+            }
+            await sendAntiBanMessage(jid, { text: results.join('\n') });
+        }
+        groupLockStates.delete(senderPhone);
+        return true;
+    }
+    return true;
+};
+
 const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile, rawSender) => {
     console.log(' [Broadcast] ' + (jid.endsWith('@g.us') ? 'Group' : 'DM') + ' from ' + senderPhone + ': "' + (textInput || '').substring(0, 60) + '" state=' + (adminBroadcastStates.has(senderPhone) ? adminBroadcastStates.get(senderPhone).step : 'none'));
     const lower = (textInput || '').trim().toLowerCase();
@@ -1809,10 +1906,16 @@ async function processIncomingMessage(msg) {
         if (handledReg) return;
     }
     if (isAdmin) {
+        const hasLockWizard = groupLockStates.has(senderPhone);
+        if (isGroupLockIntent(dmText) || hasLockWizard) {
+            const handledLock = await handleGroupLockDM(jid, senderPhone, dmText, adminProfile);
+            if (handledLock) return;
+        }
         const handled = await handleAdminBroadcastDM(jid, senderPhone, dmText, adminProfile, sender);
         if (handled) return;
     }
     if (adminBroadcastStates.has(senderPhone)) return;
+    if (groupLockStates.has(senderPhone)) return;
     if (adminRegistrationStates.has(senderPhone)) return;
     const bizHubRequest = findBusinessHubRequest(jid);
     if (bizHubRequest && !humanTakeoverUsers.has(formatPhoneNumberGH(senderPhone))) {

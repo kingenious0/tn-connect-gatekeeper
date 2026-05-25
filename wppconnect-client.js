@@ -93,6 +93,13 @@ class WPPClient {
         });
     }
 
+    async setGroupAdminsOnly(groupId, value) {
+        return this._request('POST', `/api/${this.sessionName}/messages-admins-only`, {
+            groupId,
+            value,
+        });
+    }
+
     async sendDelete(remoteJid, id, participant, fromMe = false) {
         const phone = this._formatPhone(remoteJid);
         const body = { phone, messageId: id };
