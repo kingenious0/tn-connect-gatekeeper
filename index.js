@@ -791,15 +791,14 @@ const approveGroupJoinRequest = async (pendingRequest) => {
 const scanPendingJoinRequests = async () => {
     if (!client || !client.connected) return;
     await ensureRegistryLoaded();
-    // Only scan groups where we KNOW the bot is an admin (from cache)
-    // If cache is empty, do a fresh fetch first
-    let groupsToScan = cachedGroups.filter(g => botAdminGroupCache.get(g.jid) === true);
-    if (!groupsToScan.length && activeSessionPhone) {
-        const fresh = await refreshDiscoveredGroups(activeSessionPhone);
-        groupsToScan = (fresh || []).filter(g => botAdminGroupCache.get(g.jid) === true);
+    // If cache is empty, call refreshGroupCache which has the metadata fallback
+    // (refreshDiscoveredGroups only uses the live socket — returns nothing while syncing)
+    if (!cachedGroups.length) {
+        await refreshGroupCache();
     }
+    const groupsToScan = cachedGroups.filter(g => botAdminGroupCache.get(g.jid) === true);
     if (!groupsToScan.length) {
-        console.log(' [Join Scan] No admin groups found in cache — skipping scan.');
+        console.log(' [Join Scan] No admin groups in cache yet — skipping scan (will retry on next periodic refresh).');
         return;
     }
     console.log(` [Join Scan] Scanning ${groupsToScan.length} admin group(s) for pending join requests…`);
@@ -819,7 +818,7 @@ const scanPendingJoinRequests = async () => {
                 }
             }
         } catch (e) {
-            // "forbidden" = bot not admin; already filtered above but could be a race condition — skip silently
+            // "forbidden" = bot not admin in this group at the moment — skip silently
             if (!e.message?.toLowerCase().includes('forbidden')) {
                 console.warn(` [Join Scan] Could not scan ${g.subject || groupJid}:`, e.message);
             }
