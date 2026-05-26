@@ -657,41 +657,47 @@ const processJoinRequest = async (groupJid, participantJid, action, groupSubject
     const registryKey = buildRegistryKey(groupJid, participantJid);
     if (joinIntroSentKeys.has(registryKey)) return;
     const existing = findExistingRegistryEntry(groupJid, participantJid);
-    if (existing && INTRO_ALREADY_SENT_STATUSES.includes(existing.status)) {
+    if (existing && ['approved', 'verification_complete'].includes(existing.status)) {
         joinIntroSentKeys.add(existing.key || registryKey);
         return;
     }
     const admin = getBotAdminContext();
     const groupSubject = groupSubjectHint || await getGroupSubject(groupJid);
-    const groupType = classifyGroupType(groupSubject, groupJid, admin.phone);
     const entry = {
-        admin: admin.name, phone: admin.phone, groupJid, groupSubject, groupType,
+        admin: admin.name, phone: admin.phone, groupJid, groupSubject,
         rawParticipantJid: participantJid, participantJid: dmJid,
-        status: 'intro_sent', timestamp: new Date().toISOString()
+        status: 'pending_approval', timestamp: new Date().toISOString()
     };
     await saveRegistryItem(registryKey, entry);
     joinIntroSentKeys.add(registryKey);
-    console.log(' [Join] New ' + groupType + ' request: ' + groupSubject + ' from ' + dmJid);
+    console.log(' [Join] New join request: ' + groupSubject + ' from ' + dmJid + ' — queuing auto-approve');
 
-    // Send the gatekeeper intro DM to the applicant
-    try {
-        if (groupType === 'business_hub') {
-            await sendAntiBanMessage(dmJid, { text: BUSINESS_HUB_INTRO_MESSAGE() });
-            console.log(' [Join] Sent Business Hub intro to ' + dmJid);
-        } else {
-            await sendAntiBanMessage(dmJid, { text: buildGatekeeperMessage() });
-            console.log(' [Join] Sent gatekeeper intro to ' + dmJid);
+    // Auto-approve after a random human-paced delay (3s – 90s)
+    const humanDelay = 3000 + Math.floor(Math.random() * 87000);
+    console.log(' [Join] Auto-approving ' + dmJid + ' in ' + Math.round(humanDelay / 1000) + 's...');
+    setTimeout(async () => {
+        try {
+            const rawJid = typeof participantJid === 'string' ? participantJid : (participantJid.id || dmJid);
+            await client.approveGroupJoinRequest(groupJid, rawJid);
+            console.log(' [Join] ✅ Auto-approved ' + dmJid + ' into ' + groupSubject);
+            const reg = loadRegistry();
+            if (reg[registryKey]) {
+                reg[registryKey].status = 'approved';
+                reg[registryKey].approvedAt = new Date().toISOString();
+                await saveRegistryItem(registryKey, reg[registryKey]);
+            }
+            await sendAdminAlert([
+                '✅ *[AUTO-APPROVED]*', '',
+                '📱 *Member:* ' + dmJid.replace('@s.whatsapp.net', ''),
+                '🌐 *Group:* ' + groupSubject
+            ].join('\n'));
+        } catch (e) {
+            console.error(' [Join] Auto-approve failed for ' + dmJid + ':', e.message.substring(0, 100));
+            // Queue for retry
+            const qKey = groupJid + '|' + dmJid;
+            pendingApprovals.set(qKey, { groupJid, jid: dmJid, rawJid: participantJid, groupSubject, time: Date.now(), attempts: 0 });
         }
-        await sendAdminAlert([
-            '🔔 *[NEW JOIN REQUEST]*', '',
-            '📱 *From:* ' + dmJid.replace('@s.whatsapp.net', ''),
-            '🌐 *Group:* ' + groupSubject,
-            '📋 *Type:* ' + groupType,
-            '✅ Gatekeeper intro DM sent.'
-        ].join('\n'));
-    } catch (e) {
-        console.error(' [Join] Failed to send intro DM to ' + dmJid + ':', e.message);
-    }
+    }, humanDelay);
 };
 
 const extractPhoneFromParticipant = (p) => {
@@ -780,124 +786,42 @@ const approveGroupJoinRequest = async (pendingRequest) => {
     return { success: false, jid: null };
 };
 
-const completeGatekeeperApproval = async (senderJid, pendingRequest, verify, proof) => {
-    const userPhone = formatPhoneNumberGH(participantDigits(senderJid));
-    const approveResult = await approveGroupJoinRequest(pendingRequest);
-    const registry = loadRegistry();
-    if (registry[pendingRequest.key]) {
-        registry[pendingRequest.key].status = approveResult.success ? 'approved' : 'verification_complete';
-        registry[pendingRequest.key].proofPlatform = proof.platform;
-        registry[pendingRequest.key].approvedAt = new Date().toISOString();
-        await saveRegistryItem(pendingRequest.key, registry[pendingRequest.key]);
-    }
-    if (approveResult.success) {
-        await sendAntiBanMessage(senderJid, {
-            text: '✅ Your proof was verified! You have been *approved* into *' +
-                (pendingRequest.groupSubject || 'the group') + '*. Welcome to TN Connect 🎉'
-        });
-        await sendAdminAlert([
-            '✅ *[AUTO-APPROVED — GATEKEEPER]*', '',
-            '📞 *Applicant:* ' + userPhone,
-            '🌐 *Group:* ' + (pendingRequest.groupSubject || pendingRequest.groupJid),
-            '📸 *Proof:* ' + (proof.platform || 'verified') + ' — ' + (proof.reason || 'Valid screenshot'),
-            '✅ Join request approved automatically.'
-        ].join('\n'));
-    } else {
-        await sendAntiBanMessage(senderJid, {
-            text: '✅ Your screenshot was verified, but we could not auto-approve the join yet. An admin will approve you in WhatsApp shortly.'
-        });
-        await sendAdminAlert([
-            '⚠️ *[VERIFIED — MANUAL APPROVE NEEDED]*', '',
-            '📞 *Applicant:* ' + userPhone,
-            '🌐 *Group:* ' + (pendingRequest.groupSubject || pendingRequest.groupJid),
-            '📸 Proof OK but API approve failed. Please approve manually in the group.'
-        ].join('\n'));
-    }
-    pendingVerifications.delete(userPhone);
-};
+// Proof-based gatekeeper removed — all approvals are now fully automatic.
 
 const scanPendingJoinRequests = async () => {
     if (!client || !client.connected) return;
     await ensureRegistryLoaded();
-    console.log(' [Join Scan] Scanning whitelisted groups for pending join requests…');
-    for (const groupJid of ALLOWED_GROUPS) {
+    console.log(' [Join Scan] Scanning all groups for pending join requests…');
+    // Scan ALL groups where the bot is admin, not just the hardcoded list
+    const allGroups = cachedGroups.length ? cachedGroups : (await refreshDiscoveredGroups(activeSessionPhone) || []);
+    const groupsToScan = allGroups.length ? allGroups : ALLOWED_GROUPS.map(jid => ({ jid }));
+    for (const g of groupsToScan) {
+        const groupJid = g.jid || g;
         try {
             if (botAdminGroupCache.get(groupJid) !== true) continue;
-            await delay(1000 + Math.floor(Math.random() * 2000));
+            await delay(2000 + Math.floor(Math.random() * 3000));
             const requests = await client.fetchGroupJoinRequests(groupJid);
             const list = Array.isArray(requests) ? requests : (requests?.records || requests?.results || []);
             if (list.length) {
-                console.log(` [Join Scan] Found ${list.length} pending join request(s) in group ${groupJid}`);
+                console.log(` [Join Scan] Found ${list.length} pending request(s) in ${g.subject || groupJid} — auto-approving`);
                 for (const req of list) {
                     const participantJid = req.jid || req.id;
                     if (participantJid) {
-                        await processJoinRequest(groupJid, participantJid, 'created', '');
+                        await processJoinRequest(groupJid, participantJid, 'created', g.subject || '');
                     }
                 }
             }
         } catch (e) {
-            console.warn(` [Join Scan] Failed to scan pending requests for group ${groupJid}:`, e.message);
+            console.warn(` [Join Scan] Could not scan ${g.subject || groupJid}:`, e.message);
         }
     }
 };
 
-const handleGatekeeperDM = async (senderJid, msg, pendingRequest) => {
-    const userPhone = formatPhoneNumberGH(participantDigits(senderJid));
-    if (humanTakeoverUsers.has(userPhone)) return;
-    const { text, hasImage } = extractIncomingPayload(msg);
-    const verify = getVerificationState(userPhone);
-    const saidDone = /\bdone\b/i.test(text);
-    if (hasImage) {
-        verify.attempts += 1;
-        console.log(' [Gatekeeper] Image from ' + userPhone + ' (attempt ' + verify.attempts + ') — verifying via Gemini...');
-        if (msg.key?.id) {
-            try {
-                const mediaResult = await client.getMediaBase64(msg);
-                let b64 = mediaResult.base64 || '';
-                if (b64.includes(',')) b64 = b64.split(',')[1];
-                const buffer = Buffer.from(b64, 'base64');
-                if (buffer.length < 100) throw new Error('Empty image data');
-                const mime = msg.message.imageMessage.mimetype || 'image/jpeg';
-                const proof = await deepVerifyScreenshotEvidence(buffer, mime);
-                if (!proof.valid) {
-                    verify.rejected += 1;
-                    await sendAntiBanMessage(senderJid, {
-                        text: '❌ That image was not accepted as valid proof.\n\n*Reason:* ' + proof.reason +
-                            '\n\nPlease send a *real screenshot* of at least one:\n' +
-                            '• TikTok: following *@tnfilmsgh* (TN Universities Connect)\n' +
-                            '• Facebook/Instagram: following *TN Universities Connect*\n' +
-                            '• WhatsApp channel joined\n\nNo memes or unrelated photos.'
-                    });
-                    return;
-                }
-                verify.hasValidProof = true;
-                verify.platform = proof.platform;
-                await completeGatekeeperApproval(senderJid, pendingRequest, verify, proof);
-                return;
-            } catch (e) {
-                console.error(' [Gatekeeper] Image download/verify failed:', e.message);
-                await sendAntiBanMessage(senderJid, {
-                    text: '⚠️ We could not read that image. Please send a normal screenshot (not view-once) showing you follow @tnfilmsgh on TikTok, TN Universities Connect on Facebook/Instagram, or our WhatsApp channel.'
-                });
-                return;
-            }
-        }
-        await sendAntiBanMessage(senderJid, {
-            text: '⚠️ We could not read that image. Please send a normal screenshot (not view-once) showing you follow @tnfilmsgh on TikTok, TN Universities Connect on Facebook/Instagram, or our WhatsApp channel.'
-        });
-        return;
-    }
-    if (saidDone) {
-        if (verify.hasValidProof) {
-            await sendAntiBanMessage(senderJid, { text: '✅ You are already verified. If you are not in the group yet, wait a moment or contact an admin.' });
-        } else {
-            await sendAntiBanMessage(senderJid, { text: 'Please send *at least one clear screenshot* as proof first (@tnfilmsgh on TikTok, TN Universities Connect on Facebook/Instagram, or our WhatsApp channel). Use a normal photo — not view-once. We will verify and approve you automatically.' });
-        }
-        return;
-    }
-    if (text) {
-        await sendAntiBanMessage(senderJid, { text: 'Send *one screenshot* showing you follow @tnfilmsgh (TikTok), TN Universities Connect (Facebook/Instagram), or joined our WhatsApp channel. We verify it and approve you into *' + (pendingRequest.groupSubject || 'the group') + '* automatically.' });
-    }
+// handleGatekeeperDM — now only handles DMs from people whose approval is in-flight
+// (no proof needed — auto-approve is already queued)
+const handleGatekeeperDM = async (senderJid, msg) => {
+    // Silently ignore — approval is already queued automatically, no reply needed
+    return;
 };
 
 const loadApplicants = () => {
@@ -2171,7 +2095,7 @@ function schedulePeriodicTasks() {
         } catch (e) { /* ignore */ }
     }, 5 * 60 * 1000);
 
-    // Retry queued failed approvals
+    // Retry queued failed approvals (join-request approve)
     setInterval(async () => {
         if (!pendingApprovals.size) return;
         const now = Date.now();
@@ -2179,13 +2103,21 @@ function schedulePeriodicTasks() {
             if (now - q.time < 120000 || q.attempts >= 5) continue;
             q.attempts++;
             q.time = now;
+            // Human-paced delay between retries (3s – 30s)
+            await delay(3000 + Math.floor(Math.random() * 27000));
             try {
-                await client.addGroupParticipant(q.groupJid, q.jid);
-                console.log(' [Auto-Approval] Queued approval succeeded for ' + q.jid + ' into ' + q.groupJid);
+                const rawJid = q.rawJid || q.jid;
+                await client.approveGroupJoinRequest(q.groupJid, rawJid);
+                console.log(' [Auto-Approval] Retry succeeded for ' + q.jid + ' into ' + (q.groupSubject || q.groupJid));
                 pendingApprovals.delete(key);
+                await sendAdminAlert([
+                    '✅ *[AUTO-APPROVED — RETRY]*', '',
+                    '📱 *Member:* ' + q.jid.replace('@s.whatsapp.net', ''),
+                    '🌐 *Group:* ' + (q.groupSubject || q.groupJid)
+                ].join('\n'));
             } catch (e) {
                 if (!e.message?.includes('Connection Closed') && !e.message?.includes('timeout')) {
-                    console.log(' [Auto-Approval] Queued approval failed permanently for ' + q.jid + ': ' + e.message.slice(0, 80));
+                    console.log(' [Auto-Approval] Retry failed permanently for ' + q.jid + ': ' + e.message.slice(0, 80));
                     pendingApprovals.delete(key);
                 }
             }
