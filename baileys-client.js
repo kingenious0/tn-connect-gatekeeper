@@ -19,6 +19,7 @@ class BaileysClient {
 
         this.onMessage = null;
         this.onParticipantsChanged = null;
+        this.onJoinRequest = null;
         this.onConnectionUpdate = null;
         this.onQR = null;
         this.onCredsUpdate = null;
@@ -99,6 +100,10 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
 
         sock.ev.on('group-participants.update', (update) => {
             if (this.onParticipantsChanged) this.onParticipantsChanged(update);
+        });
+
+        sock.ev.on('group.join-request', (update) => {
+            if (this.onJoinRequest) this.onJoinRequest(update);
         });
 
         this.sock = sock;
@@ -202,6 +207,15 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
         const raw = Array.isArray(participants) ? participants : [participants];
         const jids = raw.map(j => j.includes('@') ? j : j + '@s.whatsapp.net');
         return this.sock.groupParticipantsUpdate(groupJid, jids, 'add');
+    }
+
+    async approveGroupJoinRequest(groupJid, participant) {
+        const jid = participant.includes('@') ? participant : participant + '@s.whatsapp.net';
+        return this.sock.groupRequestParticipantsUpdate(groupJid, [jid], 'approve');
+    }
+
+    async fetchGroupJoinRequests(groupJid) {
+        return this.sock.groupRequestJoinList(groupJid);
     }
 
     async fetchProfilePicture(number) {

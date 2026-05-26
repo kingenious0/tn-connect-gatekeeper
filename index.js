@@ -52,6 +52,7 @@ const joinIntroSentKeys = new Set();
 const adminBroadcastStates = new Map();
 const groupLockStates = new Map(); // lock/unlock wizard states per admin
 const registeredAdmins = new Map(); // local fallback cache of admins registered via WhatsApp DM
+const botAdminGroupCache = new Map(); // cache to track if the bot itself is an admin in groups
 
 const loadRegisteredAdmins = () => {
     if (!fs.existsSync(REGISTERED_ADMINS_FILE)) return {};
@@ -740,7 +741,7 @@ const approveGroupJoinRequest = async (pendingRequest) => {
     for (const jid of candidates) {
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
-                await client.addGroupParticipant(groupJid, jid);
+                await client.approveGroupJoinRequest(groupJid, jid);
                 return { success: true, jid };
             } catch (e) {
                 const isRetryable = e.message?.includes('Connection Closed') || e.message?.includes('rate-overlimit') || e.message?.includes('timeout');
@@ -795,7 +796,28 @@ const completeGatekeeperApproval = async (senderJid, pendingRequest, verify, pro
 };
 
 const scanPendingJoinRequests = async () => {
-    // Pending join requests are handled via Baileys events
+    if (!client || !client.connected) return;
+    await ensureRegistryLoaded();
+    console.log(' [Join Scan] Scanning whitelisted groups for pending join requests…');
+    for (const groupJid of ALLOWED_GROUPS) {
+        try {
+            if (botAdminGroupCache.get(groupJid) !== true) continue;
+            await delay(1000 + Math.floor(Math.random() * 2000));
+            const requests = await client.fetchGroupJoinRequests(groupJid);
+            const list = Array.isArray(requests) ? requests : (requests?.records || requests?.results || []);
+            if (list.length) {
+                console.log(` [Join Scan] Found ${list.length} pending join request(s) in group ${groupJid}`);
+                for (const req of list) {
+                    const participantJid = req.jid || req.id;
+                    if (participantJid) {
+                        await processJoinRequest(groupJid, participantJid, 'created', '');
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn(` [Join Scan] Failed to scan pending requests for group ${groupJid}:`, e.message);
+        }
+    }
 };
 
 const handleGatekeeperDM = async (senderJid, msg, pendingRequest) => {
@@ -1079,10 +1101,31 @@ const refreshDiscoveredGroups = async (phone) => {
     try {
         const groups = await client.fetchGroups();
         const allGroups = groups?.data || groups?.groups || groups?.results || (Array.isArray(groups) ? groups : []);
-        const discoveredGroups = Object.values(allGroups).map(g => ({
-            jid: g.jid || g.id,
-            subject: g.subject || g.name || 'Unknown Group'
-        }));
+        
+        const myJid = client.sock?.user?.id;
+        const cleanMyJid = myJid ? myJid.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net' : '';
+
+        const discoveredGroups = [];
+        for (const g of Object.values(allGroups)) {
+            const rawParticipants = g.participants || [];
+            const me = rawParticipants.find(p => {
+                const pId = typeof p === 'string' ? p : p.id || '';
+                return pId.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net' === cleanMyJid;
+            });
+            const isBotAdmin = !!(me && (me.admin === 'admin' || me.admin === 'superadmin'));
+            
+            botAdminGroupCache.set(g.jid || g.id, isBotAdmin);
+
+            // ONLY focus on and list groups where the bot itself is an admin
+            if (isBotAdmin) {
+                discoveredGroups.push({
+                    jid: g.jid || g.id,
+                    subject: g.subject || g.name || 'Unknown Group',
+                    isBotAdmin
+                });
+            }
+        }
+
         const meta = loadSessionMeta();
         meta[phone] = { ...(meta[phone] || {}), discoveredGroups, updatedAt: new Date().toISOString() };
         saveSessionMeta(meta);
@@ -1887,6 +1930,35 @@ function wireBaileysEvents() {
                 await processJoinRequest(groupJid, p, 'created', '');
             }
         }
+
+        // Track bot admin changes dynamically
+        if ((action === 'promote' || action === 'demote') && groupJid && participants?.length) {
+            const myJid = client.sock?.user?.id;
+            const cleanMyJid = myJid ? myJid.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net' : '';
+            const affectedMe = participants.find(p => {
+                const pId = typeof p === 'string' ? p : p.id || '';
+                return pId.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net' === cleanMyJid;
+            });
+            if (affectedMe) {
+                const isNowAdmin = action === 'promote';
+                botAdminGroupCache.set(groupJid, isNowAdmin);
+                console.log(` [AdminStatus] Bot was ${action}d in group ${groupJid}. isBotAdmin = ${isNowAdmin}`);
+                if (activeSessionPhone) {
+                    (async () => {
+                        try { await refreshDiscoveredGroups(activeSessionPhone); } catch (e) {}
+                    })();
+                }
+            }
+        }
+    };
+
+    // Group join requests (membership approval queue)
+    client.onJoinRequest = async (update) => {
+        const { id: groupJid, participant: participantJid, action } = update;
+        if (action === 'created' && groupJid && participantJid) {
+            console.log(` [Events] Join request created in group ${groupJid} from ${participantJid}`);
+            await processJoinRequest(groupJid, participantJid, 'created', '');
+        }
     };
 
     // Connection state
@@ -2014,30 +2086,37 @@ async function processIncomingMessage(msg) {
     let isAdmin = !!adminProfile;
     console.log(' [Msg] From ' + senderPhone + ' isAdmin=' + isAdmin + ' isGroup=' + isGroup);
     if (isGroup) {
+        // Rule: If the bot itself is not an admin in this group, do absolutely nothing (not even a dot)
+        const isBotAdmin = botAdminGroupCache.get(jid) === true;
+        if (!isBotAdmin) return;
+
+        // Perform core group moderation (deleting link/badword/status-mention)
         const moderated = await handleGroupModeration(msg, jid, sender, senderPhone, isAdmin);
         if (moderated) return;
-        if (isAdmin) {
-            const { text: groupText } = extractIncomingPayload(msg);
-            const lower = (groupText || '').trim().toLowerCase();
-            const hasActiveWizard = adminBroadcastStates.has(senderPhone);
-            if (groupText && (isBroadcastIntent(lower) || hasActiveWizard)) {
-                if (hasActiveWizard) {
-                    const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
-                    if (handled) return;
-                }
-                if (!adminAlertsGroupJid) {
-                    await detectAdminAlertsGroup();
-                }
-                if (adminAlertsGroupJid && jid === adminAlertsGroupJid) {
-                    const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
-                    if (handled) return;
-                }
-                if (!adminAlertsGroupJid) {
-                    adminAlertsGroupJid = jid;
-                    console.log(' [Alerts] Admin alerts group set dynamically to ' + jid);
-                    const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
-                    if (handled) return;
-                }
+
+        // Rule: Bot is NOT allowed to chat or trigger commands with non-admins in group chats
+        if (!isAdmin) return;
+
+        const { text: groupText } = extractIncomingPayload(msg);
+        const lower = (groupText || '').trim().toLowerCase();
+        const hasActiveWizard = adminBroadcastStates.has(senderPhone);
+        if (groupText && (isBroadcastIntent(lower) || hasActiveWizard)) {
+            if (hasActiveWizard) {
+                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
+                if (handled) return;
+            }
+            if (!adminAlertsGroupJid) {
+                await detectAdminAlertsGroup();
+            }
+            if (adminAlertsGroupJid && jid === adminAlertsGroupJid) {
+                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
+                if (handled) return;
+            }
+            if (!adminAlertsGroupJid) {
+                adminAlertsGroupJid = jid;
+                console.log(' [Alerts] Admin alerts group set dynamically to ' + jid);
+                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
+                if (handled) return;
             }
         }
         return;
@@ -2343,9 +2422,125 @@ setInterval(() => {
 // ==========================================
 // 🚀 SERVER START
 // ==========================================
+let lockHeartbeatInterval = null;
+const INSTANCE_ID = process.env.RENDER_INSTANCE_ID || ('local_' + Math.random().toString(36).substring(2, 10));
+
+const acquireLock = async () => {
+    if (!supabase) return true;
+    console.log(' [Lock] Checking for active instance lock...');
+    const maxWaitTime = 180000;
+    const pollInterval = 5000;
+    let waited = 0;
+    
+    while (waited < maxWaitTime) {
+        try {
+            const { data, error } = await supabase.from('bot_auth').select('creds_json').eq('id', 'active_lock').maybeSingle();
+            if (error) throw error;
+            
+            if (data?.creds_json) {
+                const lockInfo = JSON.parse(data.creds_json);
+                const age = Date.now() - lockInfo.heartbeat;
+                if (lockInfo.instanceId !== INSTANCE_ID && age < 45000) {
+                    console.log(` [Lock] Active instance detected (Instance: ${lockInfo.instanceId}, Heartbeat age: ${Math.round(age / 1000)}s). Waiting for release…`);
+                    await delay(pollInterval);
+                    waited += pollInterval;
+                    continue;
+                }
+            }
+            
+            await supabase.from('bot_auth').upsert({
+                id: 'active_lock',
+                creds_json: JSON.stringify({ heartbeat: Date.now(), instanceId: INSTANCE_ID }),
+                updated_at: new Date().toISOString()
+            });
+            console.log(` [Lock] Successfully acquired session lock (Instance: ${INSTANCE_ID})`);
+            startLockHeartbeat();
+            return true;
+        } catch (e) {
+            console.error(' [Lock] Error checking/acquiring lock:', e.message);
+            await delay(pollInterval);
+            waited += pollInterval;
+        }
+    }
+    
+    console.warn(' [Lock] Timed out waiting for active lock to release. Forcing acquisition…');
+    try {
+        await supabase.from('bot_auth').upsert({
+            id: 'active_lock',
+            creds_json: JSON.stringify({ heartbeat: Date.now(), instanceId: INSTANCE_ID }),
+            updated_at: new Date().toISOString()
+        });
+        startLockHeartbeat();
+    } catch (e) {
+        console.error(' [Lock] Failed to force acquire lock:', e.message);
+    }
+    return true;
+};
+
+const startLockHeartbeat = () => {
+    if (lockHeartbeatInterval) clearInterval(lockHeartbeatInterval);
+    lockHeartbeatInterval = setInterval(async () => {
+        if (!supabase) return;
+        try {
+            await supabase.from('bot_auth').upsert({
+                id: 'active_lock',
+                creds_json: JSON.stringify({ heartbeat: Date.now(), instanceId: INSTANCE_ID }),
+                updated_at: new Date().toISOString()
+            });
+        } catch (e) {
+            console.warn(' [Lock] Heartbeat update failed:', e.message);
+        }
+    }, 20000);
+};
+
+const releaseLock = async () => {
+    if (lockHeartbeatInterval) clearInterval(lockHeartbeatInterval);
+    if (!supabase) return;
+    try {
+        console.log(' [Lock] Releasing active lock in Supabase...');
+        const { data } = await supabase.from('bot_auth').select('creds_json').eq('id', 'active_lock').maybeSingle();
+        if (data?.creds_json) {
+            const lockInfo = JSON.parse(data.creds_json);
+            if (lockInfo.instanceId === INSTANCE_ID) {
+                await supabase.from('bot_auth').delete().eq('id', 'active_lock');
+                console.log(' [Lock] Active lock released successfully.');
+            }
+        }
+    } catch (e) {
+        console.error(' [Lock] Error releasing lock:', e.message);
+    }
+};
+
+const cleanShutdown = async (signal) => {
+    console.log(`\n [Shutdown] Received ${signal}. Initiating clean exit sequence…`);
+    try {
+        if (presenceTimer) clearTimeout(presenceTimer);
+        
+        if (client && client.sock) {
+            console.log(' [Shutdown] Closing WhatsApp socket connection...');
+            client.sock.ev.removeAllListeners();
+            if (client.sock.ws) {
+                client.sock.ws.close();
+            }
+        }
+        
+        await releaseLock();
+    } catch (e) {
+        console.error(' [Shutdown] Error during clean shutdown:', e.message);
+    } finally {
+        console.log(' [Shutdown] Exit sequence completed. Bye!');
+        process.exit(0);
+    }
+};
+
+process.on('SIGTERM', () => cleanShutdown('SIGTERM'));
+process.on('SIGINT', () => cleanShutdown('SIGINT'));
+
 const server = http.createServer(app);
 server.listen(PORT, async () => {
     console.log(' [Server] Gatekeeper v3.0 (Baileys) is live on port ' + PORT);
+    
+    await acquireLock();
     await ensureRegistryLoaded();
 
     // Restore session meta & broadcast whitelist from Supabase (survives Redeploys)
@@ -2369,6 +2564,9 @@ server.listen(PORT, async () => {
             const { data } = await supabase.from('bot_auth').select('creds_json').eq('id', 'creds').maybeSingle();
             if (data?.creds_json) {
                 const credsPath = path.join(AUTH_FOLDER, 'creds.json');
+                if (!fs.existsSync(AUTH_FOLDER)) {
+                    fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+                }
                 fs.writeFileSync(credsPath, data.creds_json);
                 console.log(' [Auth] Restored creds.json from Supabase');
             } else {
