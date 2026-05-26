@@ -1395,7 +1395,7 @@ const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userTex
     if (groqClient) {
         try {
             const response = await groqClient.chat.completions.create({
-                model: 'groq/compound',
+                model: 'llama-3.2-11b-vision-preview',
                 messages: [
                     { role: 'system', content: systemPrompt || 'You are a helpful assistant.' },
                     { role: 'user', content: [
@@ -1412,7 +1412,7 @@ const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userTex
         }
     }
     if (geminiClient) {
-        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.0-flash', systemInstruction: systemPrompt });
+        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash-lite', systemInstruction: systemPrompt });
         const result = await model.generateContent([
             { text: userText || 'Analyze this image.' },
             { inlineData: { data: b64, mimeType: mime } }

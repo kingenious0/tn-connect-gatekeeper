@@ -72,7 +72,8 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
                 this.connected = false;
                 const err = lastDisconnect?.error;
                 const code = err?.output?.statusCode;
-                const shouldReconnect = code !== DisconnectReason.loggedOut && code !== 401;
+                const isConflict = err?.message?.includes('conflict') || err?.toString?.()?.includes('conflict');
+                const shouldReconnect = (code !== DisconnectReason.loggedOut && code !== 401) || isConflict;
                 if (this.onConnectionUpdate) {
                     this.onConnectionUpdate({ connected: false, error: lastDisconnect?.error, shouldReconnect });
                 }
