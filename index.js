@@ -2268,15 +2268,14 @@ app.post('/api/auth/request-code', async (req, res) => {
     phone = String(phone).replace(/\D/g, '');
     console.log(' [Pairing Router] Triggering setup for +' + phone + ' (' + adminName + ')');
     try {
-        const rawAuthed = (client.phoneNumber || '').replace(/\D/g, '');
-        const authedPhone = rawAuthed.substring(0, 12);
-        const authed = !!(authedPhone && client.connected);
-        if (authed && authedPhone === phone.substring(0, 12)) {
-            activeSessionPhone = phone;
-            return res.json({ status: 'CONNECTED', success: true });
-        }
-        if (authed && authedPhone && authedPhone !== phone.substring(0, 12)) {
-            return res.json({ status: 'DIFFERENT_PHONE', success: false, message: 'Bot is already connected to +' + authedPhone + '. Disconnect first.' });
+        if (client.connected) {
+            const rawAuthed = (client.phoneNumber || '').replace(/\D/g, '');
+            const authedPhone = rawAuthed.substring(0, 12);
+            return res.json({
+                status: 'CONNECTED',
+                success: true,
+                message: 'Bot is already connected to +' + authedPhone + '. Please disconnect first if you wish to link a new number.'
+            });
         }
         activeSessionPhone = phone;
         const meta = loadSessionMeta();
