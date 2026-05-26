@@ -911,6 +911,20 @@ const formatPhoneNumberGH = (jidPhone) => {
 
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
 
+let presenceTimer = null;
+const startPresenceCycling = () => {
+    if (presenceTimer) return;
+    const cycle = async () => {
+        try {
+            if (client?.sock?.sendPresenceUpdate) {
+                await client.sock.sendPresenceUpdate('unavailable');
+            }
+        } catch {}
+        presenceTimer = setTimeout(cycle, 120000 + Math.floor(Math.random() * 120000));
+    };
+    presenceTimer = setTimeout(cycle, 60000 + Math.floor(Math.random() * 60000));
+};
+
 const handleBusinessHubConversation = async (senderJid, textInput, bizHubRequest, adminName) => {
     if (!geminiClient) return;
     const rawPhone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
@@ -1823,6 +1837,7 @@ function wireBaileysEvents() {
     client.onConnectionUpdate = async ({ connected, error, shouldReconnect }) => {
         if (connected) {
             console.log(' [Baileys] Connected!');
+            startPresenceCycling();
             if (!activeSessionPhone && client.phoneNumber) {
                 activeSessionPhone = client.phoneNumber.replace(/[^0-9]/g, '').substring(0, 12);
                 startupTime = Date.now();
