@@ -1146,11 +1146,20 @@ const isBroadcastAdminRole = (role) => BROADCAST_ADMIN_ROLES.has(role);
 const lookupBroadcastAdmin = async (senderPhone, rawJid) => {
     let rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === senderPhone);
     if (!rosterMatch && rawJid) {
-        const lidMatch = adminLidMap.get(rawJid);
-        if (lidMatch) rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === lidMatch.phone);
+        const variants = [rawJid, rawJid.replace(/:.*@lid/, '@lid')];
+        for (const v of variants) {
+            const lidMatch = adminLidMap.get(v);
+            if (lidMatch) { rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === lidMatch.phone); if (rosterMatch) break; }
+        }
+        if (!rosterMatch) {
+            for (const [, entry] of adminLidMap) {
+                if (CAMPUS_ADMIN_ROSTER.find(a => a.phone === entry.phone)) { rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === entry.phone); break; }
+            }
+        }
     }
     if (!rosterMatch && rawJid && rawJid.endsWith('@lid')) {
-        const realPhone = resolveLidToPhone(rawJid);
+        const noSuffix = rawJid.replace(/:.*@lid/, '@lid');
+        const realPhone = resolveLidToPhone(noSuffix);
         if (realPhone) rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === realPhone);
     }
     if (rosterMatch) return { phone: rosterMatch.phone, name: resolveAdminDisplayName(rosterMatch.admin_name) };
