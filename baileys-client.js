@@ -57,7 +57,7 @@ class BaileysClient {
 
             if (qr) {
                 this.qrCode = qr;
-                QR.toFile(path.join(path.dirname(require.main.filename), 'public', 'qrcode.png'), qr, { width: 400 }, (err) => {
+                QR.toFile(path.join(__dirname, 'public', 'qrcode.png'), qr, { width: 400 }, (err) => {
                     if (err) console.error(' [QR] Failed to write PNG:', err.message);
                 });
                 qrTerm.generate(qr, { small: true });
