@@ -235,6 +235,19 @@ class BaileysClient {
 
     async requestPairingCode(phoneNumber) {
         if (!this.sock) throw new Error('Socket not initialized');
+        // Wait for socket to be ready for pairing (QR signal received)
+        if (!this.qrCode) {
+            const ready = await Promise.race([
+                new Promise(resolve => {
+                    const check = () => {
+                        if (this.qrCode) resolve(true);
+                        else setTimeout(check, 200);
+                    };
+                    check();
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout waiting for socket to be ready')), 30000)),
+            ]);
+        }
         return this.sock.requestPairingCode(phoneNumber);
     }
 

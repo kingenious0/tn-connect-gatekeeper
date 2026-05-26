@@ -2023,11 +2023,21 @@ app.post('/debug/testmod', async (req, res) => {
 app.get('/api/sessions', async (req, res) => {
     try {
         const sessionArray = [];
-        if (activeSessionPhone) {
+        const authedPhone = client.phoneNumber || null;
+        const authed = !!(authedPhone && client.connected);
+        if (activeSessionPhone && authed && authedPhone === activeSessionPhone) {
             const meta = loadSessionMeta()[activeSessionPhone] || {};
             sessionArray.push({
                 phone: activeSessionPhone, name: meta.adminName || 'TN Connect Assistant',
                 connected: true, discoveredGroups: meta.discoveredGroups || []
+            });
+            return res.json(sessionArray);
+        }
+        if (activeSessionPhone && !authed) {
+            const meta = loadSessionMeta()[activeSessionPhone] || {};
+            sessionArray.push({
+                phone: activeSessionPhone, name: meta.adminName || 'TN Connect Assistant',
+                connected: false, discoveredGroups: meta.discoveredGroups || []
             });
             return res.json(sessionArray);
         }
@@ -2074,12 +2084,31 @@ app.post('/api/auth/request-code', async (req, res) => {
     phone = String(phone).replace(/\D/g, '');
     console.log(' [Pairing Router] Triggering setup for +' + phone + ' (' + adminName + ')');
     try {
-        if (activeSessionPhone === phone) return res.json({ status: 'CONNECTED', success: true });
+        const authedPhone = client.phoneNumber || null;
+        const authed = !!(authedPhone && client.connected);
+        if (authed && authedPhone === phone) {
+            return res.json({ status: 'CONNECTED', success: true });
+        }
+        if (authed && authedPhone && authedPhone !== phone) {
+            return res.json({ status: 'DIFFERENT_PHONE', success: false, message: 'Bot is already connected to +' + authedPhone + '. Disconnect first.' });
+        }
         activeSessionPhone = phone;
         const meta = loadSessionMeta();
         meta[phone] = { ...(meta[phone] || {}), adminName, role: adminRole, selectedGroups };
         saveSessionMeta(meta);
         startupTime = Date.now();
+        // Request pairing code from Baileys
+        if (client.getQrCode && typeof client.requestPairingCode === 'function') {
+            const pairingCode = await client.requestPairingCode(phone);
+            console.log(' [Pairing] Code generated for +' + phone + ': ' + pairingCode);
+            return res.json({
+                success: true,
+                status: 'PAIRING_CODE',
+                pairingCode: pairingCode,
+                message: 'Enter this code in WhatsApp > Linked Devices > Link a Device',
+            });
+        }
+        // Fallback: session already active
         console.log(' [Session] Bot session initialized for +' + phone);
         await detectAdminAlertsGroup();
         await populateLidMap();
