@@ -1776,6 +1776,18 @@ const handleAdminRegistration = async (jid, senderPhone, textInput) => {
 
     // start registration
     if (!state && (lower === 'register' || lower === 'admin' || lower === 'signup')) {
+        const existing = CAMPUS_ADMIN_ROSTER.find(a => a.phone === senderPhone) || registeredAdmins.get(senderPhone) || (await (async () => {
+            if (supabase) try {
+                const { data } = await supabase.from('gatekeeper_sessions').select('phone, admin_name').eq('phone', senderPhone).maybeSingle();
+                if (data) return data;
+            } catch (e) {}
+            return null;
+        })());
+        if (existing) {
+            const existingName = existing.admin_name || existing.name || 'Admin';
+            await sendAntiBanMessage(jid, { text: '✅ You\'re already registered as *' + existingName + '*. No need to register again.' });
+            return true;
+        }
         adminRegistrationStates.set(senderPhone, { step: 'AWAITING_NAME' });
         await sendAntiBanMessage(jid, { text: '👤 *Admin Registration*\n\nReply with your full name to register as an admin.\n(Type *cancel* to abort.)' });
         return true;
