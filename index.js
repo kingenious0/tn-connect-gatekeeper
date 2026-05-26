@@ -1103,6 +1103,11 @@ const refreshDiscoveredGroups = async (phone) => {
         const groups = await client.fetchGroups();
         const allGroups = groups?.data || groups?.groups || groups?.results || (Array.isArray(groups) ? groups : []);
         
+        if (allGroups.length === 0) {
+            console.log(' [Groups] Fetched 0 groups from socket (syncing). Keeping existing session metadata.');
+            return (loadSessionMeta()[phone] || {}).discoveredGroups || [];
+        }
+
         const myJid = client.sock?.user?.id;
         const cleanMyJid = myJid ? myJid.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net' : '';
 
@@ -1248,9 +1253,21 @@ const refreshGroupCache = async () => {
                 });
             }
         }
-        cachedGroups = adminGroups;
-        cachedGroupsLastRefresh = Date.now();
-        console.log(' [Cache] Refreshed ' + cachedGroups.length + ' admin groups');
+        if (adminGroups.length > 0) {
+            cachedGroups = adminGroups;
+            cachedGroupsLastRefresh = Date.now();
+            console.log(' [Cache] Refreshed ' + cachedGroups.length + ' admin groups');
+        } else {
+            console.log(' [Cache] Fetched 0 admin groups from socket (possibly syncing). Keeping existing cache.');
+            if (!cachedGroups.length) {
+                const meta = loadSessionMeta();
+                const phone = Object.keys(meta)[0] || activeSessionPhone;
+                if (phone && meta[phone]?.discoveredGroups?.length) {
+                    cachedGroups = meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
+                    console.log(' [Cache] Restored ' + cachedGroups.length + ' admin groups from session metadata fallback');
+                }
+            }
+        }
     } catch (e) {
         if (e.message?.includes('Connection Closed') && cachedGroups.length) {
             console.warn(' [Cache] Connection closed, will retry on next cycle. Using ' + cachedGroups.length + ' cached groups.');
@@ -1259,7 +1276,7 @@ const refreshGroupCache = async () => {
         console.warn(' [Cache] Group refresh failed, using fallback:', e.message.substring(0, 80));
         if (!cachedGroups.length) {
             const meta = loadSessionMeta();
-            const phone = Object.keys(meta)[0];
+            const phone = Object.keys(meta)[0] || activeSessionPhone;
             if (phone && meta[phone]?.discoveredGroups?.length) cachedGroups = meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
         }
     }
