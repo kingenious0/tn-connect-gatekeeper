@@ -2312,6 +2312,37 @@ server.listen(PORT, async () => {
     // Wire Baileys events to business logic
     wireBaileysEvents();
 
+    // Restore auth creds from Supabase (survives Render deploys)
+    if (supabase) {
+        // Ensure bot_auth table exists — user must create it in Supabase SQL Editor:
+        // CREATE TABLE IF NOT EXISTS bot_auth (id TEXT PRIMARY KEY, creds_json TEXT, updated_at TIMESTAMP DEFAULT NOW());
+        try {
+            const { data } = await supabase.from('bot_auth').select('creds_json').eq('id', 'creds').maybeSingle();
+            if (data?.creds_json) {
+                const credsPath = path.join(AUTH_FOLDER, 'creds.json');
+                fs.writeFileSync(credsPath, data.creds_json);
+                console.log(' [Auth] Restored creds.json from Supabase');
+            } else {
+                console.log(' [Auth] No saved creds in Supabase — will create new session');
+            }
+        } catch (e) {
+            console.warn(' [Auth] Supabase restore failed:', e.message);
+        }
+    }
+    // Save creds to Supabase on update
+    client.onCredsUpdate = async (creds) => {
+        if (!supabase) return;
+        try {
+            await supabase.from('bot_auth').upsert({
+                id: 'creds',
+                creds_json: JSON.stringify(creds),
+                updated_at: new Date().toISOString()
+            });
+        } catch (e) {
+            console.warn(' [Auth] Supabase save failed:', e.message);
+        }
+    };
+
     // Initialize Baileys socket
     console.log(' [Baileys] Initializing WhatsApp session...');
     try {

@@ -21,6 +21,7 @@ class BaileysClient {
         this.onParticipantsChanged = null;
         this.onConnectionUpdate = null;
         this.onQR = null;
+        this.onCredsUpdate = null;
 
         this.messageCache = new Map();
         this.readyResolve = null;
@@ -42,7 +43,10 @@ class BaileysClient {
             maxMsgRetryCount: 3,
         });
 
-        sock.ev.on('creds.update', saveCreds);
+        sock.ev.on('creds.update', (creds) => {
+            saveCreds();
+            if (this.onCredsUpdate) this.onCredsUpdate(creds);
+        });
 
         sock.ev.on('connection.update', (update) => {
             const { connection, lastDisconnect, qr } = update;
