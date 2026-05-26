@@ -1565,7 +1565,7 @@ const handleGroupLockDM = async (jid, senderPhone, textInput, adminProfile) => {
                 } catch (e) {
                     results.push('❌ ' + (state.groupSubjects[state.groupJids.indexOf(gjid)] || gjid) + ' → ' + e.message.substring(0, 60));
                 }
-                if (i < selectedJids.length - 1) await delay(3000);
+                if (i < selectedJids.length - 1) await delay(20000 + Math.floor(Math.random() * 20000));
             }
             await sendAntiBanMessage(jid, { text: results.join('\n') });
         } else {
@@ -1580,7 +1580,7 @@ const handleGroupLockDM = async (jid, senderPhone, textInput, adminProfile) => {
                 } catch (e) {
                     results.push('❌ ' + (state.groupSubjects[state.groupJids.indexOf(gjid)] || gjid) + ' → ' + e.message.substring(0, 60));
                 }
-                if (i < selectedJids.length - 1) await delay(3000);
+                if (i < selectedJids.length - 1) await delay(20000 + Math.floor(Math.random() * 20000));
             }
             await sendAntiBanMessage(jid, { text: results.join('\n') });
         }
