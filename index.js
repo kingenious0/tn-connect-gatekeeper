@@ -1286,6 +1286,7 @@ const refreshGroupCache = async () => {
                 const phone = bestPhone || activeSessionPhone || Object.keys(meta)[0];
                 if (phone && meta[phone]?.discoveredGroups?.length) {
                     cachedGroups = meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
+                    meta[phone].discoveredGroups.forEach(g => botAdminGroupCache.set(g.jid, true));
                     console.log(' [Cache] Restored ' + cachedGroups.length + ' admin groups from session metadata fallback (Source: ' + phone + ')');
                     
                     // Auto-heal new session: save these restored groups to Supabase in the background under activeBot JID
@@ -1321,6 +1322,7 @@ const refreshGroupCache = async () => {
             const phone = bestPhone || activeSessionPhone || Object.keys(meta)[0];
             if (phone && meta[phone]?.discoveredGroups?.length) {
                 cachedGroups = meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
+                meta[phone].discoveredGroups.forEach(g => botAdminGroupCache.set(g.jid, true));
             }
         }
     }
@@ -1675,6 +1677,9 @@ const restoreSessionMetaFromSupabase = async () => {
                 selectedGroups: row.selected_groups || meta[phone]?.selectedGroups || [],
                 updatedAt: row.updated_at || new Date().toISOString()
             };
+            if (row.role === 'core_gatekeeper_bot' || phone === activeSessionPhone) {
+                (row.discovered_groups || []).forEach(g => botAdminGroupCache.set(g.jid || g.id, true));
+            }
             restoredCount++;
         }
         saveSessionMeta(meta);
