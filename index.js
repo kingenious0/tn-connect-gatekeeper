@@ -1274,10 +1274,31 @@ const refreshGroupCache = async () => {
             console.log(' [Cache] Fetched 0 admin groups from socket (possibly syncing). Keeping existing cache.');
             if (!cachedGroups.length) {
                 const meta = loadSessionMeta();
-                const phone = activeSessionPhone || Object.keys(meta)[0];
+                // Intelligent fallback: find the phone session that contains the most groups
+                let bestPhone = null;
+                let maxGroups = 0;
+                for (const [ph, data] of Object.entries(meta)) {
+                    if (data?.discoveredGroups?.length > maxGroups) {
+                        maxGroups = data.discoveredGroups.length;
+                        bestPhone = ph;
+                    }
+                }
+                const phone = bestPhone || activeSessionPhone || Object.keys(meta)[0];
                 if (phone && meta[phone]?.discoveredGroups?.length) {
                     cachedGroups = meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
-                    console.log(' [Cache] Restored ' + cachedGroups.length + ' admin groups from session metadata fallback (' + phone + ')');
+                    console.log(' [Cache] Restored ' + cachedGroups.length + ' admin groups from session metadata fallback (Source: ' + phone + ')');
+                    
+                    // Auto-heal new session: save these restored groups to Supabase in the background under activeBot JID
+                    if (activeSessionPhone && activeSessionPhone !== phone) {
+                        (async () => {
+                            try {
+                                console.log(' [Cache] Migrating groups from source +' + phone + ' to active session +' + activeSessionPhone + '...');
+                                await refreshDiscoveredGroups(activeSessionPhone);
+                            } catch (e) {
+                                console.warn(' [Cache] Migration sync failed:', e.message);
+                            }
+                        })();
+                    }
                 }
             }
         }
@@ -1289,8 +1310,18 @@ const refreshGroupCache = async () => {
         console.warn(' [Cache] Group refresh failed, using fallback:', e.message.substring(0, 80));
         if (!cachedGroups.length) {
             const meta = loadSessionMeta();
-            const phone = activeSessionPhone || Object.keys(meta)[0];
-            if (phone && meta[phone]?.discoveredGroups?.length) cachedGroups = meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
+            let bestPhone = null;
+            let maxGroups = 0;
+            for (const [ph, data] of Object.entries(meta)) {
+                if (data?.discoveredGroups?.length > maxGroups) {
+                    maxGroups = data.discoveredGroups.length;
+                    bestPhone = ph;
+                }
+            }
+            const phone = bestPhone || activeSessionPhone || Object.keys(meta)[0];
+            if (phone && meta[phone]?.discoveredGroups?.length) {
+                cachedGroups = meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
+            }
         }
     }
 };
@@ -1365,7 +1396,15 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
 
 const scanAllGroupsForOldLinks = async () => {
     const meta = loadSessionMeta();
-    const phone = activeSessionPhone || Object.keys(meta)[0];
+    let bestPhone = null;
+    let maxGroups = 0;
+    for (const [ph, data] of Object.entries(meta)) {
+        if (data?.discoveredGroups?.length > maxGroups) {
+            maxGroups = data.discoveredGroups.length;
+            bestPhone = ph;
+        }
+    }
+    const phone = bestPhone || activeSessionPhone || Object.keys(meta)[0];
     const groups = meta[phone]?.discoveredGroups || [];
     if (!groups.length) return;
     console.log(' [Group Scan] Scanning ' + groups.length + ' groups for old links…');
