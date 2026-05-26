@@ -1922,14 +1922,6 @@ function wireBaileysEvents() {
     // Group participants changed
     client.onParticipantsChanged = async (update) => {
         const { id: groupJid, participants, action } = update;
-        if ((action === 'add' || action === 'created') && groupJid && participants?.length) {
-            if (!isBusinessHubGroup(groupJid)) {
-                (async () => { await approveWithPacing(groupJid, participants); })();
-            }
-            for (const p of participants) {
-                await processJoinRequest(groupJid, p, 'created', '');
-            }
-        }
 
         // Track bot admin changes dynamically
         if ((action === 'promote' || action === 'demote') && groupJid && participants?.length) {
