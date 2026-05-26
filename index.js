@@ -1557,26 +1557,30 @@ const handleGroupLockDM = async (jid, senderPhone, textInput, adminProfile) => {
             const newLocked = [...new Set([...locked, ...selectedJids])];
             saveLockedGroups(newLocked);
             const results = [];
-            for (const gjid of selectedJids) {
+            for (let i = 0; i < selectedJids.length; i++) {
+                const gjid = selectedJids[i];
                 try {
                     await client.setGroupAdminsOnly(gjid, true);
                     results.push('✅ ' + (state.groupSubjects[state.groupJids.indexOf(gjid)] || gjid) + ' → Locked (only admins)');
                 } catch (e) {
                     results.push('❌ ' + (state.groupSubjects[state.groupJids.indexOf(gjid)] || gjid) + ' → ' + e.message.substring(0, 60));
                 }
+                if (i < selectedJids.length - 1) await delay(3000);
             }
             await sendAntiBanMessage(jid, { text: results.join('\n') });
         } else {
             const newLocked = locked.filter(j => !selectedJids.includes(j));
             saveLockedGroups(newLocked);
             const results = [];
-            for (const gjid of selectedJids) {
+            for (let i = 0; i < selectedJids.length; i++) {
+                const gjid = selectedJids[i];
                 try {
                     await client.setGroupAdminsOnly(gjid, false);
                     results.push('✅ ' + (state.groupSubjects[state.groupJids.indexOf(gjid)] || gjid) + ' → Unlocked (everyone can message)');
                 } catch (e) {
                     results.push('❌ ' + (state.groupSubjects[state.groupJids.indexOf(gjid)] || gjid) + ' → ' + e.message.substring(0, 60));
                 }
+                if (i < selectedJids.length - 1) await delay(3000);
             }
             await sendAntiBanMessage(jid, { text: results.join('\n') });
         }
