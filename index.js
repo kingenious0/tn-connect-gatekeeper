@@ -1510,8 +1510,43 @@ const loadBroadcastWhitelistFromSupabase = async () => {
         if (data?.discovered_groups?.length) {
             saveBroadcastConfig({ whitelist: data.discovered_groups });
             console.log(' [Broadcast] Loaded ' + data.discovered_groups.length + ' whitelisted groups from Supabase');
+        } else {
+            console.log(' [Broadcast] No whitelist found in Supabase — will create after first manage');
         }
-    } catch (e) { /* table or row may not exist yet */ }
+    } catch (e) {
+        if (e.code === 'PGRST116') {
+            console.log(' [Broadcast] No whitelist row in Supabase yet — will create after first manage');
+        } else {
+            console.warn(' [Broadcast] Failed to load whitelist from Supabase:', e.message?.substring(0, 80));
+        }
+    }
+};
+
+const restoreSessionMetaFromSupabase = async () => {
+    if (!supabase) return;
+    try {
+        const { data, error } = await supabase.from('gatekeeper_sessions').select('*').neq('phone', '_config_broadcast_whitelist');
+        if (error) { console.warn(' [Meta] Supabase restore error:', error.message?.substring(0, 80)); return; }
+        if (!data?.length) { console.log(' [Meta] No session data in Supabase to restore'); return; }
+        const meta = loadSessionMeta();
+        let restoredCount = 0;
+        for (const row of data) {
+            const phone = String(row.phone).replace(/\D/g, '');
+            if (!phone) continue;
+            meta[phone] = {
+                ...(meta[phone] || {}),
+                adminName: row.admin_name || meta[phone]?.adminName || 'TN Connect Assistant',
+                discoveredGroups: row.discovered_groups || meta[phone]?.discoveredGroups || [],
+                selectedGroups: row.selected_groups || meta[phone]?.selectedGroups || [],
+                updatedAt: row.updated_at || new Date().toISOString()
+            };
+            restoredCount++;
+        }
+        saveSessionMeta(meta);
+        console.log(' [Meta] Restored ' + restoredCount + ' admin session(s) from Supabase');
+    } catch (e) {
+        console.warn(' [Meta] Failed to restore session data:', e.message?.substring(0, 80));
+    }
 };
 
 // ==========================================
@@ -2312,6 +2347,10 @@ const server = http.createServer(app);
 server.listen(PORT, async () => {
     console.log(' [Server] Gatekeeper v3.0 (Baileys) is live on port ' + PORT);
     await ensureRegistryLoaded();
+
+    // Restore session meta & broadcast whitelist from Supabase (survives Redeploys)
+    await restoreSessionMetaFromSupabase();
+    await loadBroadcastWhitelistFromSupabase();
 
     // Initialize anti-ban module
     antiban = new AntiBan({
