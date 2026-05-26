@@ -2611,7 +2611,7 @@ server.listen(PORT, async () => {
         try {
             await supabase.from('bot_auth').upsert({
                 id: 'creds',
-                creds_json: BufferJSON.stringify(creds),
+                creds_json: JSON.stringify(creds, BufferJSON.replacer),
                 updated_at: new Date().toISOString()
             });
         } catch (e) {
