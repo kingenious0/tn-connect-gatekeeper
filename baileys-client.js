@@ -3,9 +3,7 @@ const {
     useMultiFileAuthState,
     DisconnectReason,
     downloadMediaMessage,
-    makeCacheableSignalKeyStore,
 } = require('@whiskeysockets/baileys');
-const { NodeCache } = require('@cacheable/node-cache');
 const P = require('pino');
 const fs = require('fs');
 const path = require('path');
@@ -33,17 +31,11 @@ class BaileysClient {
     async init() {
         const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
 
-        const msgRetryCounterCache = new NodeCache({ stdTTL: 300 });
-
         const sock = makeWASocket({
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, new NodeCache({ stdTTL: 300 })),
-            },
+            auth: state,
             printQRInTerminal: false,
             markOnlineOnConnect: false,
             syncFullHistory: false,
-            msgRetryCounterCache,
             logger: P({ level: 'silent' }),
             browser: ['Ubuntu', 'Chrome', '20.0.04'],
             generateHighQualityLinkPreview: false,
@@ -66,14 +58,16 @@ class BaileysClient {
 
             if (connection === 'open') {
                 this.connected = true;
-                this.phoneNumber = sock.authState.creds?.me?.id?.replace(/[^0-9]/g, '') || null;
+                const rawId = sock.authState.creds?.me?.id || '';
+this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
                 if (this.onConnectionUpdate) this.onConnectionUpdate({ connected: true });
                 if (this.readyResolve) this.readyResolve();
             }
 
             if (connection === 'close') {
                 this.connected = false;
-                const code = lastDisconnect?.error?.output?.statusCode;
+                const err = lastDisconnect?.error;
+                const code = err?.output?.statusCode;
                 const shouldReconnect = code !== DisconnectReason.loggedOut && code !== 401;
                 if (this.onConnectionUpdate) {
                     this.onConnectionUpdate({ connected: false, error: lastDisconnect?.error, shouldReconnect });
@@ -224,8 +218,9 @@ class BaileysClient {
         return { base64: buffer.toString('base64') };
     }
 
-    async getMediaBase64(messageKey) {
-        const buffer = await downloadMediaMessage({ key: messageKey, message: {} }, 'buffer', {}, { sock: this.sock });
+    async getMediaBase64(msg) {
+        const fullMsg = msg.message ? msg : { key: msg, message: {} };
+        const buffer = await downloadMediaMessage(fullMsg, 'buffer', {}, { sock: this.sock });
         return { base64: buffer.toString('base64') };
     }
 
@@ -235,20 +230,21 @@ class BaileysClient {
 
     async requestPairingCode(phoneNumber) {
         if (!this.sock) throw new Error('Socket not initialized');
-        // Wait for socket to be ready for pairing (QR signal received)
-        if (!this.qrCode) {
-            const ready = await Promise.race([
-                new Promise(resolve => {
-                    const check = () => {
-                        if (this.qrCode) resolve(true);
-                        else setTimeout(check, 200);
-                    };
-                    check();
-                }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout waiting for socket to be ready')), 30000)),
-            ]);
-        }
+        await this.waitForSocketReady();
         return this.sock.requestPairingCode(phoneNumber);
+    }
+
+    async waitForSocketReady() {
+        if (this.connected) return;
+        const maxRetries = 30;
+        for (let i = 0; i < maxRetries; i++) {
+            if (this.connected) return;
+            try {
+                const state = this.sock?.ws?.readyState;
+                if (state === 1) return; // WebSocket OPEN
+            } catch {}
+            await new Promise(r => setTimeout(r, 1000));
+        }
     }
 
     _downloadBuffer(url) {

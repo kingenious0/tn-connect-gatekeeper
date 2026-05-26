@@ -28,3 +28,6 @@ v1.3_documentation.md
 *.png
 broadcast_config.json
 wppconnect/
+bot_pid.txt
+locked_groups.json
+auth_info

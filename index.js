@@ -179,6 +179,7 @@ const CAMPUS_ADMIN_ROSTER = [
     { phone: '233599994129', admin_name: 'STEVO' },
     { phone: '233500200750', admin_name: 'Jeff Bezzos' },
     { phone: '233540509751', admin_name: 'Air Star' },
+    { phone: '233506746307', admin_name: 'Kingenious' },
     { phone: '233597626090', admin_name: 'Kingenious' },
     { phone: '233538719819', admin_name: 'Mr.Gyan' },
     { phone: '233595802277', admin_name: 'PROPHETIC BUSINESS' }
@@ -535,9 +536,25 @@ const parseSpintax = (template) => {
 
 const buildGatekeeperMessage = () => parseSpintax(GATEKEEPER_MESSAGE);
 
+const resolveLidToPhone = (lidJid) => {
+    const lidDigits = String(lidJid || '').replace(/@lid.*$/i, '').replace(/\D/g, '');
+    if (!lidDigits) return null;
+    const filePath = path.join(AUTH_FOLDER, 'lid-mapping-' + lidDigits + '_reverse.json');
+    try {
+        if (fs.existsSync(filePath)) {
+            const phone = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+            if (phone) return String(phone).replace(/\D/g, '');
+        }
+    } catch (e) { /* lid mapping file may not exist */ }
+    return null;
+};
+
 const participantDigits = (jid) => {
     if (typeof jid === 'object') jid = jid.phoneNumber || jid.id || jid.jid || '';
-    return String(jid || '').replace(/@s\.whatsapp\.net/gi, '').replace(/@lid/gi, '').replace(/\D/g, '');
+    const str = String(jid || '');
+    const lidPhone = resolveLidToPhone(str);
+    if (lidPhone) return lidPhone;
+    return str.replace(/@s\.whatsapp\.net/gi, '').replace(/@lid/gi, '').replace(/\D/g, '');
 };
 
 const buildRegistryKey = (groupJid, participantJid) => {
@@ -792,7 +809,7 @@ const handleGatekeeperDM = async (senderJid, msg, pendingRequest) => {
         console.log(' [Gatekeeper] Image from ' + userPhone + ' (attempt ' + verify.attempts + ') — verifying via Gemini...');
         if (msg.key?.id) {
             try {
-                const mediaResult = await client.getMediaBase64(msg.key);
+                const mediaResult = await client.getMediaBase64(msg);
                 let b64 = mediaResult.base64 || '';
                 if (b64.includes(',')) b64 = b64.split(',')[1];
                 const buffer = Buffer.from(b64, 'base64');
@@ -1118,6 +1135,10 @@ const lookupBroadcastAdmin = async (senderPhone, rawJid) => {
         const lidMatch = adminLidMap.get(rawJid);
         if (lidMatch) rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === lidMatch.phone);
     }
+    if (!rosterMatch && rawJid && rawJid.endsWith('@lid')) {
+        const realPhone = resolveLidToPhone(rawJid);
+        if (realPhone) rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === realPhone);
+    }
     if (rosterMatch) return { phone: rosterMatch.phone, name: resolveAdminDisplayName(rosterMatch.admin_name) };
     if (supabase) {
         try {
@@ -1379,12 +1400,19 @@ const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userTex
 };
 const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
     if (!groqClient && !geminiClient) return false;
-    const { text, hasImage } = extractIncomingPayload(msg);
+    const { text: msgText, hasImage } = extractIncomingPayload(msg);
+    const lowerText = (msgText || '').trim().toLowerCase();
+    const wantsHelp = lowerText === 'help' || lowerText.startsWith('help') || lowerText === 'ai' || lowerText.startsWith('ai ');
     const state = adminReplyStates.get(senderPhone);
+
+    if (wantsHelp && !hasImage) {
+        await sendAntiBanMessage(jid, { text: '🤖 *AI Reply Helper*\n\nSend a screenshot of the conversation and I\'ll suggest a professional reply for you.\n\nExample: Send "help" with a screenshot attached.\n\nAfter I suggest a reply, type *rewrite: [instruction]* to tweak it.' });
+        return true;
+    }
 
     if (hasImage && msg.key?.id) {
         try {
-            const mediaResult = await client.getMediaBase64(msg.key);
+            const mediaResult = await client.getMediaBase64(msg);
             let b64 = mediaResult.base64 || '';
             if (b64.includes(',')) b64 = b64.split(',')[1];
             const buffer = Buffer.from(b64, 'base64');
@@ -1792,7 +1820,7 @@ function wireBaileysEvents() {
         if (connected) {
             console.log(' [Baileys] Connected!');
             if (!activeSessionPhone && client.phoneNumber) {
-                activeSessionPhone = client.phoneNumber;
+                activeSessionPhone = client.phoneNumber.replace(/[^0-9]/g, '').substring(0, 12);
                 startupTime = Date.now();
                 const mem = process.memoryUsage();
                 console.log(' [Boot] Active session: ' + activeSessionPhone + ' | RSS: ' + (mem.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (mem.heapUsed / 1024 / 1024).toFixed(1) + 'MB');
@@ -1984,7 +2012,7 @@ async function processIncomingMessage(msg) {
     if (isAdmin && !bizHubRequest && !pendingRequest) {
         try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL trying reply to ' + senderPhone + '\n'); } catch (e) {}
         try {
-            await sendAntiBanMessage(jid, { text: '👋 Hi ' + (adminProfile?.name || 'Admin') + '! I\'m the TN Gatekeeper bot.\n\nAvailable commands:\n• *broadcast* — Send a message to monitored groups\n• *send* — Same as broadcast\n• *announce* — Same as broadcast\n• *register* — Register/upgrade your admin account\n• Send a *screenshot* of a chat — I\'ll suggest a professional reply' });
+            await sendAntiBanMessage(jid, { text: '👋 Hi ' + (adminProfile?.name || 'Admin') + '! I\'m the TN Gatekeeper bot.\n\nAvailable commands:\n• *broadcast* — Send a message to all monitored groups\n• *lock/unlock* — Lock/unlock groups (admin-only messaging)\n• *help* + *screenshot* — I\'ll suggest a professional reply\n• *register* — Register as an admin' });
             try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL reply SENT OK\n'); } catch (e) {}
         } catch (e) {
             try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL REPLY FAILED: ' + e.message + '\n'); } catch (e2) {}
@@ -2025,10 +2053,12 @@ app.get('/api/sessions', async (req, res) => {
         const sessionArray = [];
         const authedPhone = client.phoneNumber || null;
         const authed = !!(authedPhone && client.connected);
-        if (activeSessionPhone && authed && authedPhone === activeSessionPhone) {
-            const meta = loadSessionMeta()[activeSessionPhone] || {};
+        // If client is connected to any phone, report it
+        if (authed) {
+            const targetPhone = activeSessionPhone || authedPhone;
+            const meta = loadSessionMeta()[targetPhone] || {};
             sessionArray.push({
-                phone: activeSessionPhone, name: meta.adminName || 'TN Connect Assistant',
+                phone: targetPhone, name: meta.adminName || 'TN Connect Assistant',
                 connected: true, discoveredGroups: meta.discoveredGroups || []
             });
             return res.json(sessionArray);
@@ -2084,12 +2114,14 @@ app.post('/api/auth/request-code', async (req, res) => {
     phone = String(phone).replace(/\D/g, '');
     console.log(' [Pairing Router] Triggering setup for +' + phone + ' (' + adminName + ')');
     try {
-        const authedPhone = client.phoneNumber || null;
+        const rawAuthed = (client.phoneNumber || '').replace(/\D/g, '');
+        const authedPhone = rawAuthed.substring(0, 12);
         const authed = !!(authedPhone && client.connected);
-        if (authed && authedPhone === phone) {
+        if (authed && authedPhone === phone.substring(0, 12)) {
+            activeSessionPhone = phone;
             return res.json({ status: 'CONNECTED', success: true });
         }
-        if (authed && authedPhone && authedPhone !== phone) {
+        if (authed && authedPhone && authedPhone !== phone.substring(0, 12)) {
             return res.json({ status: 'DIFFERENT_PHONE', success: false, message: 'Bot is already connected to +' + authedPhone + '. Disconnect first.' });
         }
         activeSessionPhone = phone;
