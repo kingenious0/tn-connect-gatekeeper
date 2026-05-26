@@ -45,7 +45,7 @@ class BaileysClient {
 
         sock.ev.on('creds.update', (creds) => {
             saveCreds();
-            if (this.onCredsUpdate) this.onCredsUpdate(creds);
+            if (this.onCredsUpdate) this.onCredsUpdate(sock.authState.creds);
         });
 
         sock.ev.on('connection.update', (update) => {

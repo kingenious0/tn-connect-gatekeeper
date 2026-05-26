@@ -2326,8 +2326,6 @@ server.listen(PORT, async () => {
 
     // Restore auth creds from Supabase (survives Render deploys)
     if (supabase) {
-        // Ensure bot_auth table exists — user must create it in Supabase SQL Editor:
-        // CREATE TABLE IF NOT EXISTS bot_auth (id TEXT PRIMARY KEY, creds_json TEXT, updated_at TIMESTAMP DEFAULT NOW());
         try {
             const { data } = await supabase.from('bot_auth').select('creds_json').eq('id', 'creds').maybeSingle();
             if (data?.creds_json) {
@@ -2338,7 +2336,11 @@ server.listen(PORT, async () => {
                 console.log(' [Auth] No saved creds in Supabase — will create new session');
             }
         } catch (e) {
-            console.warn(' [Auth] Supabase restore failed:', e.message);
+            if (e.message?.includes('relation') || e.code === '42P01') {
+                console.log(' [Auth] Table bot_auth missing — run in Supabase SQL Editor:\n   CREATE TABLE IF NOT EXISTS bot_auth (id TEXT PRIMARY KEY, creds_json TEXT, updated_at TIMESTAMP DEFAULT NOW());');
+            } else {
+                console.warn(' [Auth] Supabase restore failed:', e.message);
+            }
         }
     }
     // Save creds to Supabase on update
@@ -2351,7 +2353,11 @@ server.listen(PORT, async () => {
                 updated_at: new Date().toISOString()
             });
         } catch (e) {
-            console.warn(' [Auth] Supabase save failed:', e.message);
+            if (e.message?.includes('relation') || e.code === '42P01') {
+                console.log(' [Auth] Table bot_auth missing — run in Supabase SQL Editor:\n   CREATE TABLE IF NOT EXISTS bot_auth (id TEXT PRIMARY KEY, creds_json TEXT, updated_at TIMESTAMP DEFAULT NOW());');
+            } else {
+                console.warn(' [Auth] Supabase save failed:', e.message);
+            }
         }
     };
 
