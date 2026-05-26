@@ -4,6 +4,8 @@ node_modules/
 # Local session credentials and data
 auth_session_*
 baileys_auth_info
+auth_info/
+antiban-state.json
 sessions_meta.json
 registry.json
 business_hub_applicants.json
@@ -25,3 +27,4 @@ v1.3_documentation.md
 # Generated QR / screenshot images
 *.png
 broadcast_config.json
+wppconnect/

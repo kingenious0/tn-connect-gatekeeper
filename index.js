@@ -1,7 +1,8 @@
 require('dotenv').config();
 process.on('uncaughtException', (err) => console.error(' [Crash Guard] Uncaught:', err.message));
 process.on('unhandledRejection', (err) => console.error(' [Crash Guard] Rejection:', err.message));
-const { WPPClient, mediaBase64Cache } = require('./wppconnect-client');
+const { BaileysClient } = require('./baileys-client');
+const { AntiBan } = require('baileys-antiban');
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
 const express = require('express');
@@ -33,13 +34,13 @@ const REGISTERED_ADMINS_FILE = './registered_admins.json';
 const BROADCAST_CONFIG_FILE = './broadcast_config.json';
 const LOCKED_GROUPS_FILE = './locked_groups.json';
 
-// WPPConnect Server configuration
-const WPP_BASE_URL = process.env.WPP_BASE_URL || 'http://localhost:21465';
-const WPP_SESSION = process.env.WPP_SESSION || 'tn-connect';
-const WPP_TOKEN = process.env.WPP_TOKEN || '';
+// Baileys configuration
+const AUTH_FOLDER = process.env.AUTH_FOLDER || './auth_info';
 const SERVER_URL = process.env.SERVER_URL || '';
+const PHONE_NUMBER = process.env.PHONE_NUMBER || '';
 
-let client = new WPPClient(WPP_BASE_URL, WPP_SESSION, WPP_TOKEN);
+let client = new BaileysClient({ authFolder: AUTH_FOLDER, sessionName: 'tn-connect' });
+let antiban = null;
 
 // Global variables
 let activeSessionPhone = null;
@@ -777,7 +778,7 @@ const completeGatekeeperApproval = async (senderJid, pendingRequest, verify, pro
 };
 
 const scanPendingJoinRequests = async () => {
-    // Pending join requests are handled via webhook events only (no REST endpoint in Evolution API v2)
+    // Pending join requests are handled via Baileys events
 };
 
 const handleGatekeeperDM = async (senderJid, msg, pendingRequest) => {
@@ -791,7 +792,7 @@ const handleGatekeeperDM = async (senderJid, msg, pendingRequest) => {
         console.log(' [Gatekeeper] Image from ' + userPhone + ' (attempt ' + verify.attempts + ') — verifying via Gemini...');
         if (msg.key?.id) {
             try {
-                const mediaResult = await client.getMediaBase64(msg.key.id);
+                const mediaResult = await client.getMediaBase64(msg.key);
                 let b64 = mediaResult.base64 || '';
                 if (b64.includes(',')) b64 = b64.split(',')[1];
                 const buffer = Buffer.from(b64, 'base64');
@@ -1071,19 +1072,28 @@ async function sendAntiBanMessage(jid, content, retries = 3) {
     if (sinceLast < MIN_MESSAGE_INTERVAL_MS) {
         await delay(MIN_MESSAGE_INTERVAL_MS - sinceLast);
     }
+    const textContent = (typeof content === 'string') ? content : (content.text || '');
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
             lastMessageSendTime = Date.now();
             return await client.sendText(jid, content.text || content, content.options || {});
         } catch (e) {
-            const isRateLimit = e.message?.includes('rate-overlimit') || e.message?.includes('429') || e.message?.includes('Connection Closed');
+            const msg = (e.message || '').toLowerCase();
+            const isRateLimit = msg.includes('rate') || msg.includes('429') || msg.includes('connection closed') || msg.includes('too fast');
             if (isRateLimit && attempt < retries - 1) {
-                await delay((attempt + 1) * 5000);
+                const backoff = (attempt + 1) * 8000;
+                console.warn(' [Send] Rate limited, backing off ' + backoff + 'ms (attempt ' + (attempt + 1) + '/' + retries + ')');
+                await delay(backoff);
                 continue;
             }
             if (attempt === retries - 1) {
                 lastMessageSendTime = Date.now();
-                return await client.sendText(jid, content.text || content, content.options || {});
+                try {
+                    return await client.sendText(jid, content.text || content, content.options || {});
+                } catch (f) {
+                    console.error(' [Send] Final attempt failed:', f.message.substring(0, 100));
+                    return null;
+                }
             }
         }
     }
@@ -1130,7 +1140,7 @@ const refreshGroupCache = async () => {
         const allGroups = groups?.data || groups?.groups || groups?.results || (Array.isArray(groups) ? groups : []);
         cachedGroups = Object.values(allGroups).map(g => ({ jid: g.jid || g.id, subject: g.subject || g.name || 'Unknown Group' }));
         cachedGroupsLastRefresh = Date.now();
-        console.log(' [Cache] Refreshed ' + cachedGroups.length + ' groups from Evolution API');
+        console.log(' [Cache] Refreshed ' + cachedGroups.length + ' groups');
     } catch (e) {
         if (e.message?.includes('Connection Closed') && cachedGroups.length) {
             console.warn(' [Cache] Connection closed, will retry on next cycle. Using ' + cachedGroups.length + ' cached groups.');
@@ -1374,7 +1384,7 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
 
     if (hasImage && msg.key?.id) {
         try {
-            const mediaResult = await client.getMediaBase64(msg.key.id);
+            const mediaResult = await client.getMediaBase64(msg.key);
             let b64 = mediaResult.base64 || '';
             if (b64.includes(',')) b64 = b64.split(',')[1];
             const buffer = Buffer.from(b64, 'base64');
@@ -1751,65 +1761,23 @@ const handleAdminRegistration = async (jid, senderPhone, textInput) => {
 };
 
 // ==========================================
-// 📨 WEBHOOK — RECEIVE INCOMING MESSAGES FROM WPPCONNECT SERVER
-// WPPConnect webhook payload → WhatsApp proto format normalization
-const normalizeWppMessage = (data) => {
-    const isGroup = data.isGroup || data.from?.endsWith('@g.us');
-    const msg = {
-        key: {
-            remoteJid: data.from,
-            fromMe: false,
-            id: data.id,
-            participant: isGroup ? (data.sender?.id || data.from) : undefined,
-        },
-        message: {},
-        messageTimestamp: data.timestamp,
-    };
-    switch (data.type) {
-        case 'chat':
-            msg.message.conversation = data.body || '';
-            break;
-        case 'image':
-            if (data.caption) msg.message.conversation = data.caption;
-            msg.message.imageMessage = { mimetype: data.mimetype || 'image/jpeg', caption: data.caption || '' };
-            if (data.body) mediaBase64Cache.set(data.id, data.body);
-            break;
-        case 'video':
-            if (data.caption) msg.message.conversation = data.caption;
-            msg.message.videoMessage = { mimetype: data.mimetype || 'video/mp4', caption: data.caption || '' };
-            if (data.body) mediaBase64Cache.set(data.id, data.body);
-            break;
-        case 'document':
-            if (data.caption) msg.message.conversation = data.caption;
-            msg.message.documentMessage = { mimetype: data.mimetype || 'application/octet-stream', caption: data.caption || '' };
-            if (data.body) mediaBase64Cache.set(data.id, data.body);
-            break;
-        case 'ptt':
-            msg.message.audioMessage = { mimetype: data.mimetype || 'audio/ogg; codecs=opus' };
-            break;
-        case 'sticker':
-            msg.message.stickerMessage = {};
-            break;
-        default:
-            if (data.body) msg.message.conversation = data.body;
-            break;
-    }
-    return msg;
-};
+// 📨 INCOMING MESSAGE HANDLER — called by Baileys events
+// Messages arrive in native WhatsApp protobuf format (same as Baileys sends)
 
-const webhookLog = [];
 // ==========================================
-app.post('/webhook', async (req, res) => {
-    const payload = req.body;
-    if (!payload) return res.status(200).json({ ok: true });
-    const event = (payload.event || '').toLowerCase();
-    const data = payload.data || payload;
-    // Group participants update
-    if (event === 'onparticipantschanged') {
-        const groupJid = data.id || '';
-        const participants = data.participants || [];
-        const action = (data.action || '').toLowerCase();
-        if (action === 'add' && groupJid && participants.length) {
+// 📨 BAILEYS EVENT WIRING — called during boot
+// ==========================================
+function wireBaileysEvents() {
+    // Incoming messages
+    client.onMessage = async (msg) => {
+        try { await processIncomingMessage(msg); }
+        catch (e) { console.error(' [Events] Error processing message:', e.message); }
+    };
+
+    // Group participants changed
+    client.onParticipantsChanged = async (update) => {
+        const { id: groupJid, participants, action } = update;
+        if ((action === 'add' || action === 'created') && groupJid && participants?.length) {
             if (!isBusinessHubGroup(groupJid)) {
                 (async () => { await approveWithPacing(groupJid, participants); })();
             }
@@ -1817,34 +1785,106 @@ app.post('/webhook', async (req, res) => {
                 await processJoinRequest(groupJid, p, 'created', '');
             }
         }
-        res.status(200).json({ ok: true });
-        return;
-    }
-    // Connection update
-    if (event === 'onpresencechanged' || event === 'onconnectionstate') {
-        res.status(200).json({ ok: true });
-        return;
-    }
-    // Incoming messages
-    if (event === 'onmessage' || event === 'onanymessage') {
-        const msg = normalizeWppMessage(data);
-        let detail = { event, time: Date.now(), count: 1 };
-        detail.jid = msg.key.remoteJid || '';
-        detail.fromMe = false;
-        detail.msgKeys = msg.message ? Object.keys(msg.message).join(',') : '';
-        const tx = extractIncomingPayload(msg).text || handleGroupModerationExtractText(msg);
-        detail.text = (tx || '').substring(0, 80);
-        detail.participant = msg.key.participant || '';
-        webhookLog.unshift(detail);
-        if (webhookLog.length > 200) webhookLog.length = 200;
-        try { fs.appendFileSync('_trace.log', 'WEBHOOK ' + event + ' jid=' + (detail.jid || '') + ' text="' + (detail.text || '') + '" type=' + (data.type || '') + '\n'); } catch (e) { }
-        res.status(200).json({ ok: true });
-        try { await processIncomingMessage(msg); }
-        catch (e) { console.error(' [Webhook] Error processing message:', e.message); }
-        return;
-    }
-    res.status(200).json({ ok: true });
-});
+    };
+
+    // Connection state
+    client.onConnectionUpdate = async ({ connected, error, shouldReconnect }) => {
+        if (connected) {
+            console.log(' [Baileys] Connected!');
+            if (!activeSessionPhone && client.phoneNumber) {
+                activeSessionPhone = client.phoneNumber;
+                startupTime = Date.now();
+                const mem = process.memoryUsage();
+                console.log(' [Boot] Active session: ' + activeSessionPhone + ' | RSS: ' + (mem.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (mem.heapUsed / 1024 / 1024).toFixed(1) + 'MB');
+                await detectAdminAlertsGroup();
+                await delay(5000);
+                await populateLidMap();
+                await delay(5000);
+                await refreshDiscoveredGroups(activeSessionPhone);
+                await delay(5000);
+                await scanPendingJoinRequests();
+                const remainingSilence = Math.max(0, RATE_LIMIT_COOLDOWN_MS - (Date.now() - startupTime));
+                if (remainingSilence > 0) {
+                    const mins = Math.round(remainingSilence / 60000);
+                    console.log(' [Boot] Rate-limit cooldown: ' + mins + ' min ' + Math.round((remainingSilence % 60000) / 1000) + 's of silence…');
+                    await delay(remainingSilence);
+                }
+                refreshGroupCache();
+                loadBroadcastWhitelistFromSupabase();
+                schedulePeriodicTasks();
+            }
+        } else if (error) {
+            console.warn(' [Baileys] Disconnected: ' + (error.message || 'unknown') + ' | Reconnect: ' + shouldReconnect);
+        }
+    };
+
+    // QR code
+    client.onQR = (qr) => {
+        const path = require('path');
+        const qrPath = path.join(__dirname, 'public', 'qrcode.png');
+        if (qr) {
+            const b64 = qr.replace(/^data:image\/png;base64,/, '');
+            try {
+                fs.writeFileSync(qrPath, Buffer.from(b64, 'base64'));
+                console.log(' [QR] New QR code saved to public/qrcode.png');
+            } catch (e) { /* ignore */ }
+            console.log(' [QR] Scan the QR code with your WhatsApp (Linked Devices)');
+        }
+    };
+}
+
+function schedulePeriodicTasks() {
+    // Memory monitoring
+    setInterval(() => {
+        const m = process.memoryUsage();
+        console.log(' [Memory] RSS: ' + (m.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (m.heapUsed / 1024 / 1024).toFixed(1) + 'MB');
+    }, 60000);
+
+    // Group cache refresh
+    setInterval(() => refreshGroupCache(), 10 * 60 * 1000);
+
+    // Health check
+    setInterval(async () => {
+        try {
+            const st = await client.fetchInstanceStatus();
+            const s = typeof st === 'object' ? (st.status || '').toLowerCase() : '';
+            if (s !== 'islogged' && s !== 'open' && s !== 'connected') {
+                console.log(' [Health] Session state: "' + (s || 'unknown') + '"');
+            }
+        } catch (e) { /* ignore */ }
+    }, 5 * 60 * 1000);
+
+    // Retry queued failed approvals
+    setInterval(async () => {
+        if (!pendingApprovals.size) return;
+        const now = Date.now();
+        for (const [key, q] of pendingApprovals) {
+            if (now - q.time < 120000 || q.attempts >= 5) continue;
+            q.attempts++;
+            q.time = now;
+            try {
+                await client.addGroupParticipant(q.groupJid, q.jid);
+                console.log(' [Auto-Approval] Queued approval succeeded for ' + q.jid + ' into ' + q.groupJid);
+                pendingApprovals.delete(key);
+            } catch (e) {
+                if (!e.message?.includes('Connection Closed') && !e.message?.includes('timeout')) {
+                    console.log(' [Auto-Approval] Queued approval failed permanently for ' + q.jid + ': ' + e.message.slice(0, 80));
+                    pendingApprovals.delete(key);
+                }
+            }
+        }
+    }, 120000);
+
+    // Full periodic refresh
+    setInterval(async () => {
+        console.log(' [Timer] Periodic group refresh…');
+        await detectAdminAlertsGroup();
+        await delay(5000);
+        await populateLidMap();
+        await delay(5000);
+        await refreshDiscoveredGroups(activeSessionPhone);
+    }, 30 * 60 * 1000);
+}
 
 const handleGroupModerationExtractText = (msg) => {
     const m = msg.message;
@@ -1955,7 +1995,7 @@ async function processIncomingMessage(msg) {
 // ==========================================
 // 🌐 EXPRESS REST API ENDPOINTS
 // ==========================================
-app.get('/debug/webhook', (req, res) => { res.json(webhookLog); });
+app.get('/debug/webhook', (req, res) => { res.json({ message: 'Webhook not used — Baileys handles messages directly' }); });
 app.get('/debug/trace', (req, res) => {
     try {
         const data = fs.readFileSync('_trace.log', 'utf8');
@@ -2046,7 +2086,7 @@ app.post('/api/auth/request-code', async (req, res) => {
         await refreshDiscoveredGroups(phone);
         await scanPendingJoinRequests();
         await scanAllGroupsForOldLinks();
-        res.json({ success: true, status: 'CONNECTED', message: 'Using Evolution API - already connected via tn-connect instance' });
+        res.json({ success: true, status: 'CONNECTED', message: 'Session already active' });
     } catch (err) {
         console.error(' request-code error:', err.message || err);
         res.status(500).json({ error: err.message });
@@ -2137,30 +2177,14 @@ async function sendAdminAlert(alertText) {
     }
 }
 
-app.get('/qr/:instance', async (req, res) => {
-    const instanceName = req.params.instance || WPP_SESSION;
-    const wpp = instanceName === WPP_SESSION ? client : new WPPClient(WPP_BASE_URL, instanceName, WPP_TOKEN);
-    try {
-        // First try to start the session (returns QR if waiting for scan)
-        const startResult = await wpp.startSession(SERVER_URL ? SERVER_URL + '/webhook' : undefined);
-        const qrBase64 = startResult?.base64 || startResult?.qrCode || '';
-        if (qrBase64) {
-            const img = Buffer.from(qrBase64.replace(/^data:image\/png;base64,/, ''), 'base64');
-            res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': img.length, 'Cache-Control': 'no-cache' });
-            return res.end(img);
-        }
-        // If startSession didn't return QR, try getQrCode
-        const qrResult = await wpp.getQrCode();
-        const qr2 = qrResult?.base64 || qrResult?.qrCode || '';
-        if (qr2) {
-            const img = Buffer.from(qr2.replace(/^data:image\/png;base64,/, ''), 'base64');
-            res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': img.length, 'Cache-Control': 'no-cache' });
-            return res.end(img);
-        }
-        res.status(500).json({ error: 'No QR code yet', startResponse: startResult, qrResponse: qrResult });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
+app.get('/qr', async (req, res) => {
+    const qrPath = path.join(__dirname, 'public', 'qrcode.png');
+    if (fs.existsSync(qrPath)) {
+        const img = fs.readFileSync(qrPath);
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': img.length, 'Cache-Control': 'no-cache' });
+        return res.end(img);
     }
+    res.status(404).json({ error: 'No QR available. Check server logs for status.' });
 });
 
 app.use('/api', (req, res) => {
@@ -2185,130 +2209,33 @@ setInterval(() => {
 // ==========================================
 const server = http.createServer(app);
 server.listen(PORT, async () => {
-    console.log(' [Server] Gatekeeper v2.0 (WPPConnect) is live on port ' + PORT);
+    console.log(' [Server] Gatekeeper v3.0 (Baileys) is live on port ' + PORT);
     await ensureRegistryLoaded();
-    console.log(' [Session] Using WPPConnect session: ' + WPP_SESSION + ' at ' + WPP_BASE_URL);
+
+    // Initialize anti-ban module
+    antiban = new AntiBan({
+        preset: 'moderate',
+        logging: true,
+        persist: './antiban-state.json',
+    });
+    console.log(' [AntiBan] Rate limiter initialized');
+
+    // Wire Baileys events to business logic
+    wireBaileysEvents();
+
+    // Initialize Baileys socket
+    console.log(' [Baileys] Initializing WhatsApp session...');
     try {
-        const status = await client.fetchInstanceStatus();
-        let state = typeof status === 'object' ? (status.status || status.state || '').toLowerCase() : 'unknown';
-        if (!state) state = 'unknown';
-        console.log(' [Session] WPPConnect session status: ' + state);
-        if (state === 'open' || state === 'connected' || state === 'islogged') {
-            activeSessionPhone = '233506746307';
-            startupTime = Date.now();
-            const mem = process.memoryUsage();
-            console.log(' [Boot] Active session: ' + activeSessionPhone + ' | RSS: ' + (mem.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (mem.heapUsed / 1024 / 1024).toFixed(1) + 'MB');
-            refreshGroupCache();
-            loadBroadcastWhitelistFromSupabase();
-            setInterval(() => {
-                const m = process.memoryUsage();
-                console.log(' [Memory] RSS: ' + (m.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (m.heapUsed / 1024 / 1024).toFixed(1) + 'MB | Ext: ' + (m.external / 1024 / 1024).toFixed(1) + 'MB');
-            }, 60000);
-            setInterval(() => refreshGroupCache(), 10 * 60 * 1000);
-            const remainingSilence = Math.max(0, RATE_LIMIT_COOLDOWN_MS - (Date.now() - startupTime));
-            if (remainingSilence > 0) {
-                const mins = Math.round(remainingSilence / 60000);
-                console.log(' [Boot] Rate-limit cooldown: ' + mins + ' min ' + Math.round((remainingSilence % 60000) / 1000) + 's of silence…');
-                await delay(remainingSilence);
-            }
-            await detectAdminAlertsGroup();
-            await delay(5000);
-            await populateLidMap();
-            const phone = activeSessionPhone;
-            const meta = loadSessionMeta()[phone] || {};
-            await delay(5000);
-            await refreshDiscoveredGroups(phone);
-            await delay(5000);
-            await scanPendingJoinRequests();
-            // Periodic connection health check
-            setInterval(async () => {
-                try {
-                    const st = await client.fetchInstanceStatus();
-                    const s = typeof st === 'object' ? (st.status || st.state || '').toLowerCase() : '';
-                    if (s === 'open' || s === 'connected' || s === 'islogged') return;
-                    console.log(' [Health] Session state: "' + (s || 'unknown') + '"');
-                } catch (e) { /* ignore */ }
-            }, 5 * 60 * 1000);
-            // Retry queued failed approvals every 2 minutes
-            setInterval(async () => {
-                if (!pendingApprovals.size) return;
-                const now = Date.now();
-                for (const [key, q] of pendingApprovals) {
-                    if (now - q.time < 120000 || q.attempts >= 5) continue;
-                    q.attempts++;
-                    q.time = now;
-                    try {
-                        await client.addGroupParticipant(q.groupJid, q.jid);
-                        console.log(' [Auto-Approval] Queued approval succeeded for ' + q.jid + ' into ' + q.groupJid);
-                        pendingApprovals.delete(key);
-                    } catch (e) {
-                        if (!e.message?.includes('Connection Closed') && !e.message?.includes('timeout')) {
-                            console.log(' [Auto-Approval] Queued approval failed permanently for ' + q.jid + ': ' + e.message.slice(0, 80));
-                            pendingApprovals.delete(key);
-                        }
-                    }
-                }
-            }, 120000);
-            setInterval(async () => {
-                console.log(' [Timer] Periodic group refresh…');
-                await detectAdminAlertsGroup();
-                await delay(5000);
-                await populateLidMap();
-                await delay(5000);
-                await refreshDiscoveredGroups(activeSessionPhone);
-            }, 30 * 60 * 1000);
-        } else {
-            // Session not connected — try to start it or show QR
-            console.log(' [Session] Session not connected. Attempting to start session…');
-            try {
-                const startResult = await client.startSession(SERVER_URL ? SERVER_URL + '/webhook' : undefined);
-                const qrBase64 = startResult?.base64 || startResult?.qrCode || '';
-                if (qrBase64) {
-                    console.log(' [Session] QR code available. Open /qr/' + WPP_SESSION + ' to scan.');
-                } else {
-                    console.log(' [Session] Start session response: ' + JSON.stringify(startResult).substring(0, 200));
-                }
-            } catch (e) {
-                console.warn(' [Session] Could not start session:', e.message.slice(0, 120));
-            }
-            // Poll for connection
-            setInterval(async () => {
-                if (activeSessionPhone) return;
-                try {
-                    const st = await client.fetchInstanceStatus();
-                    const s = typeof st === 'object' ? (st.status || st.state || '').toLowerCase() : '';
-                    if (s === 'open' || s === 'connected' || s === 'islogged') {
-                        console.log(' [Recovery] Session now connected, initializing…');
-                        activeSessionPhone = '233506746307';
-                        startupTime = Date.now();
-                        await detectAdminAlertsGroup();
-                        await populateLidMap();
-                        await refreshDiscoveredGroups(activeSessionPhone);
-                        refreshGroupCache();
-                        loadBroadcastWhitelistFromSupabase();
-                        setInterval(async () => {
-                            console.log(' [Timer] Periodic group refresh…');
-                            await detectAdminAlertsGroup();
-                            await populateLidMap();
-                            await refreshDiscoveredGroups(activeSessionPhone);
-                            refreshGroupCache();
-                        }, 30 * 60 * 1000);
-                    }
-                } catch (e) { /* ignore */ }
-            }, 15000);
-        }
+        await client.init();
+        console.log(' [Baileys] Socket created. Waiting for connection...');
+        console.log(' [Baileys] QR code will appear in logs when ready. Open /qr to view.');
+        console.log(' [Baileys] Or use /api/auth/request-code to trigger pairing code.');
     } catch (e) {
-        console.warn(' [Boot] Could not verify WPPConnect session status:', e.message);
-    }
-    if (SERVER_URL) {
-        console.log(' [Webhook] Ensure WPPConnect server webhook is configured to: ' + SERVER_URL + '/webhook');
-        console.log(' [Webhook] Webhook URL cannot be set via API; configure in WPPConnect server config.ts or use start-session with webhook param.');
-    } else {
-        console.log(' [Webhook] Set SERVER_URL env var to enable webhook for incoming messages');
+        console.error(' [Baileys] Init failed:', e.message);
     }
 });
 
-// Global error middleware — makes sure Evolution API always gets 200 so it stops retrying
+// Global error middleware
 app.use((err, req, res, next) => {
     console.error(' [Error] ' + (err.type || err.code || err.message || 'Unknown error'));
     if (err.type === 'entity.too.large') {
