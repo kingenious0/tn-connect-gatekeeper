@@ -672,6 +672,26 @@ const processJoinRequest = async (groupJid, participantJid, action, groupSubject
     await saveRegistryItem(registryKey, entry);
     joinIntroSentKeys.add(registryKey);
     console.log(' [Join] New ' + groupType + ' request: ' + groupSubject + ' from ' + dmJid);
+
+    // Send the gatekeeper intro DM to the applicant
+    try {
+        if (groupType === 'business_hub') {
+            await sendAntiBanMessage(dmJid, { text: BUSINESS_HUB_INTRO_MESSAGE() });
+            console.log(' [Join] Sent Business Hub intro to ' + dmJid);
+        } else {
+            await sendAntiBanMessage(dmJid, { text: buildGatekeeperMessage() });
+            console.log(' [Join] Sent gatekeeper intro to ' + dmJid);
+        }
+        await sendAdminAlert([
+            '🔔 *[NEW JOIN REQUEST]*', '',
+            '📱 *From:* ' + dmJid.replace('@s.whatsapp.net', ''),
+            '🌐 *Group:* ' + groupSubject,
+            '📋 *Type:* ' + groupType,
+            '✅ Gatekeeper intro DM sent.'
+        ].join('\n'));
+    } catch (e) {
+        console.error(' [Join] Failed to send intro DM to ' + dmJid + ':', e.message);
+    }
 };
 
 const extractPhoneFromParticipant = (p) => {

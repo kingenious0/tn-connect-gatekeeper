@@ -182,6 +182,7 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
                 id: p.id,
                 phoneNumber: p.id.replace(/[^0-9]/g, ''),
                 name: p.name || '',
+                admin: p.admin || null,
             })),
             owner: g.owner || '',
             size: g.size || g.participants?.length || 0,
