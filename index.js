@@ -1226,9 +1226,31 @@ const refreshGroupCache = async () => {
     try {
         const groups = await client.fetchGroups();
         const allGroups = groups?.data || groups?.groups || groups?.results || (Array.isArray(groups) ? groups : []);
-        cachedGroups = Object.values(allGroups).map(g => ({ jid: g.jid || g.id, subject: g.subject || g.name || 'Unknown Group' }));
+        
+        const myJid = client.sock?.user?.id;
+        const cleanMyJid = myJid ? myJid.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net' : '';
+
+        const adminGroups = [];
+        for (const g of Object.values(allGroups)) {
+            const rawParticipants = g.participants || [];
+            const me = rawParticipants.find(p => {
+                const pId = typeof p === 'string' ? p : p.id || '';
+                return pId.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net' === cleanMyJid;
+            });
+            const isBotAdmin = !!(me && (me.admin === 'admin' || me.admin === 'superadmin'));
+            
+            botAdminGroupCache.set(g.jid || g.id, isBotAdmin);
+
+            if (isBotAdmin) {
+                adminGroups.push({
+                    jid: g.jid || g.id,
+                    subject: g.subject || g.name || 'Unknown Group'
+                });
+            }
+        }
+        cachedGroups = adminGroups;
         cachedGroupsLastRefresh = Date.now();
-        console.log(' [Cache] Refreshed ' + cachedGroups.length + ' groups');
+        console.log(' [Cache] Refreshed ' + cachedGroups.length + ' admin groups');
     } catch (e) {
         if (e.message?.includes('Connection Closed') && cachedGroups.length) {
             console.warn(' [Cache] Connection closed, will retry on next cycle. Using ' + cachedGroups.length + ' cached groups.');
