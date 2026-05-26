@@ -216,7 +216,7 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
     }
 
     async fetchGroupJoinRequests(groupJid) {
-        return this.sock.groupRequestJoinList(groupJid);
+        return this.sock.groupRequestParticipantsList(groupJid);
     }
 
     async fetchProfilePicture(number) {
