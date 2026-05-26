@@ -2,6 +2,7 @@ require('dotenv').config();
 process.on('uncaughtException', (err) => console.error(' [Crash Guard] Uncaught:', err.message));
 process.on('unhandledRejection', (err) => console.error(' [Crash Guard] Rejection:', err.message));
 const { BaileysClient } = require('./baileys-client');
+const { BufferJSON } = require('@whiskeysockets/baileys');
 const { AntiBan } = require('baileys-antiban');
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
@@ -2610,7 +2611,7 @@ server.listen(PORT, async () => {
         try {
             await supabase.from('bot_auth').upsert({
                 id: 'creds',
-                creds_json: JSON.stringify(creds),
+                creds_json: BufferJSON.stringify(creds),
                 updated_at: new Date().toISOString()
             });
         } catch (e) {
