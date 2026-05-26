@@ -1261,10 +1261,10 @@ const refreshGroupCache = async () => {
             console.log(' [Cache] Fetched 0 admin groups from socket (possibly syncing). Keeping existing cache.');
             if (!cachedGroups.length) {
                 const meta = loadSessionMeta();
-                const phone = Object.keys(meta)[0] || activeSessionPhone;
+                const phone = activeSessionPhone || Object.keys(meta)[0];
                 if (phone && meta[phone]?.discoveredGroups?.length) {
                     cachedGroups = meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
-                    console.log(' [Cache] Restored ' + cachedGroups.length + ' admin groups from session metadata fallback');
+                    console.log(' [Cache] Restored ' + cachedGroups.length + ' admin groups from session metadata fallback (' + phone + ')');
                 }
             }
         }
@@ -1276,7 +1276,7 @@ const refreshGroupCache = async () => {
         console.warn(' [Cache] Group refresh failed, using fallback:', e.message.substring(0, 80));
         if (!cachedGroups.length) {
             const meta = loadSessionMeta();
-            const phone = Object.keys(meta)[0] || activeSessionPhone;
+            const phone = activeSessionPhone || Object.keys(meta)[0];
             if (phone && meta[phone]?.discoveredGroups?.length) cachedGroups = meta[phone].discoveredGroups.map(g => ({ jid: g.jid, subject: g.subject }));
         }
     }
@@ -1352,7 +1352,7 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
 
 const scanAllGroupsForOldLinks = async () => {
     const meta = loadSessionMeta();
-    const phone = Object.keys(meta)[0];
+    const phone = activeSessionPhone || Object.keys(meta)[0];
     const groups = meta[phone]?.discoveredGroups || [];
     if (!groups.length) return;
     console.log(' [Group Scan] Scanning ' + groups.length + ' groups for old links…');
