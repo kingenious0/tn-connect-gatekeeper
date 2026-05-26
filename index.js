@@ -1254,9 +1254,22 @@ const refreshGroupCache = async () => {
             }
         }
         if (adminGroups.length > 0) {
+            const wasEmpty = !cachedGroups.length;
             cachedGroups = adminGroups;
             cachedGroupsLastRefresh = Date.now();
             console.log(' [Cache] Refreshed ' + cachedGroups.length + ' admin groups');
+            
+            // Auto-heal empty database row: save discovered groups to Supabase in background
+            if (wasEmpty && activeSessionPhone) {
+                (async () => {
+                    try {
+                        console.log(' [Cache] Groups newly detected! Syncing back to Supabase to repair empty metadata...');
+                        await refreshDiscoveredGroups(activeSessionPhone);
+                    } catch (e) {
+                        console.warn(' [Cache] Auto-heal sync failed:', e.message);
+                    }
+                })();
+            }
         } else {
             console.log(' [Cache] Fetched 0 admin groups from socket (possibly syncing). Keeping existing cache.');
             if (!cachedGroups.length) {
@@ -2143,6 +2156,14 @@ async function processIncomingMessage(msg) {
     if (!msg || !msg.key || msg.key.fromMe) return;
     const jid = msg.key.remoteJid;
     if (!jid) return;
+    
+    // Ignore protocol/status/receipt messages that have no actual content to prevent duplicate blank catches
+    const payload = extractIncomingPayload(msg);
+    const isStatus = !!(msg.message?.groupStatusMentionMessage);
+    if (!payload.text && !payload.hasImage && !isStatus) {
+        return;
+    }
+
     const isGroup = jid.endsWith('@g.us');
     const sender = isGroup ? (msg.key.participant || jid) : jid;
     const senderPhone = senderPhoneFromJid(sender);
