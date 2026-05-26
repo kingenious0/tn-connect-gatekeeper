@@ -1982,6 +1982,39 @@ function wireBaileysEvents() {
             }
         } else if (error) {
             console.warn(' [Baileys] Disconnected: ' + (error.message || 'unknown') + ' | Reconnect: ' + shouldReconnect);
+            
+            const code = error?.output?.statusCode;
+            const isLogout = code === 401 || code === 403 || error?.message?.includes('loggedOut') || error?.message?.includes('401') || error?.message?.includes('QR refs attempts ended');
+            
+            if (isLogout) {
+                console.log(' [Auth] Expired, invalid, or logged-out session detected. Wiping credentials...');
+                const phone = activeSessionPhone || getBotAdminContext().phone;
+                try {
+                    if (phone) {
+                        const dirPath = path.join(__dirname, 'auth_session_' + phone);
+                        if (fs.existsSync(dirPath)) fs.rmSync(dirPath, { recursive: true, force: true });
+                        if (supabase) {
+                            await supabase.from('gatekeeper_sessions').delete().eq('phone', phone);
+                        }
+                    }
+                    const authPath = path.join(AUTH_FOLDER, 'creds.json');
+                    if (fs.existsSync(authPath)) fs.rmSync(authPath, { force: true });
+                    if (supabase) {
+                        await supabase.from('bot_auth').delete().eq('id', 'creds');
+                    }
+                    console.log(' [Auth] Wiped credentials from local disk and Supabase.');
+                } catch (clearErr) {
+                    console.error(' [Auth] Failed to clear credentials:', clearErr.message);
+                }
+                
+                // Force a fresh reconnect to display a new active QR code
+                console.log(' [Auth] Restarting socket connection in 5 seconds...');
+                setTimeout(() => {
+                    if (client && typeof client.init === 'function') {
+                        client.init().catch(() => {});
+                    }
+                }, 5000);
+            }
         }
     };
 
