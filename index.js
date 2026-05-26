@@ -791,14 +791,21 @@ const approveGroupJoinRequest = async (pendingRequest) => {
 const scanPendingJoinRequests = async () => {
     if (!client || !client.connected) return;
     await ensureRegistryLoaded();
-    console.log(' [Join Scan] Scanning all groups for pending join requests…');
-    // Scan ALL groups where the bot is admin, not just the hardcoded list
-    const allGroups = cachedGroups.length ? cachedGroups : (await refreshDiscoveredGroups(activeSessionPhone) || []);
-    const groupsToScan = allGroups.length ? allGroups : ALLOWED_GROUPS.map(jid => ({ jid }));
+    // Only scan groups where we KNOW the bot is an admin (from cache)
+    // If cache is empty, do a fresh fetch first
+    let groupsToScan = cachedGroups.filter(g => botAdminGroupCache.get(g.jid) === true);
+    if (!groupsToScan.length && activeSessionPhone) {
+        const fresh = await refreshDiscoveredGroups(activeSessionPhone);
+        groupsToScan = (fresh || []).filter(g => botAdminGroupCache.get(g.jid) === true);
+    }
+    if (!groupsToScan.length) {
+        console.log(' [Join Scan] No admin groups found in cache — skipping scan.');
+        return;
+    }
+    console.log(` [Join Scan] Scanning ${groupsToScan.length} admin group(s) for pending join requests…`);
     for (const g of groupsToScan) {
-        const groupJid = g.jid || g;
+        const groupJid = g.jid;
         try {
-            if (botAdminGroupCache.get(groupJid) !== true) continue;
             await delay(2000 + Math.floor(Math.random() * 3000));
             const requests = await client.fetchGroupJoinRequests(groupJid);
             const list = Array.isArray(requests) ? requests : (requests?.records || requests?.results || []);
@@ -812,7 +819,10 @@ const scanPendingJoinRequests = async () => {
                 }
             }
         } catch (e) {
-            console.warn(` [Join Scan] Could not scan ${g.subject || groupJid}:`, e.message);
+            // "forbidden" = bot not admin; already filtered above but could be a race condition — skip silently
+            if (!e.message?.toLowerCase().includes('forbidden')) {
+                console.warn(` [Join Scan] Could not scan ${g.subject || groupJid}:`, e.message);
+            }
         }
     }
 };
