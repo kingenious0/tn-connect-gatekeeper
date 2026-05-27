@@ -1590,6 +1590,60 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
     return false;
 };
 
+const adminChatHistories = new Map(); // senderPhone -> Array of messages
+
+const callAIChat = async (senderPhone, userText, adminName) => {
+    if (!groqClient && !geminiClient) return null;
+    if (!adminChatHistories.has(senderPhone)) {
+        adminChatHistories.set(senderPhone, []);
+    }
+    const history = adminChatHistories.get(senderPhone);
+    if (history.length > 10) history.shift();
+
+    const systemPrompt = `You are the "TN Connect Super Bot", an ultra-smart, helpful, and friendly AI administrator assistant for TN Universities Connect (founded by Elikem, Kingenious, and the TN Connect Team).
+You have a witty, professional, yet warm and engaging personality. 
+You can chat about anything, assist the admins with copywriting, answer general questions, and help coordinate TN Connect operations.
+An admin named "${adminName}" is talking to you. Keep your responses relatively concise (usually 1-3 paragraphs unless they ask for a long response) and formatting clean (use bullet points and bold text where appropriate).`;
+
+    history.push({ role: 'user', content: userText });
+
+    if (groqClient) {
+        try {
+            const messages = [{ role: 'system', content: systemPrompt }, ...history];
+            const response = await groqClient.chat.completions.create({
+                model: 'llama-3-8b-8192',
+                messages,
+                max_tokens: 800,
+            });
+            const content = response.choices[0]?.message?.content;
+            if (content) {
+                history.push({ role: 'assistant', content });
+                return content;
+            }
+        } catch (e) {
+            console.error(' [AIChat] Groq failed:', e.message);
+        }
+    }
+    if (geminiClient) {
+        try {
+            const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash-lite', systemInstruction: systemPrompt });
+            const contents = history.map(h => ({
+                role: h.role === 'assistant' ? 'model' : 'user',
+                parts: [{ text: h.content }]
+            }));
+            const result = await model.generateContent({ contents });
+            const content = result.response.text();
+            if (content) {
+                history.push({ role: 'assistant', content });
+                return content;
+            }
+        } catch (e) {
+            console.error(' [AIChat] Gemini failed:', e.message);
+        }
+    }
+    return null;
+};
+
 const loadBroadcastConfig = () => {
     if (!fs.existsSync(BROADCAST_CONFIG_FILE)) return { whitelist: [] };
     try { return JSON.parse(fs.readFileSync(BROADCAST_CONFIG_FILE, 'utf-8')); }
@@ -2292,6 +2346,33 @@ async function processIncomingMessage(msg) {
                 if (handled) return;
             }
         }
+
+        // Dynamic AI Chit-Chat for Admins in group chats
+        const myJid = client.sock?.user?.id;
+        const myLid = client.sock?.user?.lid;
+        const cleanMyJid = myJid ? myJid.split(':')[0].replace(/[^0-9]/g, '') : '';
+        const cleanMyLid = myLid ? myLid.split(':')[0].replace(/[^0-9]/g, '') : '';
+
+        const mentions = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        const isBotTagged = mentions.some(m => m.includes(cleanMyJid) || (cleanMyLid && m.includes(cleanMyLid)));
+
+        const isCallingBot = groupText && (
+            isBotTagged ||
+            lower.startsWith('bot ') ||
+            lower.startsWith('gatekeeper ') ||
+            lower.startsWith('super bot ')
+        );
+
+        if (isCallingBot && !moderated) {
+            let cleanPrompt = groupText.replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
+            if (cleanPrompt) {
+                const aiResponse = await callAIChat(senderPhone, cleanPrompt, adminProfile.name);
+                if (aiResponse) {
+                    await sendAntiBanMessage(jid, { text: aiResponse });
+                    return;
+                }
+            }
+        }
         return;
     }
     const { text: dmText } = extractIncomingPayload(msg);
@@ -2310,6 +2391,15 @@ async function processIncomingMessage(msg) {
         if (dmText || hasBroadcastWizard) {
             const handled = await handleAdminBroadcastDM(jid, senderPhone, dmText, adminProfile, sender, msg);
             if (handled) return;
+        }
+
+        // Dynamic AI Chit-Chat for Admins in DM
+        if (dmText && !dmText.toLowerCase().startsWith('rewrite:')) {
+            const aiResponse = await callAIChat(senderPhone, dmText, adminProfile.name);
+            if (aiResponse) {
+                await sendAntiBanMessage(jid, { text: aiResponse });
+                return;
+            }
         }
     }
     if (adminBroadcastStates.has(senderPhone)) return;
