@@ -2494,7 +2494,73 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
     
-    // 3. Lock group {name}
+    // 3. Leave group(s)
+    const leaveRegex = /^(?:leave group|leave groups|exit group|exit groups)\s+(.+)$/i;
+    const leaveMatch = cleanText.match(leaveRegex);
+    if (leaveMatch) {
+        const groupsStr = leaveMatch[1].trim();
+        const targetNames = groupsStr.split(/, | and |,/).map(s => s.trim().toLowerCase()).filter(Boolean);
+        
+        if (targetNames.length > 0) {
+            const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+            const matched = [];
+            
+            for (const name of targetNames) {
+                const found = allGroups.filter(g => g.subject.toLowerCase().includes(name));
+                matched.push(...found);
+            }
+            
+            // Remove duplicates
+            const uniqueMatched = [];
+            const seen = new Set();
+            for (const g of matched) {
+                if (!seen.has(g.jid)) {
+                    seen.add(g.jid);
+                    uniqueMatched.push(g);
+                }
+            }
+            
+            if (!uniqueMatched.length) {
+                await sendAntiBanMessage(jid, { text: `❌ Could not find any matching groups for: "${groupsStr}".` });
+                return true;
+            }
+            
+            await sendAntiBanMessage(jid, { text: `🚪 *Leaving ${uniqueMatched.length} matched group(s)...*\n${uniqueMatched.map(g => '• ' + g.subject).join('\n')}` });
+            
+            const results = [];
+            for (let i = 0; i < uniqueMatched.length; i++) {
+                const group = uniqueMatched[i];
+                try {
+                    await client.leaveGroup(group.jid);
+                    
+                    // Remove from active caches
+                    cachedGroups = cachedGroups.filter(cg => cg.jid !== group.jid);
+                    botAdminGroupCache.delete(group.jid);
+                    
+                    results.push('✅ Left: ' + group.subject);
+                } catch (e) {
+                    results.push('❌ Failed: ' + group.subject + ' → ' + e.message.substring(0, 60));
+                }
+                if (i < uniqueMatched.length - 1) {
+                    await delay(3000);
+                }
+            }
+            
+            // Sync updated group list to Supabase to prevent showing exited groups in dashboard/broadcast lists
+            if (activeSessionPhone) {
+                try {
+                    await refreshDiscoveredGroups(activeSessionPhone);
+                } catch (e) {
+                    console.error(' [LeaveCommand] Supabase sync failed:', e.message);
+                }
+            }
+            
+            await sendAntiBanMessage(jid, { text: results.join('\n') + `\n\ncompleted leave groups ${groupsStr}` });
+            return true;
+        }
+    }
+    
+    // 4. Lock group {name}
     if (lower.startsWith('lock group ') || (lower.startsWith('lock ') && !lower.startsWith('lock all'))) {
         const name = cleanText.replace(/^(?:lock group|lock)\s+/i, '').trim();
         if (name && name.toLowerCase() !== 'all' && !name.toLowerCase().startsWith('all ')) {
@@ -2529,7 +2595,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         }
     }
     
-    // 4. Unlock group {name}
+    // 5. Unlock group {name}
     if (lower.startsWith('unlock group ') || (lower.startsWith('unlock ') && !lower.startsWith('unlock all'))) {
         const name = cleanText.replace(/^(?:unlock group|unlock)\s+/i, '').trim();
         if (name && name.toLowerCase() !== 'all' && !name.toLowerCase().startsWith('all ')) {
@@ -2564,7 +2630,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         }
     }
     
-    // 5. Broadcast to {groups}: [message]
+    // 6. Broadcast to {groups}: [message]
     const bcastRegex = /^(?:broadcast to|send broadcast to|announce to)\s+(.+?)(?:\s*:\s*([\s\S]+))?$/i;
     const bcastMatch = cleanText.match(bcastRegex);
     if (bcastMatch) {

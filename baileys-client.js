@@ -190,6 +190,10 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
         return { groups: result };
     }
 
+    async leaveGroup(groupId) {
+        return this.sock.groupLeave(groupId);
+    }
+
     async fetchGroupInviteCode(groupJid) {
         const code = await this.sock.groupInviteCode(groupJid);
         return { code };
