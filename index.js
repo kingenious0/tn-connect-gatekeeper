@@ -1512,6 +1512,113 @@ const handleNicheFinder = async (jid, senderPhone, textInput) => {
 };
 
 // ==========================================
+// 👁️ MULTIMODAL MEDIA VISION (CRAZZY WIDE HD EYES)
+// ==========================================
+const visionSystemPrompt = `You are TN Connect Super Bot, an elite cybersecurity expert, tech guru, business mentor, and team assistant.
+An admin has tagged/mentioned you to analyze this image/video and respond.
+Provide a highly engaging, professional, but concise response.
+Strictly adhere to the following rules:
+1. Do NOT use any markdown asterisks (* or **) or markdown headers (#) anywhere in your response. Keep all text completely clean and raw.
+2. Keep your response professional, insightful, but concise (under 2-3 short paragraphs).
+3. Do not be overly polite or robotic. Sound like a supportive, high-vibe human teammate. Use natural, modern high-vibe phrases if appropriate but stay professional.
+4. If there is a diagram, chart, or text in the image, analyze it deeply and give a highly intelligent response.`;
+
+const detectMediaContext = (msg) => {
+    const content = msg?.message;
+    if (!content) return null;
+
+    // 1. Check if the active message itself has an image or video
+    if (content.imageMessage) {
+        return { type: 'image', message: msg, key: msg.key, info: content.imageMessage };
+    }
+    if (content.videoMessage) {
+        return { type: 'video', message: msg, key: msg.key, info: content.videoMessage };
+    }
+    if (content.documentMessage && content.documentMessage.mimetype?.startsWith('image/')) {
+        return { type: 'image', message: msg, key: msg.key, info: content.documentMessage };
+    }
+    if (content.documentMessage && content.documentMessage.mimetype?.startsWith('video/')) {
+        return { type: 'video', message: msg, key: msg.key, info: content.documentMessage };
+    }
+
+    // 2. Check if there is a quoted message with an image or video
+    const contextInfo = content.extendedTextMessage?.contextInfo ||
+                        content.imageMessage?.contextInfo ||
+                        content.videoMessage?.contextInfo ||
+                        content.documentMessage?.contextInfo ||
+                        content.audioMessage?.contextInfo ||
+                        content.stickerMessage?.contextInfo;
+
+    const quoted = contextInfo?.quotedMessage;
+    if (quoted) {
+        const quotedKey = {
+            remoteJid: msg.key.remoteJid,
+            id: contextInfo.stanzaId,
+            participant: contextInfo.participant || undefined
+        };
+        const reconstructedMsg = { key: quotedKey, message: quoted };
+
+        if (quoted.imageMessage) {
+            return { type: 'image', message: reconstructedMsg, key: quotedKey, info: quoted.imageMessage };
+        }
+        if (quoted.videoMessage) {
+            return { type: 'video', message: reconstructedMsg, key: quotedKey, info: quoted.videoMessage };
+        }
+        if (quoted.documentMessage && quoted.documentMessage.mimetype?.startsWith('image/')) {
+            return { type: 'image', message: reconstructedMsg, key: quotedKey, info: quoted.documentMessage };
+        }
+        if (quoted.documentMessage && quoted.documentMessage.mimetype?.startsWith('video/')) {
+            return { type: 'video', message: reconstructedMsg, key: quotedKey, info: quoted.documentMessage };
+        }
+    }
+
+    return null;
+};
+
+const analyzeMediaWithProvider = async (buffer, mime, systemPrompt, userText) => {
+    const b64 = buffer.toString('base64');
+    const maxTokens = 400;
+    const isVideo = mime.startsWith('video/');
+
+    if (groqClient && !isVideo) {
+        try {
+            const response = await groqClient.chat.completions.create({
+                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                messages: [
+                    { role: 'system', content: systemPrompt || 'You are a helpful assistant.' },
+                    { role: 'user', content: [
+                        { type: 'text', text: userText || 'Analyze this image.' },
+                        { type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } }
+                    ]}
+                ],
+                max_tokens: maxTokens,
+            });
+            const content = response.choices[0]?.message?.content;
+            if (content) return content;
+        } catch (e) {
+            console.error(' [Vision] Groq media analysis failed (' + e.message.slice(0, 80) + '), falling back to Gemini');
+        }
+    }
+
+    if (geminiClient) {
+        try {
+            const model = geminiClient.getGenerativeModel({ 
+                model: 'gemini-2.5-flash', 
+                systemInstruction: systemPrompt 
+            });
+            const result = await model.generateContent([
+                { text: userText || 'Analyze this.' },
+                { inlineData: { data: b64, mimeType: mime } }
+            ]);
+            return result.response.text();
+        } catch (e) {
+            console.error(' [Vision] Gemini media analysis failed:', e.message);
+        }
+    }
+    return null;
+};
+
+// ==========================================
 // 🤖 AI REPLY ASSISTANT — admin sends screenshot, bot suggests a reply
 // ==========================================
 const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userText, maxTokens) => {
@@ -2815,9 +2922,74 @@ async function processIncomingMessage(msg) {
             const handledNatural = await handleNaturalLanguageCommand(jid, senderPhone, groupText, adminProfile, msg);
             if (handledNatural) return;
 
-            if (hasImage) {
-                const handledReply = await handleAdminReplyAssistant(jid, senderPhone, msg, adminProfile?.name || 'Admin');
-                if (handledReply) return;
+            // Check if there is media context (direct or quoted)
+            const mediaContext = detectMediaContext(msg);
+            if (mediaContext) {
+                // If it's a direct image and the admin explicitly typed 'help' or 'ai help', route to reply assistant
+                const cleanTxt = (groupText || '').trim().toLowerCase();
+                const wantsReplyAssistant = cleanTxt === 'help' || cleanTxt.startsWith('help') || cleanTxt === 'ai' || cleanTxt.startsWith('ai ');
+                if (mediaContext.message === msg && wantsReplyAssistant && mediaContext.type === 'image') {
+                    const handledReply = await handleAdminReplyAssistant(jid, senderPhone, msg, adminProfile?.name || 'Admin');
+                    if (handledReply) return;
+                }
+
+                // General visual AI analysis!
+                await sendAntiBanMessage(jid, { text: '👀 Let me take a look at that...' });
+                try {
+                    let buffer = null;
+                    let mime = mediaContext.info.mimetype || (mediaContext.type === 'image' ? 'image/jpeg' : 'video/mp4');
+                    const fileSize = parseInt(mediaContext.info.fileLength || '0', 10);
+                    const isVideo = mediaContext.type === 'video';
+
+                    if (isVideo && fileSize > 8 * 1024 * 1024) {
+                        console.log(' [Vision] Video too large in group, using thumbnail fallback.');
+                        if (mediaContext.info.jpegThumbnail) {
+                            buffer = Buffer.isBuffer(mediaContext.info.jpegThumbnail)
+                                ? mediaContext.info.jpegThumbnail
+                                : typeof mediaContext.info.jpegThumbnail === 'string'
+                                    ? Buffer.from(mediaContext.info.jpegThumbnail, 'base64')
+                                    : Buffer.from(mediaContext.info.jpegThumbnail);
+                            mime = 'image/jpeg';
+                        }
+                    }
+
+                    if (!buffer) {
+                        const mediaResult = await client.getMediaBase64(mediaContext.message);
+                        let b64 = mediaResult.base64 || '';
+                        if (b64.includes(',')) b64 = b64.split(',')[1];
+                        buffer = Buffer.from(b64, 'base64');
+                    }
+
+                    if (buffer && buffer.length > 100) {
+                        let cleanPrompt = (groupText || '').replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
+                        cleanPrompt = cleanPrompt.replace(/@tn connect super bot\.\./gi, '')
+                                                 .replace(/@tn connect super bot/gi, '')
+                                                 .replace(/tn connect super bot/gi, '')
+                                                 .replace(/super bot/gi, '')
+                                                 .replace(/@\S+/g, '')
+                                                 .trim();
+                        
+                        if (!cleanPrompt || cleanPrompt.toLowerCase() === 'what do you think') {
+                            cleanPrompt = 'What do you think about this? Analyze it and give me your professional feedback.';
+                        }
+
+                        let activePrompt = cleanPrompt;
+                        if (isVideo && mime.startsWith('image/')) {
+                            activePrompt = `[Analyzing the thumbnail preview of a video, duration: ${mediaContext.info.seconds || 'unknown'}s] ${cleanPrompt}`;
+                        }
+
+                        const aiResponse = await analyzeMediaWithProvider(buffer, mime, visionSystemPrompt, activePrompt);
+                        if (aiResponse) {
+                            const cleanResponse = aiResponse.replace(/\*/g, '');
+                            await sendAntiBanMessage(jid, { text: cleanResponse });
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    console.error(' [Vision] Group media analysis failed:', e.message);
+                }
+                await sendAntiBanMessage(jid, { text: '⚠️ I tried to analyze the image/video, but I couldn\'t process the file. Please check the format.' });
+                return;
             } else {
                 let cleanPrompt = groupText.replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
                 cleanPrompt = cleanPrompt.replace(/@tn connect super bot\.\./gi, '')
@@ -2865,15 +3037,69 @@ async function processIncomingMessage(msg) {
 
         // Dynamic AI Chit-Chat for Admins in DM
         if (dmText && !dmText.toLowerCase().startsWith('rewrite:')) {
-            const quotedText = extractQuotedMessageText(msg);
-            let finalPrompt = dmText;
-            if (quotedText) {
-                finalPrompt = `[The admin is replying to this quoted message: "${quotedText}"]\n\nAdmin says: ${dmText}`;
-            }
-            const aiResponse = await callAIChat(senderPhone, finalPrompt, adminProfile.name);
-            if (aiResponse) {
-                await sendAntiBanMessage(jid, { text: aiResponse });
+            // Check if there is media context (direct or quoted)
+            const mediaContext = detectMediaContext(msg);
+            if (mediaContext) {
+                await sendAntiBanMessage(jid, { text: '👀 Let me take a look at that...' });
+                try {
+                    let buffer = null;
+                    let mime = mediaContext.info.mimetype || (mediaContext.type === 'image' ? 'image/jpeg' : 'video/mp4');
+                    const fileSize = parseInt(mediaContext.info.fileLength || '0', 10);
+                    const isVideo = mediaContext.type === 'video';
+
+                    if (isVideo && fileSize > 8 * 1024 * 1024) {
+                        console.log(' [Vision] Video too large in DM, using thumbnail fallback.');
+                        if (mediaContext.info.jpegThumbnail) {
+                            buffer = Buffer.isBuffer(mediaContext.info.jpegThumbnail)
+                                ? mediaContext.info.jpegThumbnail
+                                : typeof mediaContext.info.jpegThumbnail === 'string'
+                                    ? Buffer.from(mediaContext.info.jpegThumbnail, 'base64')
+                                    : Buffer.from(mediaContext.info.jpegThumbnail);
+                            mime = 'image/jpeg';
+                        }
+                    }
+
+                    if (!buffer) {
+                        const mediaResult = await client.getMediaBase64(mediaContext.message);
+                        let b64 = mediaResult.base64 || '';
+                        if (b64.includes(',')) b64 = b64.split(',')[1];
+                        buffer = Buffer.from(b64, 'base64');
+                    }
+
+                    if (buffer && buffer.length > 100) {
+                        let cleanPrompt = dmText.trim();
+                        if (!cleanPrompt || cleanPrompt.toLowerCase() === 'what do you think') {
+                            cleanPrompt = 'What do you think about this? Analyze it and give me your professional feedback.';
+                        }
+
+                        let activePrompt = cleanPrompt;
+                        if (isVideo && mime.startsWith('image/')) {
+                            activePrompt = `[Analyzing the thumbnail preview of a video, duration: ${mediaContext.info.seconds || 'unknown'}s] ${cleanPrompt}`;
+                        }
+
+                        const aiResponse = await analyzeMediaWithProvider(buffer, mime, visionSystemPrompt, activePrompt);
+                        if (aiResponse) {
+                            const cleanResponse = aiResponse.replace(/\*/g, '');
+                            await sendAntiBanMessage(jid, { text: cleanResponse });
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    console.error(' [Vision] DM media analysis failed:', e.message);
+                }
+                await sendAntiBanMessage(jid, { text: '⚠️ I tried to analyze the image/video, but I couldn\'t process the file. Please check the format.' });
                 return;
+            } else {
+                const quotedText = extractQuotedMessageText(msg);
+                let finalPrompt = dmText;
+                if (quotedText) {
+                    finalPrompt = `[The admin is replying to this quoted message: "${quotedText}"]\n\nAdmin says: ${dmText}`;
+                }
+                const aiResponse = await callAIChat(senderPhone, finalPrompt, adminProfile.name);
+                if (aiResponse) {
+                    await sendAntiBanMessage(jid, { text: aiResponse });
+                    return;
+                }
             }
         }
     }
