@@ -2344,6 +2344,235 @@ const handleGroupModerationExtractText = (msg) => {
     return '';
 };
 
+const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminProfile, originalMsg) => {
+    if (!adminProfile) return false;
+    let cleanText = (textInput || '').trim();
+    
+    // Strip bot mention if present
+    cleanText = cleanText.replace(/@\d+/g, '').trim();
+    // Strip common bot name starters
+    cleanText = cleanText.replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
+    cleanText = cleanText.replace(/@tn connect super bot\.\./gi, '')
+                         .replace(/@tn connect super bot/gi, '')
+                         .replace(/tn connect super bot/gi, '')
+                         .replace(/super bot/gi, '')
+                         .replace(/@\S+/g, '')
+                         .trim();
+                         
+    if (!cleanText) return false;
+    
+    const lower = cleanText.toLowerCase();
+    
+    // 1. Lock all groups
+    if (lower === 'lock all groups' || lower === 'lock all the groups' || lower === 'lock all group') {
+        const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+        if (!allGroups.length) {
+            await sendAntiBanMessage(jid, { text: '❌ No monitored groups available.' });
+            return true;
+        }
+        await sendAntiBanMessage(jid, { text: '🔒 *Locking all groups...*\nExecuting now with a safe, humanized delay (10-30 seconds between groups).' });
+        
+        const locked = loadLockedGroups();
+        const newLocked = [...new Set([...locked, ...allGroups.map(g => g.jid)])];
+        saveLockedGroups(newLocked);
+        
+        const results = [];
+        for (let i = 0; i < allGroups.length; i++) {
+            const g = allGroups[i];
+            try {
+                await client.setGroupAdminsOnly(g.jid, true);
+                results.push('✅ ' + g.subject + ' → Locked');
+            } catch (e) {
+                results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
+            }
+            if (i < allGroups.length - 1) {
+                // Humanized delay: 10 to 30 seconds
+                const delayMs = 10000 + Math.floor(Math.random() * 15000);
+                await delay(delayMs);
+            }
+        }
+        await sendAntiBanMessage(jid, { text: results.join('\n') + '\n\ncompleted lock all groups' });
+        return true;
+    }
+    
+    // 2. Unlock all groups
+    if (lower === 'unlock all groups' || lower === 'unlock all the groups' || lower === 'unlock all group') {
+        const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+        if (!allGroups.length) {
+            await sendAntiBanMessage(jid, { text: '❌ No monitored groups available.' });
+            return true;
+        }
+        await sendAntiBanMessage(jid, { text: '🔓 *Unlocking all groups...*\nExecuting now with a safe, humanized delay (10-30 seconds between groups).' });
+        
+        const locked = loadLockedGroups();
+        const newLocked = locked.filter(jidVal => !allGroups.some(g => g.jid === jidVal));
+        saveLockedGroups(newLocked);
+        
+        const results = [];
+        for (let i = 0; i < allGroups.length; i++) {
+            const g = allGroups[i];
+            try {
+                await client.setGroupAdminsOnly(g.jid, false);
+                results.push('✅ ' + g.subject + ' → Unlocked');
+            } catch (e) {
+                results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
+            }
+            if (i < allGroups.length - 1) {
+                const delayMs = 10000 + Math.floor(Math.random() * 15000);
+                await delay(delayMs);
+            }
+        }
+        await sendAntiBanMessage(jid, { text: results.join('\n') + '\n\ncompleted unlock all groups' });
+        return true;
+    }
+    
+    // 3. Lock group {name}
+    if (lower.startsWith('lock group ') || (lower.startsWith('lock ') && !lower.startsWith('lock all'))) {
+        const name = cleanText.replace(/^(?:lock group|lock)\s+/i, '').trim();
+        if (name && name.toLowerCase() !== 'all' && !name.toLowerCase().startsWith('all ')) {
+            const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+            const matched = allGroups.filter(g => g.subject.toLowerCase().includes(name.toLowerCase()));
+            if (!matched.length) {
+                await sendAntiBanMessage(jid, { text: `❌ Could not find any group matching "${name}".` });
+                return true;
+            }
+            await sendAntiBanMessage(jid, { text: `🔒 *Locking ${matched.length} matched group(s)...*\nMatching: ${name}` });
+            
+            const locked = loadLockedGroups();
+            const newLocked = [...new Set([...locked, ...matched.map(g => g.jid)])];
+            saveLockedGroups(newLocked);
+            
+            const results = [];
+            for (let i = 0; i < matched.length; i++) {
+                const g = matched[i];
+                try {
+                    await client.setGroupAdminsOnly(g.jid, true);
+                    results.push('✅ ' + g.subject + ' → Locked');
+                } catch (e) {
+                    results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
+                }
+                if (i < matched.length - 1) {
+                    const delayMs = 10000 + Math.floor(Math.random() * 15000);
+                    await delay(delayMs);
+                }
+            }
+            await sendAntiBanMessage(jid, { text: results.join('\n') + `\n\ncompleted lock group ${name}` });
+            return true;
+        }
+    }
+    
+    // 4. Unlock group {name}
+    if (lower.startsWith('unlock group ') || (lower.startsWith('unlock ') && !lower.startsWith('unlock all'))) {
+        const name = cleanText.replace(/^(?:unlock group|unlock)\s+/i, '').trim();
+        if (name && name.toLowerCase() !== 'all' && !name.toLowerCase().startsWith('all ')) {
+            const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+            const matched = allGroups.filter(g => g.subject.toLowerCase().includes(name.toLowerCase()));
+            if (!matched.length) {
+                await sendAntiBanMessage(jid, { text: `❌ Could not find any group matching "${name}".` });
+                return true;
+            }
+            await sendAntiBanMessage(jid, { text: `🔓 *Unlocking ${matched.length} matched group(s)...*\nMatching: ${name}` });
+            
+            const locked = loadLockedGroups();
+            const newLocked = locked.filter(jidVal => !matched.some(g => g.jid === jidVal));
+            saveLockedGroups(newLocked);
+            
+            const results = [];
+            for (let i = 0; i < matched.length; i++) {
+                const g = matched[i];
+                try {
+                    await client.setGroupAdminsOnly(g.jid, false);
+                    results.push('✅ ' + g.subject + ' → Unlocked');
+                } catch (e) {
+                    results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
+                }
+                if (i < matched.length - 1) {
+                    const delayMs = 10000 + Math.floor(Math.random() * 15000);
+                    await delay(delayMs);
+                }
+            }
+            await sendAntiBanMessage(jid, { text: results.join('\n') + `\n\ncompleted unlock group ${name}` });
+            return true;
+        }
+    }
+    
+    // 5. Broadcast to {groups}: [message]
+    const bcastRegex = /^(?:broadcast to|send broadcast to|announce to)\s+(.+?)(?:\s*:\s*([\s\S]+))?$/i;
+    const bcastMatch = cleanText.match(bcastRegex);
+    if (bcastMatch) {
+        const targetGroupsStr = bcastMatch[1].trim();
+        const rawMessage = bcastMatch[2] ? bcastMatch[2].trim() : '';
+        
+        // Split group names by comma or 'and'
+        const targetNames = targetGroupsStr.split(/, | and |,/).map(s => s.trim().toLowerCase()).filter(Boolean);
+        if (targetNames.length > 0) {
+            const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+            const matched = [];
+            
+            for (const name of targetNames) {
+                const found = allGroups.filter(g => g.subject.toLowerCase().includes(name));
+                matched.push(...found);
+            }
+            
+            // Remove duplicates
+            const uniqueMatched = [];
+            const seen = new Set();
+            for (const g of matched) {
+                if (!seen.has(g.jid)) {
+                    seen.add(g.jid);
+                    uniqueMatched.push(g);
+                }
+            }
+            
+            if (!uniqueMatched.length) {
+                await sendAntiBanMessage(jid, { text: `❌ Could not find any matching groups for: "${targetGroupsStr}".` });
+                return true;
+            }
+            
+            if (rawMessage) {
+                // We have a message body, broadcast immediately!
+                const adminPhone = formatPhoneNumberGH(senderPhone);
+                const signature = '\n\n— ' + (adminProfile.name || 'Admin') + ', Admin\n' + adminPhone;
+                const msgText = rawMessage + signature;
+                
+                await sendAntiBanMessage(jid, { text: `📤 *Broadcasting immediately to ${uniqueMatched.length} matched group(s)...*\n${uniqueMatched.map(g => '• ' + g.subject).join('\n')}` });
+                
+                let sent = 0;
+                let failed = 0;
+                for (let i = 0; i < uniqueMatched.length; i++) {
+                    const group = uniqueMatched[i];
+                    try {
+                        await sendAntiBanMessage(group.jid, { text: msgText });
+                        sent++;
+                    } catch (e) {
+                        failed++;
+                    }
+                    if (i < uniqueMatched.length - 1) {
+                        const delayMs = 10000 + Math.floor(Math.random() * 15000);
+                        await delay(delayMs);
+                    }
+                }
+                await sendAntiBanMessage(jid, { text: `✅ *Broadcast complete*\nSent: ${sent}/${uniqueMatched.length}\nFailed: ${failed}\n\ncompleted broadcast to ${targetGroupsStr}` });
+                return true;
+            } else {
+                // No message body yet, trigger the wizard at CAPTURING_RAW_BODY step with groups pre-selected!
+                adminBroadcastStates.set(senderPhone, {
+                    step: 'CAPTURING_RAW_BODY',
+                    groups: allGroups,
+                    selected: uniqueMatched,
+                    adminName: adminProfile?.name || 'Admin'
+                });
+                
+                const groupNames = uniqueMatched.map(g => '• ' + g.subject).join('\n');
+                await sendAntiBanMessage(jid, { text: `✅ *${uniqueMatched.length} Group(s) Pre-Selected:*\n${groupNames}\n\nNow send the broadcast message (text, image, video, audio, or document). (Type *cancel* to abort.)` });
+                return true;
+            }
+        }
+    }
+    
+    return false;
+};
+
 async function processIncomingMessage(msg) {
     if (!msg || !msg.key || msg.key.fromMe) return;
     const jid = msg.key.remoteJid;
@@ -2438,6 +2667,9 @@ async function processIncomingMessage(msg) {
         );
 
         if (isCallingBot && !moderated) {
+            const handledNatural = await handleNaturalLanguageCommand(jid, senderPhone, groupText, adminProfile, msg);
+            if (handledNatural) return;
+
             if (hasImage) {
                 const handledReply = await handleAdminReplyAssistant(jid, senderPhone, msg, adminProfile?.name || 'Admin');
                 if (handledReply) return;
@@ -2472,6 +2704,9 @@ async function processIncomingMessage(msg) {
         if (handledReg) return;
     }
     if (isAdmin) {
+        const handledNatural = await handleNaturalLanguageCommand(jid, senderPhone, dmText, adminProfile, msg);
+        if (handledNatural) return;
+
         const hasLockWizard = groupLockStates.has(senderPhone);
         if (isGroupLockIntent(dmText) || hasLockWizard) {
             const handledLock = await handleGroupLockDM(jid, senderPhone, dmText, adminProfile);
