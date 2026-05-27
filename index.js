@@ -1520,7 +1520,7 @@ const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userTex
         }
     }
     if (geminiClient) {
-        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash-lite', systemInstruction: systemPrompt });
+        const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash', systemInstruction: systemPrompt });
         const result = await model.generateContent([
             { text: userText || 'Analyze this image.' },
             { inlineData: { data: b64, mimeType: mime } }
@@ -1611,7 +1611,7 @@ An admin named "${adminName}" is talking to you. Keep your responses relatively 
         try {
             const messages = [{ role: 'system', content: systemPrompt }, ...history];
             const response = await groqClient.chat.completions.create({
-                model: 'llama-3-8b-8192',
+                model: 'llama-3.3-70b-versatile',
                 messages,
                 max_tokens: 800,
             });
@@ -1621,12 +1621,27 @@ An admin named "${adminName}" is talking to you. Keep your responses relatively 
                 return content;
             }
         } catch (e) {
-            console.error(' [AIChat] Groq failed:', e.message);
+            console.warn(' [AIChat] Groq 70B failed or rate-limited, trying Groq 8B:', e.message.substring(0, 100));
+            try {
+                const messages = [{ role: 'system', content: systemPrompt }, ...history];
+                const response = await groqClient.chat.completions.create({
+                    model: 'llama-3.1-8b-instant',
+                    messages,
+                    max_tokens: 800,
+                });
+                const content = response.choices[0]?.message?.content;
+                if (content) {
+                    history.push({ role: 'assistant', content });
+                    return content;
+                }
+            } catch (e2) {
+                console.error(' [AIChat] Groq 8B fallback failed:', e2.message.substring(0, 100));
+            }
         }
     }
     if (geminiClient) {
         try {
-            const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash-lite', systemInstruction: systemPrompt });
+            const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash', systemInstruction: systemPrompt });
             const contents = history.map(h => ({
                 role: h.role === 'assistant' ? 'model' : 'user',
                 parts: [{ text: h.content }]
@@ -1638,7 +1653,7 @@ An admin named "${adminName}" is talking to you. Keep your responses relatively 
                 return content;
             }
         } catch (e) {
-            console.error(' [AIChat] Gemini failed:', e.message);
+            console.error(' [AIChat] Gemini fallback failed:', e.message);
         }
     }
     return null;
