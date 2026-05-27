@@ -1872,7 +1872,8 @@ const indices = lower.replace(/\./g, ',').split(',').map(s => parseInt(s.trim())
         let sent = 0;
         let failed = 0;
         for (const group of state.selected) {
-            const msgText = broadcastText + '\n\n— ' + (state.adminName || 'Admin') + ', Admin';
+            const adminPhone = formatPhoneNumberGH(senderPhone);
+            const msgText = broadcastText + '\n\n— ' + (state.adminName || 'Admin') + ', Admin\n' + adminPhone;
             console.log(' [Broadcast] Sending to ' + group.subject + ' (' + group.jid + '): text="' + msgText.substring(0, 80) + '"');
             try {
                 await sendAntiBanMessage(group.jid, { text: msgText });
