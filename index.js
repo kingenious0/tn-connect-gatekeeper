@@ -171,7 +171,7 @@ const CAMPUS_ADMIN_ROSTER = [
     { phone: '233264579213', admin_name: 'Yhaar Bhaby' },
     { phone: '233207924793', admin_name: 'You mean to tell me' },
     { phone: '233246546818', admin_name: 'TiLIe Nadis' },
-    { phone: '233208282949', admin_name: 'Manager For TN' },
+    { phone: '233208282949', admin_name: 'Mr. George' },
     { phone: '233256921483', admin_name: 'Easydata' },
     { phone: '233543091276', admin_name: 'Capo(TN)' },
     { phone: '233552289454', admin_name: 'Priscilla Coffie' },
