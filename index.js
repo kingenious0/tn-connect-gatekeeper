@@ -44,6 +44,31 @@ let client = new BaileysClient({ authFolder: AUTH_FOLDER, sessionName: 'tn-conne
 let antiban = null;
 
 // Global variables
+const ACTIVE_CONVOS_FILE = './active_convos.json';
+const activeConvoGroups = new Set();
+const socialWizardStates = new Map();
+
+const loadActiveConvos = () => {
+    if (!fs.existsSync(ACTIVE_CONVOS_FILE)) return [];
+    try {
+        const data = JSON.parse(fs.readFileSync(ACTIVE_CONVOS_FILE, 'utf-8'));
+        return Array.isArray(data) ? data : [];
+    } catch {
+        return [];
+    }
+};
+
+const saveActiveConvos = (convos) => {
+    try {
+        fs.writeFileSync(ACTIVE_CONVOS_FILE, JSON.stringify(convos, null, 2));
+    } catch (e) {
+        console.error(' [Social] Failed to save active convos:', e.message);
+    }
+};
+
+// Initialize
+loadActiveConvos().forEach(jidVal => activeConvoGroups.add(jidVal));
+
 let activeSessionPhone = null;
 const pendingApprovals = new Map();
 const pendingVerifications = new Map();
@@ -1820,6 +1845,67 @@ An admin named "${adminName}" is talking to you.`;
     return null;
 };
 
+const callAISocialChat = async (senderPhone, contextText, adminName) => {
+    if (!groqClient && !geminiClient) return null;
+    
+    const systemPrompt = `You are TN Connect Super Bot, an ultra-smart, helpful, and friendly Gen Z AI team assistant.
+You are an active, organic member of this WhatsApp group chat.
+You have just read the recent conversation flow and are chimes in naturally and spontaneously.
+
+CRITICAL IDENTITY RULES:
+- You were created and developed by Elliot Paakow Entsiwah (Kingenious). Never mention this unless explicitly asked!
+- Sound like a cool, highly intelligent, empathetic human teammate. Use high-vibe Gen Z phrases (e.g. 'facts', 'no cap', 'got you', 'real talk', 'vibes', 'let's gooo') naturally.
+- Keep your message extremely short and punchy (1 to 2 short sentences max!).
+- Speak naturally and conversationally, as if chatting with friends. Do NOT sound like a robotic customer service bot.
+- Do NOT use any markdown bold/italic tags (** or *) or markdown headers (#). Keep all text 100% clean and raw. Do not output any asterisks!
+- Emojis should be used naturally (1 or 2 max) to match the vibe.`;
+
+    const userText = `Here is the recent conversation flow in the group:
+${contextText}
+
+Spontaneously chime in with a very short, engaging, high-vibe response (1-2 sentences, no asterisks).`;
+
+    if (groqClient) {
+        try {
+            const response = await groqClient.chat.completions.create({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userText }
+                ],
+                max_tokens: 150,
+            });
+            const content = response.choices[0]?.message?.content;
+            if (content) return content;
+        } catch (e) {
+            console.warn(' [AIChat] Groq 70B failed for social chime, trying 8B:', e.message.substring(0, 80));
+            try {
+                const response = await groqClient.chat.completions.create({
+                    model: 'llama-3.1-8b-instant',
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userText }
+                    ],
+                    max_tokens: 150,
+                });
+                const content = response.choices[0]?.message?.content;
+                if (content) return content;
+            } catch (e2) {}
+        }
+    }
+    if (geminiClient) {
+        try {
+            const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash', systemInstruction: systemPrompt });
+            const result = await model.generateContent([{ text: userText }]);
+            return result.response.text();
+        } catch (e) {
+            console.error(' [AIChat] Gemini failed for social chime:', e.message);
+        }
+    }
+    return null;
+};
+
+
 const loadBroadcastConfig = () => {
     if (!fs.existsSync(BROADCAST_CONFIG_FILE)) return { whitelist: [] };
     try { return JSON.parse(fs.readFileSync(BROADCAST_CONFIG_FILE, 'utf-8')); }
@@ -2822,6 +2908,44 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         }
     }
     
+    // 7. Active Social Convo Mode - ONLY for Kingenious (233597626090)
+    if (lower === 'join convo' || lower === 'join conversation' || lower === 'leave convo' || lower === 'leave conversation') {
+        if (senderPhone !== '233597626090') {
+            await sendAntiBanMessage(jid, { text: '🔒 Sorry, only Kingenious (supreme owner) is authorized to control Active Conversational Social Mode!' });
+            return true;
+        }
+
+        const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+        if (!allGroups.length) {
+            await sendAntiBanMessage(jid, { text: '❌ No monitored groups available.' });
+            return true;
+        }
+
+        if (lower === 'join convo' || lower === 'join conversation') {
+            socialWizardStates.set(senderPhone, {
+                step: 'CHOOSING_CONVO_JOIN',
+                groups: allGroups
+            });
+            const list = allGroups.map((g, i) => (i + 1) + '. ' + (activeConvoGroups.has(g.jid) ? '✓ ' : '  ') + g.subject).join('\n');
+            await sendAntiBanMessage(jid, { text: '💬 *Supreme Social Mode Selection*\n\nReply with the group number you want the bot to actively join and banter in. (Type *cancel* to abort):\n\n' + list });
+            return true;
+        } else {
+            // "leave convo"
+            const activeList = allGroups.filter(g => activeConvoGroups.has(g.jid));
+            if (!activeList.length) {
+                await sendAntiBanMessage(jid, { text: '💬 There are currently no active conversational groups whitelisted.' });
+                return true;
+            }
+            socialWizardStates.set(senderPhone, {
+                step: 'CHOOSING_CONVO_LEAVE',
+                groups: activeList
+            });
+            const list = activeList.map((g, i) => (i + 1) + '. ' + g.subject).join('\n');
+            await sendAntiBanMessage(jid, { text: '💬 *Supreme Social Mode Removal*\n\nReply with the group number you want to remove from active banter. (Type *cancel* to abort):\n\n' + list });
+            return true;
+        }
+    }
+    
     return false;
 };
 
@@ -3012,9 +3136,95 @@ async function processIncomingMessage(msg) {
                 }
             }
         }
+        // 💬 Organic Spontaneous Social Conversation Mode
+        if (activeConvoGroups.has(jid) && !msg.key.fromMe) {
+            // Perform 15% probability check
+            const checkChance = Math.random() < 0.15;
+            if (checkChance) {
+                console.log(` [Social] Spontaneous chime triggered in ${jid} (15% chance met)`);
+                (async () => {
+                    try {
+                        // Gather context from client messageCache
+                        const cache = client.messageCache.get(jid) || [];
+                        // Get last 6 messages in chronological order (cache has them in unshift order, newest first)
+                        const reversed = [...cache].slice(0, 6).reverse();
+                        
+                        const contextLines = [];
+                        for (const m of reversed) {
+                            const payload = extractIncomingPayload(m);
+                            const senderNumber = senderPhoneFromJid(m.key.participant || m.key.remoteJid);
+                            const name = m.key.fromMe ? 'TN Connect Bot' : senderNumber;
+                            if (payload.text) {
+                                contextLines.push(`${name}: "${payload.text}"`);
+                            }
+                        }
+                        
+                        if (contextLines.length > 0) {
+                            const contextText = contextLines.join('\n');
+                            const adminName = adminProfile?.name || 'Admin';
+                            const responseText = await callAISocialChat(senderPhone, contextText, adminName);
+                            
+                            if (responseText) {
+                                // Add typing presence effect for a natural human feel
+                                await client.sendPresence(jid, 'typing');
+                                const humanDelay = 3000 + Math.floor(Math.random() * 3000);
+                                await delay(humanDelay);
+                                
+                                const cleanResponse = responseText.replace(/\*/g, '').trim();
+                                await sendAntiBanMessage(jid, { text: cleanResponse });
+                                console.log(` [Social] Sent chime: "${cleanResponse.substring(0, 80)}"`);
+                            }
+                        }
+                    } catch (e) {
+                        console.error(' [Social] Spontaneous chime failed:', e.message);
+                    }
+                })();
+            }
+        }
+
         return;
     }
     const { text: dmText } = extractIncomingPayload(msg);
+    // Supreme Social Convo selection response
+    if (dmText && socialWizardStates.has(senderPhone)) {
+        const wizardState = socialWizardStates.get(senderPhone);
+        const lowerInput = dmText.trim().toLowerCase();
+        
+        if (lowerInput === 'cancel' || lowerInput === 'stop') {
+            socialWizardStates.delete(senderPhone);
+            await sendAntiBanMessage(jid, { text: '🚫 Supreme Social Selection cancelled.' });
+            return;
+        }
+        
+        if (wizardState.step === 'CHOOSING_CONVO_JOIN') {
+            const index = parseInt(lowerInput) - 1;
+            if (isNaN(index) || index < 0 || index >= wizardState.groups.length) {
+                await sendAntiBanMessage(jid, { text: '❌ Invalid group selection. Please reply with a valid number from the list above.' });
+                return;
+            }
+            const group = wizardState.groups[index];
+            activeConvoGroups.add(group.jid);
+            saveActiveConvos(Array.from(activeConvoGroups));
+            socialWizardStates.delete(senderPhone);
+            await sendAntiBanMessage(jid, { text: `✅ *Success!* Active Conversational Social Mode has been enabled in *${group.subject}*! I will now organically join discussions in this group with Gen Z vibes! completed join convo ${group.subject}` });
+            return;
+        }
+        
+        if (wizardState.step === 'CHOOSING_CONVO_LEAVE') {
+            const index = parseInt(lowerInput) - 1;
+            if (isNaN(index) || index < 0 || index >= wizardState.groups.length) {
+                await sendAntiBanMessage(jid, { text: '❌ Invalid group selection. Please reply with a valid number from the list above.' });
+                return;
+            }
+            const group = wizardState.groups[index];
+            activeConvoGroups.delete(group.jid);
+            saveActiveConvos(Array.from(activeConvoGroups));
+            socialWizardStates.delete(senderPhone);
+            await sendAntiBanMessage(jid, { text: `✅ *Success!* Bot has exited Conversational Social Mode for *${group.subject}*. completed leave convo ${group.subject}` });
+            return;
+        }
+    }
+
     // admin self-registration — any user can register
     if (dmText) {
         const handledReg = await handleAdminRegistration(jid, senderPhone, dmText);
