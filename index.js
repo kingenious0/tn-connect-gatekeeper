@@ -2,7 +2,7 @@ require('dotenv').config();
 process.on('uncaughtException', (err) => console.error(' [Crash Guard] Uncaught:', err.message));
 process.on('unhandledRejection', (err) => console.error(' [Crash Guard] Rejection:', err.message));
 const { BaileysClient } = require('./baileys-client');
-const { BufferJSON } = require('@whiskeysockets/baileys');
+const { BufferJSON, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { AntiBan } = require('baileys-antiban');
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
@@ -1353,7 +1353,11 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
             : containsBadWord
                 ? '@' + senderPhone + ' 🚫 inappropriate language — deleted'
                 : '⚠️ @' + senderPhone + ' link sharing restricted — deleted';
-        await sendAntiBanMessage(jid, { text: alertText, options: { mentions: [sender] } });
+        const mentionsList = [sender];
+        if (senderPhone) {
+            mentionsList.push(senderPhone + '@s.whatsapp.net');
+        }
+        await sendAntiBanMessage(jid, { text: alertText, options: { mentions: mentionsList } });
         try { fs.appendFileSync('_trace.log', 'MOD_ALERT_SENT\n'); } catch (e) { }
         console.log(' [Moderation] Removed message from +' + senderPhone + ' in ' + jid);
     } catch (e) {
@@ -1755,7 +1759,7 @@ const handleGroupLockDM = async (jid, senderPhone, textInput, adminProfile) => {
     return true;
 };
 
-const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile, rawSender) => {
+const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile, rawSender, originalMsg) => {
     console.log(' [Broadcast] ' + (jid.endsWith('@g.us') ? 'Group' : 'DM') + ' from ' + senderPhone + ': "' + (textInput || '').substring(0, 60) + '" state=' + (adminBroadcastStates.has(senderPhone) ? adminBroadcastStates.get(senderPhone).step : 'none'));
     const lower = (textInput || '').trim().toLowerCase();
     if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
@@ -1877,20 +1881,81 @@ const indices = lower.replace(/\./g, ',').split(',').map(s => parseInt(s.trim())
         return true;
     }
     if (state.step === 'CAPTURING_RAW_BODY') {
-        const broadcastText = textInput.trim();
-        if (!broadcastText) {
-            await sendAntiBanMessage(jid, { text: '❌ Message cannot be empty. Send the text you want to broadcast.' });
+        const content = originalMsg?.message;
+        const mediaType = content ? Object.keys(content).find(k => ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage'].includes(k)) : null;
+        const broadcastText = (textInput || '').trim();
+        
+        if (!broadcastText && !mediaType) {
+            await sendAntiBanMessage(jid, { text: '❌ Message cannot be empty. Send the text, image, video, or audio you want to broadcast.' });
             return true;
         }
-        await sendAntiBanMessage(jid, { text: '📤 Sending broadcast to ' + state.selected.length + ' group(s)...\n\n"' + broadcastText.substring(0, 100) + (broadcastText.length > 100 ? '...' : '') + '"' });
+
+        let mediaBuffer = null;
+        if (mediaType) {
+            await sendAntiBanMessage(jid, { text: '📥 Processing and downloading media file...' });
+            try {
+                mediaBuffer = await downloadMediaMessage(
+                    originalMsg,
+                    'buffer',
+                    {},
+                    {
+                        logger: P({ level: 'silent' }),
+                        reuploadRequest: client.sock.updateMediaMessage
+                    }
+                );
+            } catch (err) {
+                console.error(' [Broadcast] Download failed:', err.message);
+                await sendAntiBanMessage(jid, { text: '❌ Failed to download your media file. Please try again.' });
+                return true;
+            }
+            if (!mediaBuffer) {
+                await sendAntiBanMessage(jid, { text: '❌ Failed to download your media file. Please try again.' });
+                return true;
+            }
+        }
+
+        const adminPhone = formatPhoneNumberGH(senderPhone);
+        const signature = '\n\n— ' + (state.adminName || 'Admin') + ', Admin\n' + adminPhone;
+
+        const summaryText = mediaType 
+            ? `a ${mediaType.replace('Message', '')} file` + (broadcastText ? ` with caption "${broadcastText.substring(0, 50)}..."` : '')
+            : `"${broadcastText.substring(0, 100)}${broadcastText.length > 100 ? '...' : ''}"`;
+        await sendAntiBanMessage(jid, { text: '📤 Sending broadcast to ' + state.selected.length + ' group(s)...\n\nSending: ' + summaryText });
+
         let sent = 0;
         let failed = 0;
         for (const group of state.selected) {
-            const adminPhone = formatPhoneNumberGH(senderPhone);
-            const msgText = broadcastText + '\n\n— ' + (state.adminName || 'Admin') + ', Admin\n' + adminPhone;
-            console.log(' [Broadcast] Sending to ' + group.subject + ' (' + group.jid + '): text="' + msgText.substring(0, 80) + '"');
+            console.log(' [Broadcast] Sending to ' + group.subject + ' (' + group.jid + ')');
             try {
-                await sendAntiBanMessage(group.jid, { text: msgText });
+                if (mediaType) {
+                    const mediaObj = content[mediaType];
+                    if (mediaType === 'imageMessage') {
+                        const originalCaption = mediaObj.caption || '';
+                        const caption = (originalCaption + signature).trim();
+                        await client.sock.sendMessage(group.jid, { image: mediaBuffer, caption, mimetype: mediaObj.mimetype || 'image/jpeg' });
+                    }
+                    else if (mediaType === 'videoMessage') {
+                        const originalCaption = mediaObj.caption || '';
+                        const caption = (originalCaption + signature).trim();
+                        await client.sock.sendMessage(group.jid, { video: mediaBuffer, caption, mimetype: mediaObj.mimetype || 'video/mp4' });
+                    }
+                    else if (mediaType === 'documentMessage') {
+                        const originalCaption = mediaObj.caption || '';
+                        const caption = (originalCaption + signature).trim();
+                        await client.sock.sendMessage(group.jid, { document: mediaBuffer, caption, mimetype: mediaObj.mimetype || 'application/octet-stream', fileName: mediaObj.fileName || 'file' });
+                    }
+                    else if (mediaType === 'audioMessage') {
+                        await client.sock.sendMessage(group.jid, { audio: mediaBuffer, mimetype: mediaObj.mimetype || 'audio/mp4', ptt: !!mediaObj.ptt });
+                        await sendAntiBanMessage(group.jid, { text: signature.trim() });
+                    }
+                    else if (mediaType === 'stickerMessage') {
+                        await client.sock.sendMessage(group.jid, { sticker: mediaBuffer });
+                        await sendAntiBanMessage(group.jid, { text: signature.trim() });
+                    }
+                } else {
+                    const msgText = broadcastText + signature;
+                    await sendAntiBanMessage(group.jid, { text: msgText });
+                }
                 console.log(' [Broadcast] Sent OK to ' + group.subject);
                 sent++;
                 await delay(Math.floor(Math.random() * 4000) + 3000);
@@ -2175,7 +2240,14 @@ async function processIncomingMessage(msg) {
     // Ignore protocol/status/receipt messages that have no actual content to prevent duplicate blank catches
     const payload = extractIncomingPayload(msg);
     const isStatus = !!(msg.message?.groupStatusMentionMessage);
-    if (!payload.text && !payload.hasImage && !isStatus) {
+    const isMedia = !!(
+        msg.message?.imageMessage ||
+        msg.message?.videoMessage ||
+        msg.message?.audioMessage ||
+        msg.message?.documentMessage ||
+        msg.message?.stickerMessage
+    );
+    if (!payload.text && !payload.hasImage && !isStatus && !isMedia) {
         return;
     }
 
@@ -2201,22 +2273,22 @@ async function processIncomingMessage(msg) {
         const { text: groupText } = extractIncomingPayload(msg);
         const lower = (groupText || '').trim().toLowerCase();
         const hasActiveWizard = adminBroadcastStates.has(senderPhone);
-        if (groupText && (isBroadcastIntent(lower) || hasActiveWizard)) {
+        if (hasActiveWizard || (groupText && isBroadcastIntent(lower))) {
             if (hasActiveWizard) {
-                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
+                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender, msg);
                 if (handled) return;
             }
             if (!adminAlertsGroupJid) {
                 await detectAdminAlertsGroup();
             }
             if (adminAlertsGroupJid && jid === adminAlertsGroupJid) {
-                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
+                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender, msg);
                 if (handled) return;
             }
             if (!adminAlertsGroupJid) {
                 adminAlertsGroupJid = jid;
                 console.log(' [Alerts] Admin alerts group set dynamically to ' + jid);
-                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender);
+                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender, msg);
                 if (handled) return;
             }
         }
@@ -2234,8 +2306,11 @@ async function processIncomingMessage(msg) {
             const handledLock = await handleGroupLockDM(jid, senderPhone, dmText, adminProfile);
             if (handledLock) return;
         }
-        const handled = await handleAdminBroadcastDM(jid, senderPhone, dmText, adminProfile, sender);
-        if (handled) return;
+        const hasBroadcastWizard = adminBroadcastStates.has(senderPhone);
+        if (dmText || hasBroadcastWizard) {
+            const handled = await handleAdminBroadcastDM(jid, senderPhone, dmText, adminProfile, sender, msg);
+            if (handled) return;
+        }
     }
     if (adminBroadcastStates.has(senderPhone)) return;
     if (groupLockStates.has(senderPhone)) return;
