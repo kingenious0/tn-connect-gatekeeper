@@ -2984,6 +2984,53 @@ async function processIncomingMessage(msg) {
         const moderated = await handleGroupModeration(msg, jid, sender, senderPhone, isAdmin);
         if (moderated) return;
 
+        // 💬 Organic Spontaneous Social Conversation Mode (Checks everyone's messages!)
+        if (activeConvoGroups.has(jid) && !msg.key.fromMe) {
+            // Perform 15% probability check
+            const checkChance = Math.random() < 0.15;
+            if (checkChance) {
+                console.log(` [Social] Spontaneous chime triggered in ${jid} (15% chance met)`);
+                (async () => {
+                    try {
+                        // Gather context from client messageCache
+                        const cache = client.messageCache.get(jid) || [];
+                        // Get last 6 messages in chronological order (cache has them in unshift order, newest first)
+                        const reversed = [...cache].slice(0, 6).reverse();
+                        
+                        const contextLines = [];
+                        for (const m of reversed) {
+                            const payload = extractIncomingPayload(m);
+                            const senderNumber = senderPhoneFromJid(m.key.participant || m.key.remoteJid);
+                            const name = m.key.fromMe ? 'TN Connect Bot' : senderNumber;
+                            if (payload.text) {
+                                contextLines.push(`${name}: "${payload.text}"`);
+                            }
+                        }
+                        
+                        if (contextLines.length > 0) {
+                            const contextText = contextLines.join('\n');
+                            const adminName = adminProfile?.name || 'Admin';
+                            const responseText = await callAISocialChat(senderPhone, contextText, adminName);
+                            
+                            if (responseText) {
+                                // Add typing presence effect for a natural human feel
+                                await client.sendPresence(jid, 'typing');
+                                const humanDelay = 3000 + Math.floor(Math.random() * 3000);
+                                await delay(humanDelay);
+                                
+                                const cleanResponse = responseText.replace(/\*/g, '').trim();
+                                await sendAntiBanMessage(jid, { text: cleanResponse });
+                                console.log(` [Social] Sent chime: "${cleanResponse.substring(0, 80)}"`);
+                            }
+                        }
+                    } catch (e) {
+                        console.error(' [Social] Spontaneous chime failed:', e.message);
+                    }
+                })();
+                return; // Exit main handler so we don't process further!
+            }
+        }
+
         // Rule: Bot is NOT allowed to chat or trigger commands with non-admins in group chats
         if (!isAdmin) return;
 
@@ -3136,51 +3183,7 @@ async function processIncomingMessage(msg) {
                 }
             }
         }
-        // 💬 Organic Spontaneous Social Conversation Mode
-        if (activeConvoGroups.has(jid) && !msg.key.fromMe) {
-            // Perform 15% probability check
-            const checkChance = Math.random() < 0.15;
-            if (checkChance) {
-                console.log(` [Social] Spontaneous chime triggered in ${jid} (15% chance met)`);
-                (async () => {
-                    try {
-                        // Gather context from client messageCache
-                        const cache = client.messageCache.get(jid) || [];
-                        // Get last 6 messages in chronological order (cache has them in unshift order, newest first)
-                        const reversed = [...cache].slice(0, 6).reverse();
-                        
-                        const contextLines = [];
-                        for (const m of reversed) {
-                            const payload = extractIncomingPayload(m);
-                            const senderNumber = senderPhoneFromJid(m.key.participant || m.key.remoteJid);
-                            const name = m.key.fromMe ? 'TN Connect Bot' : senderNumber;
-                            if (payload.text) {
-                                contextLines.push(`${name}: "${payload.text}"`);
-                            }
-                        }
-                        
-                        if (contextLines.length > 0) {
-                            const contextText = contextLines.join('\n');
-                            const adminName = adminProfile?.name || 'Admin';
-                            const responseText = await callAISocialChat(senderPhone, contextText, adminName);
-                            
-                            if (responseText) {
-                                // Add typing presence effect for a natural human feel
-                                await client.sendPresence(jid, 'typing');
-                                const humanDelay = 3000 + Math.floor(Math.random() * 3000);
-                                await delay(humanDelay);
-                                
-                                const cleanResponse = responseText.replace(/\*/g, '').trim();
-                                await sendAntiBanMessage(jid, { text: cleanResponse });
-                                console.log(` [Social] Sent chime: "${cleanResponse.substring(0, 80)}"`);
-                            }
-                        }
-                    } catch (e) {
-                        console.error(' [Social] Spontaneous chime failed:', e.message);
-                    }
-                })();
-            }
-        }
+
 
         return;
     }
