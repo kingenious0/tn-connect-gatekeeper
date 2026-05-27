@@ -551,6 +551,26 @@ const resolveLidToPhone = (lidJid) => {
     return null;
 };
 
+const isJidMe = (jid) => {
+    if (!jid) return false;
+    const myJid = client.sock?.user?.id;
+    const myLid = client.sock?.user?.lid;
+    const cleanMyJid = myJid ? myJid.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net' : '';
+    const cleanMyLid = myLid ? myLid.split(':')[0].replace(/[^0-9]/g, '') + '@lid' : '';
+    
+    const cleanJidStr = typeof jid === 'string' ? jid : jid.id || jid.jid || '';
+    const targetJid = cleanJidStr.split(':')[0].replace(/[^0-9]/g, '');
+    
+    if (cleanMyJid && targetJid + '@s.whatsapp.net' === cleanMyJid) return true;
+    if (cleanMyLid && targetJid + '@lid' === cleanMyLid) return true;
+    
+    if (activeSessionPhone) {
+        const digits = cleanJidStr.replace(/@s\.whatsapp\.net/gi, '').replace(/@lid/gi, '').replace(/\D/g, '');
+        if (digits === activeSessionPhone) return true;
+    }
+    return false;
+};
+
 const participantDigits = (jid) => {
     if (typeof jid === 'object') jid = jid.phoneNumber || jid.id || jid.jid || '';
     const str = String(jid || '');
@@ -1067,10 +1087,7 @@ const refreshDiscoveredGroups = async (phone) => {
         const discoveredGroups = [];
         for (const g of Object.values(allGroups)) {
             const rawParticipants = g.participants || [];
-            const me = rawParticipants.find(p => {
-                const pId = typeof p === 'string' ? p : p.id || '';
-                return pId.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net' === cleanMyJid;
-            });
+            const me = rawParticipants.find(p => isJidMe(p));
             const isBotAdmin = !!(me && (me.admin === 'admin' || me.admin === 'superadmin'));
             
             botAdminGroupCache.set(g.jid || g.id, isBotAdmin);
@@ -1191,10 +1208,7 @@ const refreshGroupCache = async () => {
         const adminGroups = [];
         for (const g of Object.values(allGroups)) {
             const rawParticipants = g.participants || [];
-            const me = rawParticipants.find(p => {
-                const pId = typeof p === 'string' ? p : p.id || '';
-                return pId.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net' === cleanMyJid;
-            });
+            const me = rawParticipants.find(p => isJidMe(p));
             const isBotAdmin = !!(me && (me.admin === 'admin' || me.admin === 'superadmin'));
             
             botAdminGroupCache.set(g.jid || g.id, isBotAdmin);
@@ -1319,13 +1333,13 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
     else { shouldAct = containsBadWord || containsLink; }
     if (!shouldAct) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP shouldAct=false isAdmin=' + isAdmin + ' link=' + containsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + '\n'); } catch (e) { } return false; }
     try { fs.appendFileSync('_trace.log', 'MOD_ACT shouldAct=' + shouldAct + ' link=' + containsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + '\n'); } catch (e) { }
-    const humanDelay = 8000 + Math.floor(Math.random() * 7000);
+    const humanDelay = 1000 + Math.floor(Math.random() * 2000);
     await delay(humanDelay);
     try {
         try { fs.appendFileSync('_trace.log', 'MOD_DELETE_ATTEMPT msgId=' + (msg.key.id || '?').substring(0, 20) + ' participant=' + (sender || '?').substring(0, 40) + '\n'); } catch (e) { }
         for (let d = 0; d < 3; d++) {
             try {
-                const delRes = await client.sendDelete(jid, msg.key.id, sender);
+                const delRes = await client.sock.sendMessage(jid, { delete: msg.key });
                 try { fs.appendFileSync('_trace.log', 'MOD_DELETE_OK attempt=' + d + ' resp=' + JSON.stringify(delRes).substring(0, 200) + '\n'); } catch (e) { }
                 break;
             } catch (de) {
@@ -1976,12 +1990,7 @@ function wireBaileysEvents() {
 
         // Track bot admin changes dynamically
         if ((action === 'promote' || action === 'demote') && groupJid && participants?.length) {
-            const myJid = client.sock?.user?.id;
-            const cleanMyJid = myJid ? myJid.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net' : '';
-            const affectedMe = participants.find(p => {
-                const pId = typeof p === 'string' ? p : p.id || '';
-                return pId.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net' === cleanMyJid;
-            });
+            const affectedMe = participants.find(p => isJidMe(p));
             if (affectedMe) {
                 const isNowAdmin = action === 'promote';
                 botAdminGroupCache.set(groupJid, isNowAdmin);
