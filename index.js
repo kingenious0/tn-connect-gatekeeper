@@ -2363,14 +2363,82 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
     
     const lower = cleanText.toLowerCase();
     
-    // 1. Lock all groups
+    // 1. Lock/Unlock all groups except specific ones
+    const exceptRegex = /^(lock|unlock)\s+all\s+(?:the\s+)?groups?\s+except\s+(.+)$/i;
+    const exceptMatch = cleanText.match(exceptRegex);
+    
+    if (exceptMatch) {
+        const action = exceptMatch[1].toLowerCase(); // "lock" or "unlock"
+        const exceptStr = exceptMatch[2].trim();
+        
+        // Split except names by comma or 'and'
+        const exceptNames = exceptStr.split(/, | and |,/).map(s => s.trim().toLowerCase()).filter(Boolean);
+        
+        const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+        if (!allGroups.length) {
+            await sendAntiBanMessage(jid, { text: '❌ No monitored groups available.' });
+            return true;
+        }
+        
+        // Filter out groups that match the exception names
+        const targetGroups = allGroups.filter(g => {
+            const subj = g.subject.toLowerCase();
+            return !exceptNames.some(name => subj.includes(name));
+        });
+        
+        const excludedGroups = allGroups.filter(g => {
+            const subj = g.subject.toLowerCase();
+            return exceptNames.some(name => subj.includes(name));
+        });
+        
+        if (!targetGroups.length) {
+            await sendAntiBanMessage(jid, { text: `❌ All groups were excluded by exception rule: "${exceptStr}".` });
+            return true;
+        }
+        
+        const emoji = action === 'lock' ? '🔒' : '🔓';
+        const actionWord = action === 'lock' ? 'Locking' : 'Unlocking';
+        
+        let exText = excludedGroups.length > 0 ? `\nExcluded: ${excludedGroups.map(g => g.subject).join(', ')}` : '';
+        await sendAntiBanMessage(jid, { text: `${emoji} *${actionWord} all groups except specific ones...*${exText}\nExecuting on ${targetGroups.length} group(s) with a fast, human-paced delay (3-6 seconds between groups).` });
+        
+        const locked = loadLockedGroups();
+        let newLocked = [];
+        if (action === 'lock') {
+            newLocked = [...new Set([...locked, ...targetGroups.map(g => g.jid)])];
+        } else {
+            newLocked = locked.filter(jidVal => !targetGroups.some(g => g.jid === jidVal));
+        }
+        saveLockedGroups(newLocked);
+        
+        const results = [];
+        for (let i = 0; i < targetGroups.length; i++) {
+            const g = targetGroups[i];
+            try {
+                await client.setGroupAdminsOnly(g.jid, action === 'lock');
+                results.push('✅ ' + g.subject + ' → ' + (action === 'lock' ? 'Locked' : 'Unlocked'));
+            } catch (e) {
+                results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
+            }
+            if (i < targetGroups.length - 1) {
+                // Humanized fast delay: 3 to 6 seconds
+                const delayMs = 3000 + Math.floor(Math.random() * 3000);
+                await delay(delayMs);
+            }
+        }
+        
+        await sendAntiBanMessage(jid, { text: results.join('\n') + `\n\ncompleted ${action} all groups except ${exceptStr}` });
+        return true;
+    }
+
+    // 2. Lock all groups
     if (lower === 'lock all groups' || lower === 'lock all the groups' || lower === 'lock all group') {
         const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
         if (!allGroups.length) {
             await sendAntiBanMessage(jid, { text: '❌ No monitored groups available.' });
             return true;
         }
-        await sendAntiBanMessage(jid, { text: '🔒 *Locking all groups...*\nExecuting now with a safe, humanized delay (10-30 seconds between groups).' });
+        await sendAntiBanMessage(jid, { text: '🔒 *Locking all groups...*\nExecuting now with a safe, fast delay (3-6 seconds between groups).' });
         
         const locked = loadLockedGroups();
         const newLocked = [...new Set([...locked, ...allGroups.map(g => g.jid)])];
@@ -2386,8 +2454,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
             }
             if (i < allGroups.length - 1) {
-                // Humanized delay: 10 to 30 seconds
-                const delayMs = 10000 + Math.floor(Math.random() * 15000);
+                // Fast delay: 3 to 6 seconds
+                const delayMs = 3000 + Math.floor(Math.random() * 3000);
                 await delay(delayMs);
             }
         }
@@ -2395,14 +2463,14 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
     
-    // 2. Unlock all groups
+    // 3. Unlock all groups
     if (lower === 'unlock all groups' || lower === 'unlock all the groups' || lower === 'unlock all group') {
         const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
         if (!allGroups.length) {
             await sendAntiBanMessage(jid, { text: '❌ No monitored groups available.' });
             return true;
         }
-        await sendAntiBanMessage(jid, { text: '🔓 *Unlocking all groups...*\nExecuting now with a safe, humanized delay (10-30 seconds between groups).' });
+        await sendAntiBanMessage(jid, { text: '🔓 *Unlocking all groups...*\nExecuting now with a safe, fast delay (3-6 seconds between groups).' });
         
         const locked = loadLockedGroups();
         const newLocked = locked.filter(jidVal => !allGroups.some(g => g.jid === jidVal));
@@ -2418,7 +2486,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
             }
             if (i < allGroups.length - 1) {
-                const delayMs = 10000 + Math.floor(Math.random() * 15000);
+                const delayMs = 3000 + Math.floor(Math.random() * 3000);
                 await delay(delayMs);
             }
         }
@@ -2452,7 +2520,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                     results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
                 }
                 if (i < matched.length - 1) {
-                    const delayMs = 10000 + Math.floor(Math.random() * 15000);
+                    const delayMs = 3000 + Math.floor(Math.random() * 3000);
                     await delay(delayMs);
                 }
             }
@@ -2487,7 +2555,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                     results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
                 }
                 if (i < matched.length - 1) {
-                    const delayMs = 10000 + Math.floor(Math.random() * 15000);
+                    const delayMs = 3000 + Math.floor(Math.random() * 3000);
                     await delay(delayMs);
                 }
             }
@@ -2548,7 +2616,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                         failed++;
                     }
                     if (i < uniqueMatched.length - 1) {
-                        const delayMs = 10000 + Math.floor(Math.random() * 15000);
+                        const delayMs = 3000 + Math.floor(Math.random() * 3000);
                         await delay(delayMs);
                     }
                 }
