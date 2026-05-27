@@ -627,6 +627,22 @@ const extractIncomingPayload = (msg) => {
     return { text: (text || '').trim(), hasImage };
 };
 
+const extractQuotedMessageText = (msg) => {
+    const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.imageMessage?.contextInfo || msg.message?.videoMessage?.contextInfo || msg.message?.documentMessage?.contextInfo;
+    const quoted = contextInfo?.quotedMessage;
+    if (!quoted) return '';
+    
+    if (quoted.conversation) return quoted.conversation;
+    if (quoted.extendedTextMessage?.text) return quoted.extendedTextMessage.text;
+    
+    try {
+        const ct = Object.keys(quoted).find(k => k !== 'messageContextInfo');
+        if (ct && quoted[ct]?.text) return quoted[ct].text;
+        if (ct && quoted[ct]?.caption) return quoted[ct].caption;
+    } catch (e) { }
+    return '';
+};
+
 const parseGeminiJson = (text) => {
     const match = (text || '').match(/\{[\s\S]*\}/);
     if (!match) return null;
@@ -2382,7 +2398,12 @@ async function processIncomingMessage(msg) {
         if (isCallingBot && !moderated) {
             let cleanPrompt = groupText.replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
             if (cleanPrompt) {
-                const aiResponse = await callAIChat(senderPhone, cleanPrompt, adminProfile.name);
+                const quotedText = extractQuotedMessageText(msg);
+                let finalPrompt = cleanPrompt;
+                if (quotedText) {
+                    finalPrompt = `[The admin is replying to this quoted message: "${quotedText}"]\n\nAdmin says: ${cleanPrompt}`;
+                }
+                const aiResponse = await callAIChat(senderPhone, finalPrompt, adminProfile.name);
                 if (aiResponse) {
                     await sendAntiBanMessage(jid, { text: aiResponse });
                     return;
@@ -2411,7 +2432,12 @@ async function processIncomingMessage(msg) {
 
         // Dynamic AI Chit-Chat for Admins in DM
         if (dmText && !dmText.toLowerCase().startsWith('rewrite:')) {
-            const aiResponse = await callAIChat(senderPhone, dmText, adminProfile.name);
+            const quotedText = extractQuotedMessageText(msg);
+            let finalPrompt = dmText;
+            if (quotedText) {
+                finalPrompt = `[The admin is replying to this quoted message: "${quotedText}"]\n\nAdmin says: ${dmText}`;
+            }
+            const aiResponse = await callAIChat(senderPhone, finalPrompt, adminProfile.name);
             if (aiResponse) {
                 await sendAntiBanMessage(jid, { text: aiResponse });
                 return;
