@@ -28,6 +28,7 @@ class BaileysClient {
         this.readyResolve = null;
         this.qrCode = null;
         this.phoneNumber = null;
+        this.linkPreviewCache = new Map();
     }
 
     async init() {
@@ -127,6 +128,22 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
         if (options.mentions?.length) {
             msg.mentions = options.mentions;
         }
+
+        // Try to generate visual link preview if appropriate
+        if (!options.skipPreview) {
+            try {
+                const previewData = await this._getLinkPreviewData(text);
+                if (previewData) {
+                    msg.contextInfo = {
+                        ...(msg.contextInfo || {}),
+                        externalAdReply: previewData
+                    };
+                }
+            } catch (e) {
+                console.warn(' [Preview] Link preview building failed:', e.message);
+            }
+        }
+
         return this.sock.sendMessage(to, msg);
     }
 
@@ -291,6 +308,202 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
             if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'pdf', 'doc', 'docx'].includes(ext)) return ext;
         }
         return null;
+    }
+
+    async _getLinkPreviewData(text, forceSkip = false) {
+        if (forceSkip || !text) return null;
+
+        // Detect first http/https URL in the text
+        const urlRegex = /https?:\/\/[^\s]+/i;
+        const match = text.match(urlRegex);
+        if (!match) return null;
+
+        const url = match[0];
+        
+        // Return cached if present (including null if failed previously)
+        if (this.linkPreviewCache.has(url)) {
+            return this.linkPreviewCache.get(url);
+        }
+
+        let meta = null;
+
+        // 1. Try Microlink API (excellent for complex SPAs/TikTok/YouTube redirects)
+        try {
+            const microlinkUrl = `https://api.microlink.io/?url=${encodeURIComponent(url)}`;
+            const res = await this._fetchJson(microlinkUrl, 4000);
+            if (res && res.status === 'success' && res.data) {
+                meta = {
+                    title: res.data.title || '',
+                    description: res.data.description || '',
+                    image: res.data.image?.url || null,
+                    siteName: res.data.publisher || ''
+                };
+            }
+        } catch (e) {
+            console.warn(` [Preview] Microlink API query failed for ${url}:`, e.message);
+        }
+
+        // 2. Fallback to direct HTML crawling for standard websites
+        if (!meta) {
+            try {
+                const html = await this._fetchHtml(url, 4000);
+                if (html) {
+                    meta = this._extractOgMetadata(html, url);
+                }
+            } catch (e) {
+                console.warn(` [Preview] Fallback direct scrape failed for ${url}:`, e.message);
+            }
+        }
+
+        // 3. Process image thumbnail if found
+        if (meta && (meta.title || meta.image)) {
+            let thumbnailBuffer = null;
+            if (meta.image) {
+                try {
+                    thumbnailBuffer = await this._downloadBufferWithTimeout(meta.image, 3000);
+                } catch (e) {
+                    console.warn(` [Preview] Failed to download thumbnail for ${url}:`, e.message);
+                }
+            }
+
+            const previewData = {
+                title: meta.title || 'Link Preview',
+                body: meta.description || meta.siteName || '',
+                mediaType: 1, // 1 = Image/Link
+                previewType: 0,
+                sourceUrl: url
+            };
+
+            if (thumbnailBuffer) {
+                previewData.thumbnail = thumbnailBuffer;
+            }
+
+            this.linkPreviewCache.set(url, previewData);
+            return previewData;
+        }
+
+        // Cache failure so we don't spam broken links
+        this.linkPreviewCache.set(url, null);
+        return null;
+    }
+
+    _fetchJson(url, timeoutMs = 4000) {
+        return new Promise((resolve, reject) => {
+            const parsed = new URL(url);
+            const mod = parsed.protocol === 'https:' ? require('https') : require('http');
+            const req = mod.get(url, { 
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+                timeout: timeoutMs 
+            }, (res) => {
+                const chunks = [];
+                res.on('data', (c) => chunks.push(c));
+                res.on('end', () => {
+                    try {
+                        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+            });
+            req.on('error', reject);
+            req.on('timeout', () => {
+                req.destroy();
+                reject(new Error('Timeout'));
+            });
+        });
+    }
+
+    _fetchHtml(url, timeoutMs = 4000, maxRedirects = 3) {
+        return new Promise((resolve, reject) => {
+            const parsed = new URL(url);
+            const mod = parsed.protocol === 'https:' ? require('https') : require('http');
+            const headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5'
+            };
+            const req = mod.get(url, { headers, timeout: timeoutMs }, (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    if (maxRedirects <= 0) {
+                        return reject(new Error('Too many redirects'));
+                    }
+                    const redirectUrl = new URL(res.headers.location, url).toString();
+                    return this._fetchHtml(redirectUrl, timeoutMs, maxRedirects - 1).then(resolve).catch(reject);
+                }
+                const chunks = [];
+                res.on('data', (c) => chunks.push(c));
+                res.on('end', () => {
+                    resolve(Buffer.concat(chunks).toString('utf8'));
+                });
+            });
+            req.on('error', reject);
+            req.on('timeout', () => {
+                req.destroy();
+                reject(new Error('Timeout'));
+            });
+        });
+    }
+
+    _extractOgMetadata(html, url) {
+        const titleRegex = /<meta\s+property=["']og:title["']\s+content=["'](.*?)["']/i;
+        const descRegex = /<meta\s+property=["']og:description["']\s+content=["'](.*?)["']/i;
+        const imgRegex = /<meta\s+property=["']og:image["']\s+content=["'](.*?)["']/i;
+        const siteRegex = /<meta\s+property=["']og:site_name["']\s+content=["'](.*?)["']/i;
+
+        const fallbackTitleRegex = /<title>(.*?)<\/title>/i;
+        const fallbackDescRegex = /<meta\s+name=["']description["']\s+content=["'](.*?)["']/i;
+
+        let title = (html.match(titleRegex) || [])[1];
+        if (!title) title = (html.match(fallbackTitleRegex) || [])[1];
+
+        let desc = (html.match(descRegex) || [])[1];
+        if (!desc) desc = (html.match(fallbackDescRegex) || [])[1];
+
+        let image = (html.match(imgRegex) || [])[1];
+        
+        let siteName = (html.match(siteRegex) || [])[1];
+        if (!siteName) {
+            try {
+                siteName = new URL(url).hostname;
+            } catch {
+                siteName = '';
+            }
+        }
+
+        const decodeEntities = (str) => {
+            if (!str) return '';
+            return str
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/&#x2F;/g, '/');
+        };
+
+        return {
+            title: decodeEntities(title),
+            description: decodeEntities(desc),
+            image: image ? new URL(image, url).toString() : null,
+            siteName: siteName
+        };
+    }
+
+    _downloadBufferWithTimeout(url, timeoutMs = 3000) {
+        return new Promise((resolve, reject) => {
+            const parsed = new URL(url);
+            const mod = parsed.protocol === 'https:' ? require('https') : require('http');
+            const req = mod.get(url, { timeout: timeoutMs }, (res) => {
+                const chunks = [];
+                res.on('data', (c) => chunks.push(c));
+                res.on('end', () => resolve(Buffer.concat(chunks)));
+            });
+            req.on('error', reject);
+            req.on('timeout', () => {
+                req.destroy();
+                reject(new Error('Timeout'));
+            });
+        });
     }
 }
 
