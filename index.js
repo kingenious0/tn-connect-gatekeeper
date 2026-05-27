@@ -1567,7 +1567,7 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
                 await sendAntiBanMessage(jid, { text: '⚠️ Could not download that image properly. Try sending again.' });
                 return true;
             }
-            const rawMime = msg.message.imageMessage.mimetype || 'image/jpeg';
+            const rawMime = msg.message?.imageMessage?.mimetype || msg.message?.documentMessage?.mimetype || 'image/jpeg';
             const header = buffer.slice(0, 4).toString('hex').toUpperCase();
             let detectedMime = rawMime;
             if (header.startsWith('FFD8')) detectedMime = 'image/jpeg';
@@ -1575,8 +1575,24 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
             else if (header.startsWith('474946')) detectedMime = 'image/gif';
             else if (header.startsWith('524946') && buffer.slice(8, 12).toString() === 'WEBP') detectedMime = 'image/webp';
             console.log(' [ReplyAssistant] Image: ' + (buffer.length / 1024).toFixed(1) + 'KB, mime=' + detectedMime);
+            
             const SYSTEM_PROMPT = 'You are a professional WhatsApp reply assistant for TN Universities Connect admins. You will be shown a screenshot of a conversation. Analyze it and suggest a professional, helpful reply the admin can send. Be concise and natural. Format your response as: **Suggested reply:** [your suggestion]';
-            const suggestion = await analyzeScreenshotWithProvider(buffer, detectedMime, SYSTEM_PROMPT, 'Analyze this conversation screenshot and suggest a professional reply the admin can send.', 1000);
+            
+            let userPrompt = (msgText || '').replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
+            userPrompt = userPrompt.replace(/@tn connect super bot\.\./gi, '')
+                                   .replace(/@tn connect super bot/gi, '')
+                                   .replace(/tn connect super bot/gi, '')
+                                   .replace(/super bot/gi, '')
+                                   .replace(/@\S+/g, '')
+                                   .trim();
+
+            if (!userPrompt || userPrompt.toLowerCase() === 'help' || userPrompt.toLowerCase() === 'ai') {
+                userPrompt = 'Analyze this conversation screenshot and suggest a professional reply the admin can send.';
+            } else {
+                userPrompt = `Analyze this conversation screenshot and suggest a professional reply based on the admin's request: "${userPrompt}"`;
+            }
+            
+            const suggestion = await analyzeScreenshotWithProvider(buffer, detectedMime, SYSTEM_PROMPT, userPrompt, 1000);
             if (!suggestion) throw new Error('No response from AI');
             adminReplyStates.set(senderPhone, { imageBuffer: buffer, mime: detectedMime, lastSuggestion: suggestion });
             await sendAntiBanMessage(jid, { text: suggestion + '\n\nType *rewrite: [instructions]* to tweak it, or just copy and send.' });
@@ -1588,8 +1604,8 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
             return true;
         }
     }
-    if (state && text.trim().toLowerCase().startsWith('rewrite:')) {
-        const instruction = text.trim().slice('rewrite:'.length).trim();
+    if (state && msgText && msgText.trim().toLowerCase().startsWith('rewrite:')) {
+        const instruction = msgText.trim().slice('rewrite:'.length).trim();
         try {
             const SYSTEM_PROMPT = 'You are a professional reply assistant. The admin is asking you to revise a suggested reply. Rewrite it based on their instruction. Keep it natural and professional.';
             const revised = await analyzeScreenshotWithProvider(state.imageBuffer, state.mime, SYSTEM_PROMPT, 'Based on this conversation screenshot, revise the reply with this instruction: ' + instruction);
@@ -2366,7 +2382,7 @@ async function processIncomingMessage(msg) {
         // Rule: Bot is NOT allowed to chat or trigger commands with non-admins in group chats
         if (!isAdmin) return;
 
-        const { text: groupText } = extractIncomingPayload(msg);
+        const { text: groupText, hasImage } = extractIncomingPayload(msg);
         const lower = (groupText || '').trim().toLowerCase();
         const hasActiveWizard = adminBroadcastStates.has(senderPhone);
         if (hasActiveWizard || (groupText && isBroadcastIntent(lower))) {
@@ -2395,28 +2411,55 @@ async function processIncomingMessage(msg) {
         const cleanMyJid = myJid ? myJid.split(':')[0].replace(/[^0-9]/g, '') : '';
         const cleanMyLid = myLid ? myLid.split(':')[0].replace(/[^0-9]/g, '') : '';
 
-        const mentions = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        const getContextInfo = (mObj) => {
+            const m = mObj?.message;
+            if (!m) return null;
+            return m.extendedTextMessage?.contextInfo ||
+                   m.imageMessage?.contextInfo ||
+                   m.videoMessage?.contextInfo ||
+                   m.documentMessage?.contextInfo ||
+                   m.audioMessage?.contextInfo ||
+                   m.stickerMessage?.contextInfo;
+        };
+
+        const contextInfo = getContextInfo(msg);
+        const mentions = contextInfo?.mentionedJid || [];
         const isBotTagged = mentions.some(m => m.includes(cleanMyJid) || (cleanMyLid && m.includes(cleanMyLid)));
 
-        const isCallingBot = groupText && (
+        const isCallingBot = (groupText || hasImage) && (
             isBotTagged ||
             lower.startsWith('bot ') ||
-            lower.startsWith('gatekeeper ') ||
-            lower.startsWith('super bot ')
+            lower.startsWith('bot') ||
+            lower.startsWith('gatekeeper') ||
+            lower.startsWith('super bot') ||
+            lower.includes('@tn connect') ||
+            lower.includes('super bot') ||
+            lower.includes('gatekeeper')
         );
 
         if (isCallingBot && !moderated) {
-            let cleanPrompt = groupText.replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
-            if (cleanPrompt) {
-                const quotedText = extractQuotedMessageText(msg);
-                let finalPrompt = cleanPrompt;
-                if (quotedText) {
-                    finalPrompt = `[The admin is replying to this quoted message: "${quotedText}"]\n\nAdmin says: ${cleanPrompt}`;
-                }
-                const aiResponse = await callAIChat(senderPhone, finalPrompt, adminProfile.name);
-                if (aiResponse) {
-                    await sendAntiBanMessage(jid, { text: aiResponse });
-                    return;
+            if (hasImage) {
+                const handledReply = await handleAdminReplyAssistant(jid, senderPhone, msg, adminProfile?.name || 'Admin');
+                if (handledReply) return;
+            } else {
+                let cleanPrompt = groupText.replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
+                cleanPrompt = cleanPrompt.replace(/@tn connect super bot\.\./gi, '')
+                                         .replace(/@tn connect super bot/gi, '')
+                                         .replace(/tn connect super bot/gi, '')
+                                         .replace(/super bot/gi, '')
+                                         .replace(/@\S+/g, '')
+                                         .trim();
+                if (cleanPrompt) {
+                    const quotedText = extractQuotedMessageText(msg);
+                    let finalPrompt = cleanPrompt;
+                    if (quotedText) {
+                        finalPrompt = `[The admin is replying to this quoted message: "${quotedText}"]\n\nAdmin says: ${cleanPrompt}`;
+                    }
+                    const aiResponse = await callAIChat(senderPhone, finalPrompt, adminProfile.name);
+                    if (aiResponse) {
+                        await sendAntiBanMessage(jid, { text: aiResponse });
+                        return;
+                    }
                 }
             }
         }
