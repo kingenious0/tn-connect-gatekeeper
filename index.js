@@ -1576,7 +1576,15 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
             else if (header.startsWith('524946') && buffer.slice(8, 12).toString() === 'WEBP') detectedMime = 'image/webp';
             console.log(' [ReplyAssistant] Image: ' + (buffer.length / 1024).toFixed(1) + 'KB, mime=' + detectedMime);
             
-            const SYSTEM_PROMPT = 'You are a professional WhatsApp reply assistant for TN Universities Connect admins. You will be shown a screenshot of a conversation. Analyze it and suggest a professional, helpful reply the admin can send. Be concise and natural. Format your response as: **Suggested reply:** [your suggestion]';
+            const SYSTEM_PROMPT = 'You are the elite WhatsApp Reply Assistant for TN Universities Connect. You analyze conversation screenshots and suggest highly natural, human, friendly, Gen Z, or expert replies (depending on the context) that the admin can copy and send directly.\n\n' +
+                'CRITICAL RULES:\n' +
+                '- The suggested reply must sound COMPLETELY human (warm, high vibe, empathetic, cool) and not like a robotic customer service agent or search engine summary.\n' +
+                '- Avoid robotic template phrases like "Hi, I can offer some guidance...". Instead, sound like a real, supportive human team member (e.g., "Hey! Let me help you find a great attachment place in Tema...").\n' +
+                '- Speak with amazing Gen Z energy and tech-savvy expert vibes naturally.\n' +
+                '- Absolutely NO asterisks (* or **) are allowed in your entire output! Do not bold or italicize anything. Keep the formatting completely clean.\n\n' +
+                'Format your response exactly as:\n' +
+                'Suggested reply:\n' +
+                '[Your natural, high-vibe, human suggestion]';
             
             let userPrompt = (msgText || '').replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
             userPrompt = userPrompt.replace(/@tn connect super bot\.\./gi, '')
@@ -1587,9 +1595,9 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
                                    .trim();
 
             if (!userPrompt || userPrompt.toLowerCase() === 'help' || userPrompt.toLowerCase() === 'ai') {
-                userPrompt = 'Analyze this conversation screenshot and suggest a professional reply the admin can send.';
+                userPrompt = 'Analyze this conversation screenshot and suggest a highly natural, human reply the admin can send.';
             } else {
-                userPrompt = `Analyze this conversation screenshot and suggest a professional reply based on the admin's request: "${userPrompt}"`;
+                userPrompt = `Analyze this conversation screenshot and suggest a highly natural, human reply based on the admin's request: "${userPrompt}"`;
             }
             
             const suggestion = await analyzeScreenshotWithProvider(buffer, detectedMime, SYSTEM_PROMPT, userPrompt, 1000);
@@ -1642,7 +1650,10 @@ CRITICAL IDENTITY RULES:
 - You MUST ONLY mention Elliot Paakow Entsiwah (Kingenious) as your creator/developer IF AND ONLY IF you are explicitly asked who created you, who made you, who developed you, or similar questions about your origin.
 - NEVER brag about or randomly mention Elliot Paakow Entsiwah (Kingenious) in normal conversation or casual chitchat when nobody asked about your origin. Keep it natural!
 
-CRITICAL FORMATTING RULES:
+CRITICAL HUMAN & FORMATTING RULES:
+- Think and sound like a highly intelligent, empathetic, and cool human teammate. Speak with a natural, high-vibe Gen Z tone (using terms like 'vibes', 'no cap', 'facts', 'got you', 'let\'s gooo', 'real talk' etc. naturally where appropriate). Make it feel alive and responsive, like a conversation between cool friends, not a corporate customer service bot!
+- Avoid generic, dry search-engine lists or robotic bullet points. If asked for a solution, think like a smart, proactive human who gives real, practical, conversational tips.
+- Never start your messages with stiff formal headers like 'Greetings Admin' or 'Dear Admin' unless explicitly requested. Start talking naturally!
 - Do NOT use markdown bold/italic tags (like "**" or "*") in your response. Keep the text layout completely clean with standard characters and normal spacing. Do not output any asterisks!
 - Use emojis naturally to keep it friendly and engaging, but do NOT spam them in every single sentence. Use them where it makes sense.
 - Keep your responses relatively concise (usually 1-3 paragraphs) and professional.
