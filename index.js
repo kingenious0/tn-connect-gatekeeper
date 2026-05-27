@@ -37,7 +37,7 @@ const LOCKED_GROUPS_FILE = './locked_groups.json';
 
 // Baileys configuration
 const AUTH_FOLDER = process.env.AUTH_FOLDER || './auth_info';
-const SERVER_URL = process.env.SERVER_URL || '';
+const SERVER_URL = process.env.SERVER_URL || process.env.RENDER_EXTERNAL_URL || '';
 const PHONE_NUMBER = process.env.PHONE_NUMBER || '';
 
 let client = new BaileysClient({ authFolder: AUTH_FOLDER, sessionName: 'tn-connect' });
