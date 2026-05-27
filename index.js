@@ -1519,7 +1519,7 @@ const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userTex
     if (groqClient) {
         try {
             const response = await groqClient.chat.completions.create({
-                model: 'llama-3.2-11b-vision-preview',
+                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
                 messages: [
                     { role: 'system', content: systemPrompt || 'You are a helpful assistant.' },
                     { role: 'user', content: [
@@ -1536,7 +1536,7 @@ const analyzeScreenshotWithProvider = async (buffer, mime, systemPrompt, userTex
         }
     }
     if (geminiClient) {
-        const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash', systemInstruction: systemPrompt });
+        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash', systemInstruction: systemPrompt });
         const result = await model.generateContent([
             { text: userText || 'Analyze this image.' },
             { inlineData: { data: b64, mimeType: mime } }
@@ -1684,7 +1684,7 @@ An admin named "${adminName}" is talking to you.`;
     }
     if (geminiClient) {
         try {
-            const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash', systemInstruction: systemPrompt });
+            const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash', systemInstruction: systemPrompt });
             const contents = history.map(h => ({
                 role: h.role === 'assistant' ? 'model' : 'user',
                 parts: [{ text: h.content }]
