@@ -3220,6 +3220,30 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             }
         }
     }
+    // 6.2 List Discovered Groups (v1.5.2) - whitelisted for Admins
+    if (lower === 'list groups' || lower === 'show groups' || lower === 'groups list' || lower === 'groups') {
+        const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+        if (!allGroups.length) {
+            await sendAntiBanMessage(jid, { text: '❌ No monitored groups found in the bot\'s cache yet. Try *broadcast manage* or wait for the group cache to refresh.' });
+            return true;
+        }
+        
+        const leaderJid = findLeaderGroupJid();
+        const genMarketJid = findGeneralMarketGroupJid();
+        
+        const rows = allGroups.map((g, i) => {
+            let role = '📦 Niche Group';
+            if (g.jid === leaderJid) role = '👑 Niche Leaders Group';
+            else if (g.jid === genMarketJid) role = '🏪 General Market Group';
+            
+            return `${i + 1}. ${g.subject}\n   • Role: ${role}\n   • JID: ${g.jid}`;
+        });
+        
+        const msgText = `📋 TN Connect Monitored Groups (${allGroups.length})\n\nHere are all the groups I currently have cached and monitor:\n\n${rows.join('\n\n')}`;
+        await sendAntiBanMessage(jid, { text: msgText });
+        return true;
+    }
+
     // 6.5 Timetable Testing Commands (v1.5.2) - ONLY for Kingenious (233597626090)
     if (lower === 'test alerts' || lower === 'test alert') {
         if (senderPhone !== '233597626090') {
