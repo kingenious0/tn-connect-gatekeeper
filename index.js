@@ -3717,7 +3717,7 @@ process.on('SIGINT', () => cleanShutdown('SIGINT'));
 
 const server = http.createServer(app);
 server.listen(PORT, async () => {
-    console.log(' [Server] Gatekeeper v3.0 (Baileys) is live on port ' + PORT);
+    console.log(' [Server] Gatekeeper v1.5.1 (Baileys) is live on port ' + PORT);
     
     await acquireLock();
     await ensureRegistryLoaded();
