@@ -2492,7 +2492,7 @@ function wireBaileysEvents() {
 }
 
 // ==========================================
-// 📅 AUTOMATED TIMETABLE NOTIFICATION ENGINE (v1.5.5)
+// 📅 AUTOMATED TIMETABLE NOTIFICATION ENGINE (v1.5.6)
 // ==========================================
 const WEEKLY_TIMETABLE = [
     // Market Days for Niche Groups & Fun Page
@@ -3022,7 +3022,66 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         await sendAntiBanMessage(jid, { text: results.join('\n') + '\n\ncompleted unlock all groups' });
         return true;
     }
-    
+
+    // 2.7 Role-specific Lock/Unlock Commands (v1.5.6)
+    const roleLockRegex = /^(lock|unlock)\s+(market|business|niche)\s*(?:groups|group)?$/i;
+    const roleLockMatch = lower.match(roleLockRegex);
+    if (roleLockMatch) {
+        const action = roleLockMatch[1].toLowerCase(); // "lock" or "unlock"
+        const roleType = roleLockMatch[2].toLowerCase(); // "market", "business", or "niche"
+        
+        const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+        if (!allGroups.length) {
+            await sendAntiBanMessage(jid, { text: '❌ No monitored groups available.' });
+            return true;
+        }
+        
+        const leaderJid = findLeaderGroupJid();
+        const genMarketJids = findGeneralMarketGroupJids();
+        
+        // Filter target groups based on roleType
+        const targetGroups = allGroups.filter(g => {
+            if (g.jid === leaderJid) return false; // Never lock/unlock leaders group automatically
+            
+            const subj = (g.subject || '').toLowerCase();
+            const isMarket = genMarketJids.includes(g.jid);
+            const isBusiness = subj.includes('business hub');
+            const isNiche = !isMarket && !isBusiness;
+            
+            if (roleType === 'market') return isMarket;
+            if (roleType === 'business') return isBusiness;
+            if (roleType === 'niche') return isNiche;
+            return false;
+        });
+        
+        if (!targetGroups.length) {
+            await sendAntiBanMessage(jid, { text: `❌ No monitored groups found matching role: *${roleType}*` });
+            return true;
+        }
+        
+        const actionWord = action === 'lock' ? 'Locking' : 'Unlocking';
+        const actionEmoji = action === 'lock' ? '🔒' : '🔓';
+        await sendAntiBanMessage(jid, { text: `${actionEmoji} *${actionWord} all ${roleType} groups...*\nExecuting now on ${targetGroups.length} group(s) with a safe, human-paced delay (3-6 seconds between groups).` });
+        
+        const results = [];
+        for (let i = 0; i < targetGroups.length; i++) {
+            const g = targetGroups[i];
+            try {
+                await client.setGroupAdminsOnly(g.jid, action === 'lock');
+                results.push(`✅ ${g.subject} → ${action === 'lock' ? 'Locked' : 'Unlocked'}`);
+            } catch (e) {
+                results.push(`❌ ${g.subject} → ${e.message.substring(0, 60)}`);
+            }
+            if (i < targetGroups.length - 1) {
+                const delayMs = 3000 + Math.floor(Math.random() * 3000);
+                await delay(delayMs);
+            }
+        }
+        
+        await sendAntiBanMessage(jid, { text: results.join('\n') + `\n\ncompleted ${action} all ${roleType} groups` });
+        return true;
+    }
+
     // 3. Leave group(s)
     const leaveRegex = /^(?:leave group|leave groups|exit group|exit groups)\s+(.+)$/i;
     const leaveMatch = cleanText.match(leaveRegex);
@@ -3232,7 +3291,46 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             }
         }
     }
-    // 6.2 List Discovered Groups (v1.5.5) - whitelisted for Admins
+    // 6.1.5 Dynamic Group Lock Status Check (v1.5.6) - whitelisted for Admins
+    if (lower === 'group statuses' || lower === 'group status' || lower === 'check locks' || lower === 'lock status' || lower === 'locks') {
+        const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+        if (!allGroups.length) {
+            await sendAntiBanMessage(jid, { text: '❌ No monitored groups found.' });
+            return true;
+        }
+        
+        await sendAntiBanMessage(jid, { text: '🔍 *Checking dynamic lock status of monitored groups...*' });
+        
+        let participating = {};
+        try {
+            participating = await client.sock.groupFetchAllParticipating();
+        } catch (e) {
+            console.error('Failed to fetch participating groups:', e);
+        }
+        
+        const leaderJid = findLeaderGroupJid();
+        const genMarketJids = findGeneralMarketGroupJids();
+        
+        const rows = allGroups.map((g, i) => {
+            const rawGroup = participating[g.jid];
+            const isLocked = rawGroup ? !!rawGroup.announce : false;
+            const statusStr = isLocked ? '🔒 Locked (Admins Only)' : '🔓 Unlocked (Everyone)';
+            
+            let role = '📦 Niche Group';
+            const subj = (g.subject || '').toLowerCase();
+            if (g.jid === leaderJid) role = '👑 Niche Leaders Group';
+            else if (genMarketJids.includes(g.jid)) role = '🏪 General Market Group';
+            else if (subj.includes('business hub')) role = '💼 Business Group';
+            
+            return `${i + 1}. *${g.subject}*\n   • Role: ${role}\n   • Status: ${statusStr}`;
+        });
+        
+        const msgText = `📋 *TN Connect Group Lock Statuses*\n\nHere is the current active locking state across all monitored groups:\n\n${rows.join('\n\n')}`;
+        await sendAntiBanMessage(jid, { text: msgText });
+        return true;
+    }
+
+    // 6.2 List Discovered Groups (v1.5.6) - whitelisted for Admins
     if (lower === 'list groups' || lower === 'show groups' || lower === 'groups list' || lower === 'groups') {
         const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
         if (!allGroups.length) {
@@ -3258,7 +3356,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
 
-    // 6.5 Timetable Testing Commands (v1.5.5) - ONLY for Kingenious (233597626090)
+    // 6.5 Timetable Testing Commands (v1.5.6) - ONLY for Kingenious (233597626090)
     if (lower === 'test alerts' || lower === 'test alert') {
         if (senderPhone !== '233597626090') {
             await sendAntiBanMessage(jid, { text: '🔒 Sorry, only Kingenious (supreme owner) is authorized to trigger test alerts!' });
@@ -3425,7 +3523,7 @@ async function processIncomingMessage(msg) {
         const moderated = await handleGroupModeration(msg, jid, sender, senderPhone, isAdmin);
         if (moderated) return;
 
-        // 🔔 Interactive Takeover Response Handler in Leader Group (v1.5.5)
+        // 🔔 Interactive Takeover Response Handler in Leader Group (v1.5.6)
         const isLeaderGroup = jid === findLeaderGroupJid();
         if (isLeaderGroup && isAdmin && pendingTakeoverState && Date.now() < pendingTakeoverState.expiresAt) {
             const { text: groupText } = extractIncomingPayload(msg);
@@ -4209,7 +4307,7 @@ process.on('SIGINT', () => cleanShutdown('SIGINT'));
 
 const server = http.createServer(app);
 server.listen(PORT, async () => {
-    console.log(' [Server] Gatekeeper v1.5.5 (Baileys) is live on port ' + PORT);
+    console.log(' [Server] Gatekeeper v1.5.6 (Baileys) is live on port ' + PORT);
     
     await acquireLock();
     await ensureRegistryLoaded();
