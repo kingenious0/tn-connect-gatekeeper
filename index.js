@@ -1,6 +1,25 @@
 require('dotenv').config();
-process.on('uncaughtException', (err) => console.error(' [Crash Guard] Uncaught:', err.message));
-process.on('unhandledRejection', (err) => console.error(' [Crash Guard] Rejection:', err.message));
+
+// ==========================================
+// 📋 IN-MEMORY DIAGNOSTIC LOG BUFFER
+// ==========================================
+global.debugLogs = [];
+const addDebugLog = (msg) => {
+    try {
+        const timestamp = new Date().toISOString();
+        global.debugLogs.push(`[${timestamp}] ${msg}`);
+        if (global.debugLogs.length > 500) global.debugLogs.shift();
+    } catch (e) {}
+};
+
+process.on('uncaughtException', (err) => {
+    addDebugLog('[CRASH] Uncaught Exception: ' + err.message);
+    console.error(' [Crash Guard] Uncaught:', err.message);
+});
+process.on('unhandledRejection', (err) => {
+    addDebugLog('[CRASH] Unhandled Rejection: ' + (err?.message || String(err)));
+    console.error(' [Crash Guard] Rejection:', err?.message || String(err));
+});
 
 // ==========================================
 // 🔇 SIGNAL PROTOCOL LOG SUPPRESSION UTILITY (v1.6.1)
@@ -38,30 +57,37 @@ const shouldSuppressLog = (...args) => {
 
 console.log = function (...args) {
     if (shouldSuppressLog(...args)) return;
+    const joined = args.join(' ');
+    addDebugLog('[INFO] ' + joined);
     originalConsoleLog.apply(console, args);
 };
 
 const originalConsoleInfo = console.info;
 console.info = function (...args) {
     if (shouldSuppressLog(...args)) return;
+    const joined = args.join(' ');
+    addDebugLog('[INFO] ' + joined);
     originalConsoleInfo.apply(console, args);
 };
 
 const originalConsoleWarn = console.warn;
 console.warn = function (...args) {
     if (shouldSuppressLog(...args)) return;
+    const joined = args.join(' ');
+    addDebugLog('[WARN] ' + joined);
     originalConsoleWarn.apply(console, args);
 };
 
 const originalConsoleError = console.error;
 console.error = function (...args) {
-    // If it's a real crash guard warning, do NOT suppress!
     const joined = args.join(' ');
     if (joined.includes('[Crash Guard]')) {
+        addDebugLog('[ERROR] ' + joined);
         originalConsoleError.apply(console, args);
         return;
     }
     if (shouldSuppressLog(...args)) return;
+    addDebugLog('[ERROR] ' + joined);
     originalConsoleError.apply(console, args);
 };
 const { BaileysClient } = require('./baileys-client');
@@ -2441,8 +2467,16 @@ const handleAdminRegistration = async (jid, senderPhone, textInput) => {
 function wireBaileysEvents() {
     // Incoming messages
     client.onMessage = async (msg) => {
-        try { await processIncomingMessage(msg); }
-        catch (e) { console.error(' [Events] Error processing message:', e.message); }
+        try {
+            const jid = msg?.key?.remoteJid;
+            const fromMe = msg?.key?.fromMe;
+            addDebugLog(`[RECV] raw msg from=${jid} fromMe=${fromMe} keys=${msg?.message ? Object.keys(msg.message).join(',') : 'none'}`);
+            await processIncomingMessage(msg);
+        }
+        catch (e) {
+            addDebugLog(`[ERROR] onMessage: ${e.message}`);
+            console.error(' [Events] Error processing message:', e.message);
+        }
     };
 
     // Group participants changed
@@ -4017,6 +4051,9 @@ app.get('/debug/trace', (req, res) => {
         const lines = data.split('\n').filter(Boolean).slice(-100);
         res.json({ lines, count: lines.length });
     } catch (e) { res.json({ lines: [], error: e.message }); }
+});
+app.get('/debug/logs', (req, res) => {
+    res.json({ logs: global.debugLogs || [], count: global.debugLogs?.length || 0 });
 });
 app.post('/debug/testmod', async (req, res) => {
     const { groupJid, text, senderPhone } = req.body || {};
