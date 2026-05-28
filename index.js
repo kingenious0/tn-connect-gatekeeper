@@ -3,7 +3,7 @@ process.on('uncaughtException', (err) => console.error(' [Crash Guard] Uncaught:
 process.on('unhandledRejection', (err) => console.error(' [Crash Guard] Rejection:', err.message));
 
 // ==========================================
-// 🔇 SIGNAL PROTOCOL LOG SUPPRESSION UTILITY (v1.6.0)
+// 🔇 SIGNAL PROTOCOL LOG SUPPRESSION UTILITY (v1.6.1)
 // ==========================================
 const originalConsoleLog = console.log;
 const shouldSuppressLog = (...args) => {
@@ -271,7 +271,6 @@ const CAMPUS_ADMIN_ROSTER = [
     { phone: '233540509751', admin_name: 'Air Star' },
     { phone: '233506746307', admin_name: 'Kingenious' },
     { phone: '233597626090', admin_name: 'Kingenious' },
-    { phone: '233594390635', admin_name: 'Kingenious' },
     { phone: '233538719819', admin_name: 'Mr.Gyan' },
     { phone: '233595802277', admin_name: 'PROPHETIC BUSINESS' }
 ];
@@ -2556,7 +2555,7 @@ function wireBaileysEvents() {
 }
 
 // ==========================================
-// 📅 AUTOMATED TIMETABLE NOTIFICATION ENGINE (v1.6.0)
+// 📅 AUTOMATED TIMETABLE NOTIFICATION ENGINE (v1.6.1)
 // ==========================================
 const WEEKLY_TIMETABLE = [
     // Market Days for Niche Groups & Fun Page
@@ -3087,7 +3086,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
 
-    // 2.7 Role-specific Lock/Unlock Commands (v1.6.0)
+    // 2.7 Role-specific Lock/Unlock Commands (v1.6.1)
     const roleLockRegex = /^(lock|unlock)\s+(market|business|niche)\s*(?:groups|group)?$/i;
     const roleLockMatch = lower.match(roleLockRegex);
     if (roleLockMatch) {
@@ -3355,7 +3354,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             }
         }
     }
-    // 6.1.5 Dynamic Group Lock Status Check (v1.6.0) - whitelisted for Admins
+    // 6.1.5 Dynamic Group Lock Status Check (v1.6.1) - whitelisted for Admins
     if (lower === 'group statuses' || lower === 'group status' || lower === 'check locks' || lower === 'lock status' || lower === 'locks') {
         const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
         if (!allGroups.length) {
@@ -3394,7 +3393,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
 
-    // 6.2 List Discovered Groups (v1.6.0) - whitelisted for Admins
+    // 6.2 List Discovered Groups (v1.6.1) - whitelisted for Admins
     if (lower === 'list groups' || lower === 'show groups' || lower === 'groups list' || lower === 'groups') {
         const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
         if (!allGroups.length) {
@@ -3420,9 +3419,9 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
 
-    // 6.5 Timetable Testing Commands (v1.6.0) - ONLY for Kingenious (233597626090 / 233594390635)
+    // 6.5 Timetable Testing Commands (v1.6.1) - ONLY for Kingenious (233597626090)
     if (lower === 'test alerts' || lower === 'test alert') {
-        if (senderPhone !== '233597626090' && senderPhone !== '233594390635') {
+        if (senderPhone !== '233597626090') {
             await sendAntiBanMessage(jid, { text: '🔒 Sorry, only Kingenious (supreme owner) is authorized to trigger test alerts!' });
             return true;
         }
@@ -3448,7 +3447,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
     }
     
     if (lower === 'test market') {
-        if (senderPhone !== '233597626090' && senderPhone !== '233594390635') {
+        if (senderPhone !== '233597626090') {
             await sendAntiBanMessage(jid, { text: '🔒 Sorry, only Kingenious (supreme owner) is authorized to trigger test market!' });
             return true;
         }
@@ -3490,9 +3489,9 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
     
-    // 7. Active Social Convo Mode - ONLY for Kingenious (233597626090 / 233594390635)
+    // 7. Active Social Convo Mode - ONLY for Kingenious (233597626090)
     if (lower === 'join convo' || lower === 'join conversation' || lower === 'leave convo' || lower === 'leave conversation') {
-        if (senderPhone !== '233597626090' && senderPhone !== '233594390635') {
+        if (senderPhone !== '233597626090') {
             await sendAntiBanMessage(jid, { text: '🔒 Sorry, only Kingenious (supreme owner) is authorized to control Active Conversational Social Mode!' });
             return true;
         }
@@ -3587,7 +3586,7 @@ async function processIncomingMessage(msg) {
         const moderated = await handleGroupModeration(msg, jid, sender, senderPhone, isAdmin);
         if (moderated) return;
 
-        // 🔔 Interactive Takeover Response Handler in Leader Group (v1.6.0)
+        // 🔔 Interactive Takeover Response Handler in Leader Group (v1.6.1)
         const isLeaderGroup = jid === findLeaderGroupJid();
         if (isLeaderGroup && isAdmin && pendingTakeoverState && Date.now() < pendingTakeoverState.expiresAt) {
             const { text: groupText } = extractIncomingPayload(msg);
@@ -4371,7 +4370,7 @@ process.on('SIGINT', () => cleanShutdown('SIGINT'));
 
 const server = http.createServer(app);
 server.listen(PORT, async () => {
-    console.log(' [Server] Gatekeeper v1.6.0 (Baileys) is live on port ' + PORT);
+    console.log(' [Server] Gatekeeper v1.6.1 (Baileys) is live on port ' + PORT);
     
     await acquireLock();
     await ensureRegistryLoaded();
