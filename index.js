@@ -6,6 +6,18 @@ require('dotenv').config();
 global.debugLogs = [];
 const addDebugLog = (msg) => {
     try {
+        if (
+            msg.includes('Closing session') ||
+            msg.includes('SessionEntry') ||
+            msg.includes('Closing stale') ||
+            msg.includes('Closing open') ||
+            msg.includes('Removing old closed') ||
+            msg.includes('queue_job') ||
+            msg.includes('pendingPreKey') ||
+            msg.includes('ephemeralKeyPair')
+        ) {
+            return;
+        }
         const timestamp = new Date().toISOString();
         global.debugLogs.push(`[${timestamp}] ${msg}`);
         if (global.debugLogs.length > 500) global.debugLogs.shift();
