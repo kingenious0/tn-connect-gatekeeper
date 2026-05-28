@@ -193,6 +193,32 @@ const groupLockStates = new Map(); // lock/unlock wizard states per admin
 const registeredAdmins = new Map(); // local fallback cache of admins registered via WhatsApp DM
 const botAdminGroupCache = new Map(); // cache to track if the bot itself is an admin in groups
 
+const dbAdminCache = new Map();
+let lastDbAdminCacheTime = 0;
+const groupWarningCooldowns = new Map();
+
+const refreshDbAdminCache = async () => {
+    if (!supabase) return;
+    try {
+        const { data, error } = await supabase.from('gatekeeper_sessions')
+            .select('phone, admin_name, role').neq('role', 'core_gatekeeper_bot');
+        if (error) throw error;
+        dbAdminCache.clear();
+        if (data) {
+            for (const d of data) {
+                if (d.phone) {
+                    const phone = String(d.phone).replace(/\D/g, '');
+                    dbAdminCache.set(phone, { phone, name: d.admin_name, role: d.role });
+                }
+            }
+        }
+        lastDbAdminCacheTime = Date.now();
+        console.log(` [AdminCache] Loaded ${dbAdminCache.size} admin sessions from Supabase.`);
+    } catch (e) {
+        console.warn(' [AdminCache] Failed to refresh admin cache:', e.message);
+    }
+};
+
 const loadRegisteredAdmins = () => {
     if (!fs.existsSync(REGISTERED_ADMINS_FILE)) return {};
     try { return JSON.parse(fs.readFileSync(REGISTERED_ADMINS_FILE, 'utf-8')); }
@@ -1337,13 +1363,14 @@ const lookupBroadcastAdmin = async (senderPhone, rawJid) => {
     }
     if (rosterMatch) return { phone: rosterMatch.phone, name: resolveAdminDisplayName(rosterMatch.admin_name) };
     if (supabase) {
-        try {
-            const { data, error } = await supabase.from('gatekeeper_sessions')
-                .select('phone, admin_name, role').eq('phone', senderPhone).maybeSingle();
-            if (data && data.role !== 'core_gatekeeper_bot' && isBroadcastAdminRole(data.role)) {
-                return { phone: data.phone, name: resolveAdminDisplayName(data.admin_name) };
-            }
-        } catch (e) { }
+        const now = Date.now();
+        if (dbAdminCache.size === 0 || (now - lastDbAdminCacheTime > 120000)) {
+            refreshDbAdminCache().catch(() => {});
+        }
+        const cached = dbAdminCache.get(senderPhone);
+        if (cached && cached.role !== 'core_gatekeeper_bot' && isBroadcastAdminRole(cached.role)) {
+            return { phone: cached.phone, name: resolveAdminDisplayName(cached.name) };
+        }
     }
     // local fallback cache (admins registered via WhatsApp DM without Supabase)
     const localAdmin = registeredAdmins.get(senderPhone);
@@ -1508,28 +1535,37 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
     await delay(humanDelay);
     try {
         try { fs.appendFileSync('_trace.log', 'MOD_DELETE_ATTEMPT msgId=' + (msg.key.id || '?').substring(0, 20) + ' participant=' + (sender || '?').substring(0, 40) + '\n'); } catch (e) { }
-        for (let d = 0; d < 3; d++) {
-            try {
-                const delRes = await client.sock.sendMessage(jid, { delete: msg.key });
-                try { fs.appendFileSync('_trace.log', 'MOD_DELETE_OK attempt=' + d + ' resp=' + JSON.stringify(delRes).substring(0, 200) + '\n'); } catch (e) { }
-                break;
-            } catch (de) {
-                try { fs.appendFileSync('_trace.log', 'MOD_DELETE_FAIL attempt=' + d + ' err=' + de.message.substring(0, 100) + '\n'); } catch (e) { }
-                if (d === 2) throw de;
-                await delay(2000);
-            }
+        try {
+            await client.sock.sendMessage(jid, { delete: msg.key });
+            try { fs.appendFileSync('_trace.log', 'MOD_DELETE_OK\n'); } catch (e) { }
+        } catch (de) {
+            try { fs.appendFileSync('_trace.log', 'MOD_DELETE_FAIL err=' + de.message.substring(0, 100) + '\n'); } catch (e) { }
+            throw de;
         }
+        
         const alertText = isStatusMention
             ? '⚠️ @' + senderPhone + ' status mentions not allowed — deleted'
             : containsBadWord
                 ? '@' + senderPhone + ' 🚫 inappropriate language — deleted'
                 : customLinkAlert || '⚠️ @' + senderPhone + ' link sharing restricted — deleted';
+        
         const mentionsList = [sender];
         if (senderPhone) {
             mentionsList.push(senderPhone + '@s.whatsapp.net');
         }
-        await sendAntiBanMessage(jid, { text: alertText, options: { mentions: mentionsList } });
-        try { fs.appendFileSync('_trace.log', 'MOD_ALERT_SENT\n'); } catch (e) { }
+        
+        // Anti-Spam Public Warning Cooldown (v1.6.2) - At most 1 public warning every 30 seconds per group!
+        const now = Date.now();
+        const lastWarnTime = groupWarningCooldowns.get(jid) || 0;
+        if (now - lastWarnTime > 30000) {
+            await sendAntiBanMessage(jid, { text: alertText, options: { mentions: mentionsList } });
+            groupWarningCooldowns.set(jid, now);
+            try { fs.appendFileSync('_trace.log', 'MOD_ALERT_SENT\n'); } catch (e) { }
+        } else {
+            try { fs.appendFileSync('_trace.log', 'MOD_ALERT_SUPPRESSED_COOLDOWN\n'); } catch (e) { }
+            console.log(` [Moderation] Public warning suppressed for ${jid} due to 30s cooldown.`);
+        }
+        
         console.log(' [Moderation] Removed message from +' + senderPhone + ' in ' + jid);
     } catch (e) {
         try { fs.appendFileSync('_trace.log', 'MOD_FAILED err=' + e.message.substring(0, 150) + '\n'); } catch (e2) { }
@@ -4431,13 +4467,14 @@ process.on('SIGINT', () => cleanShutdown('SIGINT'));
 
 const server = http.createServer(app);
 server.listen(PORT, async () => {
-    console.log(' [Server] Gatekeeper v1.6.1 (Baileys) is live on port ' + PORT);
+    console.log(' [Server] Gatekeeper v1.6.2 (Baileys) is live on port ' + PORT);
     
     await acquireLock();
     await ensureRegistryLoaded();
 
     // Restore session meta & broadcast whitelist from Supabase (survives Redeploys)
     await restoreSessionMetaFromSupabase();
+    await refreshDbAdminCache().catch(() => {});
     await loadBroadcastWhitelistFromSupabase();
 
     // Initialize anti-ban module
