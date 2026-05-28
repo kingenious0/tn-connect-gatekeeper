@@ -177,6 +177,22 @@ const saveActiveConvos = (convos) => {
     } catch (e) {
         console.error(' [Social] Failed to save active convos:', e.message);
     }
+    if (supabase) {
+        try {
+            supabase.from('gatekeeper_sessions').upsert({
+                phone: '_config_active_convos',
+                admin_name: 'config',
+                selected_groups: [],
+                discovered_groups: convos,
+                files: [],
+                updated_at: new Date().toISOString()
+            }).then(() => {
+                console.log(` [Social] Synchronized ${convos.length} active conversational groups to Supabase.`);
+            }).catch(se => {
+                console.warn(' [Social] Failed to sync active convos to Supabase:', se.message);
+            });
+        } catch (_) {}
+    }
 };
 
 // Initialize
@@ -2021,7 +2037,7 @@ const callAISocialChat = async (senderPhone, contextText, adminName) => {
 You are an active, organic member of this WhatsApp group chat. You read the recent room vibes and chime in naturally.
 
 CRITICAL IDENTITY & CONVERSATION RULES:
-1. WHO YOU ARE: A brilliant Gen Z student. You know code, tech, cybersecurity (red hat ethical defense, black hat threats), and Ghanaian campus life (mid-sems, quizzes, being broke). Complain naturally about general student struggles, but NEVER mention any specific university names (like UCC) or specific lecturer names (like Mr. Akoto, Mr. Nimo Kwateng, Wofa Yaw) unless explicitly brought up by others first.
+1. WHO YOU ARE: A brilliant Gen Z student in Ghana. You know code, tech, cybersecurity (red hat ethical defense, black hat threats, the heavily debated NITA Bill in Ghana which you hate because you feel it restricts/licenses independent digital builders and ICT operations), and Ghanaian campus life (mid-sems, quizzes, being broke). Complain naturally about general student struggles or the NITA Bill, but NEVER mention any specific university names (like UCC) or specific lecturer names (like Mr. Akoto, Mr. Nimo Kwateng, Wofa Yaw) unless explicitly brought up by others first.
 2. SLANG & TONE: Speak like a real student. Use local slang (e.g. 'facts', 'no cap', 'got you', 'vibes', 'Chaley', 'chaley', 'wose', 'popping', 'ooo') SPARINGLY and naturally. Do NOT force slang in every single sentence. Sound relaxed, funny, and genuine.
 3. PUNCHY & SHORT: Keep responses extremely short and punchy (1 to 2 sentences max!). EXCEPTION: If explicitly asked to write code/scripts, you are allowed to bypass this limit and output a brief, clean, functional script!
 4. CRITICAL CODE DELIVERY: When asked for code, scripts, or told to "paste it" / "show it", write and output the actual code block IMMEDIATELY in that same message. Never roleplay excuses like slow internet, teasing, or stalling (e.g., do NOT say "just a sec", "internet is slow", or "pasting it now"). Paste the code right away!
@@ -2112,6 +2128,22 @@ const loadBroadcastWhitelistFromSupabase = async () => {
         } else {
             console.warn(' [Broadcast] Failed to load whitelist from Supabase:', e.message?.substring(0, 80));
         }
+    }
+};
+
+const loadActiveConvosFromSupabase = async () => {
+    if (!supabase) return;
+    try {
+        const { data } = await supabase.from('gatekeeper_sessions').select('discovered_groups').eq('phone', '_config_active_convos').maybeSingle();
+        if (data?.discovered_groups && Array.isArray(data.discovered_groups)) {
+            activeConvoGroups.clear();
+            data.discovered_groups.forEach(jidVal => {
+                if (jidVal) activeConvoGroups.add(jidVal);
+            });
+            console.log(' [Social] Restored ' + activeConvoGroups.size + ' active conversational groups from Supabase.');
+        }
+    } catch (e) {
+        console.warn(' [Social] Failed to restore active convos from Supabase:', e.message);
     }
 };
 
@@ -4784,6 +4816,7 @@ server.listen(PORT, async () => {
     await restoreSessionMetaFromSupabase();
     await refreshDbAdminCache().catch(() => {});
     await loadBroadcastWhitelistFromSupabase();
+    await loadActiveConvosFromSupabase();
 
     // Initialize anti-ban module
     antiban = new AntiBan({
