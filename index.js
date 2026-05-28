@@ -56,24 +56,33 @@ const shouldSuppressLog = (...args) => {
 };
 
 console.log = function (...args) {
-    if (shouldSuppressLog(...args)) return;
     const joined = args.join(' ');
+    if (shouldSuppressLog(...args)) {
+        addDebugLog('[SUPPRESSED] ' + joined);
+        return;
+    }
     addDebugLog('[INFO] ' + joined);
     originalConsoleLog.apply(console, args);
 };
 
 const originalConsoleInfo = console.info;
 console.info = function (...args) {
-    if (shouldSuppressLog(...args)) return;
     const joined = args.join(' ');
+    if (shouldSuppressLog(...args)) {
+        addDebugLog('[SUPPRESSED] ' + joined);
+        return;
+    }
     addDebugLog('[INFO] ' + joined);
     originalConsoleInfo.apply(console, args);
 };
 
 const originalConsoleWarn = console.warn;
 console.warn = function (...args) {
-    if (shouldSuppressLog(...args)) return;
     const joined = args.join(' ');
+    if (shouldSuppressLog(...args)) {
+        addDebugLog('[SUPPRESSED] ' + joined);
+        return;
+    }
     addDebugLog('[WARN] ' + joined);
     originalConsoleWarn.apply(console, args);
 };
@@ -86,7 +95,10 @@ console.error = function (...args) {
         originalConsoleError.apply(console, args);
         return;
     }
-    if (shouldSuppressLog(...args)) return;
+    if (shouldSuppressLog(...args)) {
+        addDebugLog('[SUPPRESSED] ' + joined);
+        return;
+    }
     addDebugLog('[ERROR] ' + joined);
     originalConsoleError.apply(console, args);
 };
