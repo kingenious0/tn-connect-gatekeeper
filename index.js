@@ -1362,18 +1362,35 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
     const isStatusMention = !!(msg.message?.groupStatusMentionMessage);
     try { fs.appendFileSync('_trace.log', 'MOD status=' + (msg.status || '?') + ' jid=' + jid + ' sender=' + senderPhone + ' isAdmin=' + isAdmin + ' text="' + textInput.substring(0, 80) + '" msgKeys=[' + (msg.message ? Object.keys(msg.message).join(',') : '') + ']\n'); } catch (e) { }
     const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/');
+    
+    let isLinkAllowed = false;
+    let customLinkAlert = null;
+    
+    if (containsLink && !isAdmin) {
+        const marketStatus = checkMarketDayWindow();
+        if (marketStatus.active) {
+            isLinkAllowed = true;
+        } else if (marketStatus.when === 'before') {
+            customLinkAlert = `⚠️ @${senderPhone} link sharing is not allowed yet! Please wait until the Market session begins at ${marketStatus.startTime} GMT! 🕒`;
+        } else if (marketStatus.when === 'after') {
+            customLinkAlert = `⚠️ @${senderPhone} link sharing is restricted! The marketing period ended at ${marketStatus.endTime} GMT! 🕒`;
+        }
+    }
+    
+    const activeContainsLink = containsLink && !isLinkAllowed;
+    
     const containsBadWord = BANNED_KEYWORDS.some(word => {
         if (word.includes(' ')) return lowerText.includes(word);
         const re = new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
         return re.test(lowerText);
     });
-    if (!containsLink && !containsBadWord && !isStatusMention) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP no link+no badword\n'); } catch (e) { } return false; }
+    if (!activeContainsLink && !containsBadWord && !isStatusMention) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP no link+no badword\n'); } catch (e) { } return false; }
     let shouldAct = false;
     if (isStatusMention) { shouldAct = true; }
     else if (isAdmin) { shouldAct = containsBadWord; }
-    else { shouldAct = containsBadWord || containsLink; }
-    if (!shouldAct) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP shouldAct=false isAdmin=' + isAdmin + ' link=' + containsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + '\n'); } catch (e) { } return false; }
-    try { fs.appendFileSync('_trace.log', 'MOD_ACT shouldAct=' + shouldAct + ' link=' + containsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + '\n'); } catch (e) { }
+    else { shouldAct = containsBadWord || activeContainsLink; }
+    if (!shouldAct) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP shouldAct=false isAdmin=' + isAdmin + ' link=' + activeContainsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + '\n'); } catch (e) { } return false; }
+    try { fs.appendFileSync('_trace.log', 'MOD_ACT shouldAct=' + shouldAct + ' link=' + activeContainsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + '\n'); } catch (e) { }
     const humanDelay = 1000 + Math.floor(Math.random() * 2000);
     await delay(humanDelay);
     try {
@@ -1393,7 +1410,7 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
             ? '⚠️ @' + senderPhone + ' status mentions not allowed — deleted'
             : containsBadWord
                 ? '@' + senderPhone + ' 🚫 inappropriate language — deleted'
-                : '⚠️ @' + senderPhone + ' link sharing restricted — deleted';
+                : customLinkAlert || '⚠️ @' + senderPhone + ' link sharing restricted — deleted';
         const mentionsList = [sender];
         if (senderPhone) {
             mentionsList.push(senderPhone + '@s.whatsapp.net');
@@ -2479,18 +2496,18 @@ function wireBaileysEvents() {
 // ==========================================
 const WEEKLY_TIMETABLE = [
     // Market Days for Niche Groups & Fun Page
-    { day: 1, time: "15:00", activity: "Market Days for Niche Groups & Fun Page" },
-    { day: 4, time: "13:00", activity: "Market Days for Niche Groups & Fun Page" },
-    { day: 0, time: "15:00", activity: "Market Days for Niche Groups & Fun Page" },
+    { day: 1, time: "15:00", endTime: "16:00", activity: "Market Days for Niche Groups & Fun Page", type: "niche_market" },
+    { day: 4, time: "13:00", endTime: "14:00", activity: "Market Days for Niche Groups & Fun Page", type: "niche_market" },
+    { day: 0, time: "15:00", endTime: "16:00", activity: "Market Days for Niche Groups & Fun Page", type: "niche_market" },
     
     // Market Days for the General Market Group (Usually Closed)
-    { day: 4, time: "11:00", activity: "Market Days for the General Market Group (Usually Closed)" },
-    { day: 0, time: "13:00", activity: "Market Days for the General Market Group (Usually Closed)" },
+    { day: 4, time: "11:00", endTime: "11:30", activity: "Market Days for the General Market Group (Usually Closed)", type: "general_market" },
+    { day: 0, time: "13:00", endTime: "13:30", activity: "Market Days for the General Market Group (Usually Closed)", type: "general_market" },
     
     // WhatsApp Calls Within Chosen Niche Groups
-    { day: 1, time: "19:00", activity: "WhatsApp Calls Within Chosen Niche Groups" },
-    { day: 4, time: "19:00", activity: "WhatsApp Calls Within Chosen Niche Groups" },
-    { day: 6, time: "19:00", activity: "WhatsApp Calls Within Chosen Niche Groups" },
+    { day: 1, time: "19:00", endTime: "21:00", activity: "WhatsApp Calls Within Chosen Niche Groups", type: "niche_calls" },
+    { day: 4, time: "19:00", endTime: "21:00", activity: "WhatsApp Calls Within Chosen Niche Groups", type: "niche_calls" },
+    { day: 6, time: "19:00", endTime: "21:00", activity: "WhatsApp Calls Within Chosen Niche Groups", type: "niche_calls" },
 
     // Morning announcements for Niche-Related Chats Only (All-day guide)
     { day: 2, time: "08:00", activity: "Niche-Related Chats Only", type: "all_day_morning" },
@@ -2500,10 +2517,55 @@ const WEEKLY_TIMETABLE = [
 
 const sentTimetableAlerts = new Set();
 let pendingTakeoverState = null; // { activityName: "...", expiresAt: 0 }
+let activeTakeoverSession = null; // Stores confirmed takeover activity: { activityName, type, startTime, endTime }
 
 const findLeaderGroupJid = () => {
     const found = cachedGroups.find(g => (g.subject || '').toLowerCase().includes('niche leaders'));
     return found ? found.jid : null;
+};
+
+const findGeneralMarketGroupJid = () => {
+    const found = cachedGroups.find(g => (g.subject || '').toLowerCase().includes('general market'));
+    return found ? found.jid : null;
+};
+
+const checkMarketDayWindow = () => {
+    const now = new Date();
+    const day = now.getUTCDay();
+    const hour = now.getUTCHours();
+    const minute = now.getUTCMinutes();
+    const currentTimeMs = (hour * 60 + minute) * 60000;
+    
+    const marketSchedules = [
+        { day: 1, startTime: "15:00", endTime: "16:00", name: "Market Days for Niche Groups & Fun Page" },
+        { day: 4, startTime: "13:00", endTime: "14:00", name: "Market Days for Niche Groups & Fun Page" },
+        { day: 0, startTime: "15:00", endTime: "16:00", name: "Market Days for Niche Groups & Fun Page" },
+        { day: 4, startTime: "11:00", endTime: "11:30", name: "Market Days for the General Market Group (Usually Closed)" },
+        { day: 0, startTime: "13:00", endTime: "13:30", name: "Market Days for the General Market Group (Usually Closed)" }
+    ];
+    
+    for (const s of marketSchedules) {
+        if (s.day !== day) continue;
+        
+        const [startHour, startMin] = s.startTime.split(':').map(Number);
+        const [endHour, endMin] = s.endTime.split(':').map(Number);
+        const startTimeMs = (startHour * 60 + startMin) * 60000;
+        const endTimeMs = (endHour * 60 + endMin) * 60000;
+        
+        if (currentTimeMs >= startTimeMs && currentTimeMs < endTimeMs) {
+            return { active: true, startTime: s.startTime, endTime: s.endTime };
+        }
+        
+        if (currentTimeMs < startTimeMs) {
+            return { active: false, when: 'before', startTime: s.startTime, endTime: s.endTime };
+        }
+        
+        if (currentTimeMs >= endTimeMs) {
+            return { active: false, when: 'after', startTime: s.startTime, endTime: s.endTime };
+        }
+    }
+    
+    return { active: false, when: 'different_day' };
 };
 
 const execute3MinBroadcast = async (activityName) => {
@@ -2588,11 +2650,21 @@ const checkTimetableAlerts = async () => {
     const day = now.getUTCDay();
     const hour = now.getUTCHours();
     const minute = now.getUTCMinutes();
+    const currentTimeMs = (hour * 60 + minute) * 60000;
     
     // Process timeout for unanswered leader takeover prompts (Option B: Auto-Takeover)
     if (pendingTakeoverState && Date.now() >= pendingTakeoverState.expiresAt) {
         const activityName = pendingTakeoverState.activityName;
         pendingTakeoverState = null; // Clear state
+        
+        // Register active takeover session!
+        const matchingItem = WEEKLY_TIMETABLE.find(item => item.activity === activityName);
+        activeTakeoverSession = {
+            activityName,
+            type: matchingItem?.type || 'normal',
+            startTime: matchingItem?.time || '00:00',
+            endTime: matchingItem?.endTime || '00:00'
+        };
         
         const leaderJid = findLeaderGroupJid();
         if (leaderJid) {
@@ -2602,6 +2674,29 @@ const checkTimetableAlerts = async () => {
                 console.log(` [Scheduler] Active takeover timeout: automatically took over "${activityName}"`);
             } catch (e) {
                 console.error(` [Scheduler] Failed to send auto-takeover confirmation to leaders:`, e.message);
+            }
+        }
+    }
+
+    // Process LOCK completions for General Market sessions under active takeover
+    if (activeTakeoverSession && activeTakeoverSession.type === 'general_market') {
+        const [eHour, eMin] = activeTakeoverSession.endTime.split(':').map(Number);
+        if (hour === eHour && minute === eMin) {
+            const activityName = activeTakeoverSession.activityName;
+            activeTakeoverSession = null; // Clear takeover session
+            
+            const targetJid = findGeneralMarketGroupJid();
+            if (targetJid) {
+                try {
+                    await client.setGroupAdminsOnly(targetJid, true); // Lock General Market Group!
+                    console.log(` [Scheduler] Locked General Market Group at end time: ${eHour}:${eMin}`);
+                    const leaderJid = findLeaderGroupJid();
+                    if (leaderJid) {
+                        await sendAntiBanMessage(leaderJid, { text: `Market session completed! 🔒 General Market Group has been successfully LOCKED back. You can continue resting! 🤖💤` });
+                    }
+                } catch (e) {
+                    console.error(` [Scheduler] Failed to lock General Market Group back:`, e.message);
+                }
             }
         }
     }
@@ -2623,9 +2718,33 @@ const checkTimetableAlerts = async () => {
         }
 
         const scheduledTimeMs = (sHour * 60 + sMin) * 60000;
-        const currentTimeMs = (hour * 60 + minute) * 60000;
         const diffMins = (scheduledTimeMs - currentTimeMs) / 60000;
         
+        // At start time (exactly 0 minutes before)
+        if (diffMins === 0) {
+            const key = `${day}-${hour}-${minute}-start`;
+            if (!sentTimetableAlerts.has(key)) {
+                sentTimetableAlerts.add(key);
+                
+                // If takeover is active for this General Market activity, UNLOCK group!
+                if (activeTakeoverSession && activeTakeoverSession.activityName === item.activity && item.type === 'general_market') {
+                    const targetJid = findGeneralMarketGroupJid();
+                    if (targetJid) {
+                        try {
+                            await client.setGroupAdminsOnly(targetJid, false); // Unlock General Market Group!
+                            console.log(` [Scheduler] Unlocked General Market Group at start time: ${item.time}`);
+                            const leaderJid = findLeaderGroupJid();
+                            if (leaderJid) {
+                                await sendAntiBanMessage(leaderJid, { text: `General Market Group has been successfully UNLOCKED for the market session! 🔓 Let the marketing begin!` });
+                            }
+                        } catch (e) {
+                            console.error(` [Scheduler] Failed to unlock General Market Group at start time:`, e.message);
+                        }
+                    }
+                }
+            }
+        }
+
         // 3-minute broadcast warning
         if (diffMins === 3) {
             const key = `${day}-${hour}-${minute}-3min`;
@@ -3090,6 +3209,55 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             }
         }
     }
+    // 6.5 Timetable Testing Commands (v1.5.2) - ONLY for Kingenious (233597626090)
+    if (lower === 'test alerts' || lower === 'test alert') {
+        if (senderPhone !== '233597626090') {
+            await sendAntiBanMessage(jid, { text: '🔒 Sorry, only Kingenious (supreme owner) is authorized to trigger test alerts!' });
+            return true;
+        }
+        
+        await sendAntiBanMessage(jid, { text: '🧪 *Initializing Test Alerts workflow...*' });
+        
+        // 1. Trigger 3-minute alert (to all groups except Leaders)
+        await execute3MinBroadcast("Test Market Session");
+        
+        // 2. Trigger 2-minute alert (to Niche Leaders with 30s takeover timeout for fast testing!)
+        const leaderJid = findLeaderGroupJid();
+        if (leaderJid) {
+            const promptText = `🔔 *[TEST]* TN Universities Connect Alert\n\nHi Leaders! It is almost time (2 mins) for *Test Market Session* to begin! Please get ready.\n\nShould I take over this task for you so that you can rest? Reply with *yes bot* or *takeover* to confirm! (Timeout set to 30 seconds for testing) 🤖💤`;
+            await sendAntiBanMessage(leaderJid, { text: promptText });
+            pendingTakeoverState = {
+                activityName: "Test Market Session",
+                expiresAt: Date.now() + 30000 // 30 seconds timeout for fast testing!
+            };
+        } else {
+            await sendAntiBanMessage(jid, { text: '❌ Could not find NICHE LEADERS group JID to post takeover prompt.' });
+        }
+        return true;
+    }
+    
+    if (lower === 'test market') {
+        if (senderPhone !== '233597626090') {
+            await sendAntiBanMessage(jid, { text: '🔒 Sorry, only Kingenious (supreme owner) is authorized to trigger test market!' });
+            return true;
+        }
+        
+        const targetJid = findGeneralMarketGroupJid();
+        if (!targetJid) {
+            await sendAntiBanMessage(jid, { text: '❌ Could not find the General Market Group in cache.' });
+            return true;
+        }
+        
+        await sendAntiBanMessage(jid, { text: '🧪 *Testing Market Group Unlocking (everyone can message)...*' });
+        await client.setGroupAdminsOnly(targetJid, false);
+        await delay(15000); // Wait 15 seconds
+        
+        await sendAntiBanMessage(jid, { text: '🧪 *Testing Market Group Locking (admins only)...*' });
+        await client.setGroupAdminsOnly(targetJid, true);
+        
+        await sendAntiBanMessage(jid, { text: '✅ *Market Lock/Unlock test complete!*' });
+        return true;
+    }
     
     // 7. Active Social Convo Mode - ONLY for Kingenious (233597626090)
     if (lower === 'join convo' || lower === 'join conversation' || lower === 'leave convo' || lower === 'leave conversation') {
@@ -3176,6 +3344,16 @@ async function processIncomingMessage(msg) {
             if (cleanMsg.includes('yes bot') || cleanMsg.includes('takeover') || cleanMsg === 'yes') {
                 const activityName = pendingTakeoverState.activityName;
                 pendingTakeoverState = null; // Clear state
+                
+                // Register active takeover session!
+                const matchingItem = WEEKLY_TIMETABLE.find(item => item.activity === activityName);
+                activeTakeoverSession = {
+                    activityName,
+                    type: matchingItem?.type || 'normal',
+                    startTime: matchingItem?.time || '00:00',
+                    endTime: matchingItem?.endTime || '00:00'
+                };
+                
                 await sendAntiBanMessage(jid, { text: `Roger that, Leaders! 🫡 Automated Takeover activated for ${activityName}. Rest easy, I've got this! ✨💤` });
                 return;
             }
