@@ -2474,11 +2474,194 @@ function wireBaileysEvents() {
     };
 }
 
+// ==========================================
+// 📅 AUTOMATED TIMETABLE NOTIFICATION ENGINE (v1.5.2)
+// ==========================================
+const WEEKLY_TIMETABLE = [
+    // Market Days for Niche Groups & Fun Page
+    { day: 1, time: "15:00", activity: "Market Days for Niche Groups & Fun Page" },
+    { day: 4, time: "13:00", activity: "Market Days for Niche Groups & Fun Page" },
+    { day: 0, time: "15:00", activity: "Market Days for Niche Groups & Fun Page" },
+    
+    // Market Days for the General Market Group (Usually Closed)
+    { day: 4, time: "11:00", activity: "Market Days for the General Market Group (Usually Closed)" },
+    { day: 0, time: "13:00", activity: "Market Days for the General Market Group (Usually Closed)" },
+    
+    // WhatsApp Calls Within Chosen Niche Groups
+    { day: 1, time: "19:00", activity: "WhatsApp Calls Within Chosen Niche Groups" },
+    { day: 4, time: "19:00", activity: "WhatsApp Calls Within Chosen Niche Groups" },
+    { day: 6, time: "19:00", activity: "WhatsApp Calls Within Chosen Niche Groups" },
+
+    // Morning announcements for Niche-Related Chats Only (All-day guide)
+    { day: 2, time: "08:00", activity: "Niche-Related Chats Only", type: "all_day_morning" },
+    { day: 3, time: "08:00", activity: "Niche-Related Chats Only", type: "all_day_morning" },
+    { day: 5, time: "08:00", activity: "Niche-Related Chats Only", type: "all_day_morning" }
+];
+
+const sentTimetableAlerts = new Set();
+let pendingTakeoverState = null; // { activityName: "...", expiresAt: 0 }
+
+const findLeaderGroupJid = () => {
+    const found = cachedGroups.find(g => (g.subject || '').toLowerCase().includes('niche leaders'));
+    return found ? found.jid : null;
+};
+
+const execute3MinBroadcast = async (activityName) => {
+    console.log(` [Scheduler] Sending 3-minute broadcast warning for: "${activityName}"`);
+    const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+    if (!allGroups.length) return;
+
+    const msgText = `📢 TN Universities Connect Notice\n\nHey guys! We have exactly 3 more minutes to kick start our ${activityName}! Get ready to dive in... let's go! 🚀🔥`;
+    
+    const leaderJid = findLeaderGroupJid();
+    const targets = allGroups.filter(g => g.jid !== leaderJid);
+    
+    let sent = 0;
+    for (let i = 0; i < targets.length; i++) {
+        const group = targets[i];
+        try {
+            await sendAntiBanMessage(group.jid, { text: msgText });
+            sent++;
+        } catch (e) {
+            console.error(` [Scheduler] Broadcast failed for ${group.subject}:`, e.message);
+        }
+        if (i < targets.length - 1) {
+            const pacingDelay = 3000 + Math.floor(Math.random() * 3000);
+            await delay(pacingDelay);
+        }
+    }
+    console.log(` [Scheduler] Finished 3-minute broadcast. Sent: ${sent}/${targets.length}`);
+};
+
+const execute2MinLeaderPrompt = async (activityName) => {
+    console.log(` [Scheduler] Sending 2-minute leader prompt for: "${activityName}"`);
+    const leaderJid = findLeaderGroupJid();
+    if (!leaderJid) {
+        console.warn(` [Scheduler] Could not find NICHE LEADERS - TN UNI group to send takeover prompt!`);
+        return;
+    }
+
+    const promptText = `🔔 TN Universities Connect Alert\n\nHi Leaders! It is almost time (2 mins) for ${activityName} to begin! Please get ready.\n\nShould I take over this task for you so that you can rest? Reply with "yes bot" or "takeover" to confirm! 🤖💤`;
+    
+    try {
+        await sendAntiBanMessage(leaderJid, { text: promptText });
+        pendingTakeoverState = {
+            activityName,
+            expiresAt: Date.now() + 120000
+        };
+        console.log(` [Scheduler] Sent takeover prompt to leaders. Active takeover state initialized.`);
+    } catch (e) {
+        console.error(` [Scheduler] Failed to send takeover prompt to leader group:`, e.message);
+    }
+};
+
+const executeMorningBroadcast = async (activityName) => {
+    console.log(` [Scheduler] Sending morning all-day broadcast for: "${activityName}"`);
+    const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+    if (!allGroups.length) return;
+
+    const msgText = `📢 TN Universities Connect Notice\n\nGood morning everyone! Just a quick reminder that today is Niche-Related Chats Only! Let's keep all discussions focused and high-value today! Have a great day! ✨📚`;
+    
+    const leaderJid = findLeaderGroupJid();
+    const targets = allGroups.filter(g => g.jid !== leaderJid);
+    
+    let sent = 0;
+    for (let i = 0; i < targets.length; i++) {
+        const group = targets[i];
+        try {
+            await sendAntiBanMessage(group.jid, { text: msgText });
+            sent++;
+        } catch (e) {
+            console.error(` [Scheduler] Morning broadcast failed for ${group.subject}:`, e.message);
+        }
+        if (i < targets.length - 1) {
+            const pacingDelay = 3000 + Math.floor(Math.random() * 3000);
+            await delay(pacingDelay);
+        }
+    }
+    console.log(` [Scheduler] Finished morning broadcast. Sent: ${sent}/${targets.length}`);
+};
+
+const checkTimetableAlerts = async () => {
+    // GMT timezone (Ghana local time)
+    const now = new Date();
+    const day = now.getUTCDay();
+    const hour = now.getUTCHours();
+    const minute = now.getUTCMinutes();
+    
+    // Process timeout for unanswered leader takeover prompts (Option B: Auto-Takeover)
+    if (pendingTakeoverState && Date.now() >= pendingTakeoverState.expiresAt) {
+        const activityName = pendingTakeoverState.activityName;
+        pendingTakeoverState = null; // Clear state
+        
+        const leaderJid = findLeaderGroupJid();
+        if (leaderJid) {
+            const autoTakeoverMsg = `Time is up! ⏰ Since I didn't get a response, I have automatically activated Takeover Mode for ${activityName} so you guys can rest! I'm on it! 🤖💤`;
+            try {
+                await sendAntiBanMessage(leaderJid, { text: autoTakeoverMsg });
+                console.log(` [Scheduler] Active takeover timeout: automatically took over "${activityName}"`);
+            } catch (e) {
+                console.error(` [Scheduler] Failed to send auto-takeover confirmation to leaders:`, e.message);
+            }
+        }
+    }
+
+    for (const item of WEEKLY_TIMETABLE) {
+        if (item.day !== day) continue;
+        
+        const [sHour, sMin] = item.time.split(':').map(Number);
+        
+        if (item.type === 'all_day_morning') {
+            if (hour === sHour && minute === sMin) {
+                const key = `${day}-${hour}-${minute}-morning`;
+                if (!sentTimetableAlerts.has(key)) {
+                    sentTimetableAlerts.add(key);
+                    await executeMorningBroadcast(item.activity);
+                }
+            }
+            continue;
+        }
+
+        const scheduledTimeMs = (sHour * 60 + sMin) * 60000;
+        const currentTimeMs = (hour * 60 + minute) * 60000;
+        const diffMins = (scheduledTimeMs - currentTimeMs) / 60000;
+        
+        // 3-minute broadcast warning
+        if (diffMins === 3) {
+            const key = `${day}-${hour}-${minute}-3min`;
+            if (!sentTimetableAlerts.has(key)) {
+                sentTimetableAlerts.add(key);
+                await execute3MinBroadcast(item.activity);
+            }
+        }
+        
+        // 2-minute leader prompt
+        if (diffMins === 2) {
+            const key = `${day}-${hour}-${minute}-2min`;
+            if (!sentTimetableAlerts.has(key)) {
+                sentTimetableAlerts.add(key);
+                await execute2MinLeaderPrompt(item.activity);
+            }
+        }
+    }
+
+    // Clean up sent keys once a day to avoid memory leaks
+    if (hour === 0 && minute === 0 && sentTimetableAlerts.size > 0) {
+        sentTimetableAlerts.clear();
+        console.log(' [Scheduler] Cleared daily timetable sent alert cache.');
+    }
+};
+
 function schedulePeriodicTasks() {
     // Memory monitoring
     setInterval(() => {
         const m = process.memoryUsage();
         console.log(' [Memory] RSS: ' + (m.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (m.heapUsed / 1024 / 1024).toFixed(1) + 'MB');
+    }, 60000);
+
+    // Weekly Timetable Alerts check loop (every 60 seconds)
+    setInterval(() => {
+        checkTimetableAlerts().catch(err => console.error(' [Scheduler] Error in timetable tick:', err.message));
     }, 60000);
 
     // Group cache refresh
@@ -2983,6 +3166,27 @@ async function processIncomingMessage(msg) {
         // Perform core group moderation (deleting link/badword/status-mention)
         const moderated = await handleGroupModeration(msg, jid, sender, senderPhone, isAdmin);
         if (moderated) return;
+
+        // 🔔 Interactive Takeover Response Handler in Leader Group (v1.5.2)
+        const isLeaderGroup = jid === findLeaderGroupJid();
+        if (isLeaderGroup && isAdmin && pendingTakeoverState && Date.now() < pendingTakeoverState.expiresAt) {
+            const { text: groupText } = extractIncomingPayload(msg);
+            const cleanMsg = (groupText || '').trim().toLowerCase();
+            
+            if (cleanMsg.includes('yes bot') || cleanMsg.includes('takeover') || cleanMsg === 'yes') {
+                const activityName = pendingTakeoverState.activityName;
+                pendingTakeoverState = null; // Clear state
+                await sendAntiBanMessage(jid, { text: `Roger that, Leaders! 🫡 Automated Takeover activated for ${activityName}. Rest easy, I've got this! ✨💤` });
+                return;
+            }
+            
+            if (cleanMsg.includes('no bot') || cleanMsg === 'no') {
+                const activityName = pendingTakeoverState.activityName;
+                pendingTakeoverState = null; // Clear state
+                await sendAntiBanMessage(jid, { text: `Understood, Leaders! 👍 I will stand down. You are in control of ${activityName} today! Go get 'em! 🔥` });
+                return;
+            }
+        }
 
         // 💬 Organic Spontaneous Social Conversation Mode (Checks everyone's messages!)
         if (activeConvoGroups.has(jid) && !msg.key.fromMe) {
