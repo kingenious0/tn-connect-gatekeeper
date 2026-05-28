@@ -3487,6 +3487,42 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
 
+    // 6.1.8 Weekly Timetable Status Check (v1.6.2) - whitelisted for Admins
+    if (lower === 'timetable' || lower === 'schedule' || lower === 'weekly timetable' || lower === 'weekly schedule') {
+        const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const now = new Date();
+        const currentDay = now.getUTCDay();
+        
+        // Group by day of week
+        const grouped = {};
+        for (const item of WEEKLY_TIMETABLE) {
+            if (!grouped[item.day]) grouped[item.day] = [];
+            grouped[item.day].push(item);
+        }
+        
+        const scheduleRows = [];
+        for (let i = 0; i < 7; i++) {
+            const dayName = daysOfWeek[i];
+            const items = grouped[i] || [];
+            if (items.length === 0) continue;
+            
+            const isToday = i === currentDay;
+            const todayTag = isToday ? ' 👈 *[TODAY]*' : '';
+            
+            const itemLines = items.map(item => {
+                const endStr = item.endTime ? ` - ${item.endTime}` : '';
+                return `   • *${item.time}${endStr}*: ${item.activity} (${item.type === 'niche_market' ? 'Niche Market' : item.type === 'general_market' ? 'General Market' : item.type === 'niche_calls' ? 'WhatsApp Call' : 'Morning Reminders'})`;
+            }).join('\n');
+            
+            scheduleRows.push(`📅 *${dayName}*${todayTag}\n${itemLines}`);
+        }
+        
+        const timeStr = now.toISOString().replace('T', ' ').substring(0, 19) + ' UTC/GMT';
+        const msgText = `📋 *TN Connect Automated Weekly Timetable*\n\nHere is the full automated timetable configuration that I monitor and execute:\n\n${scheduleRows.join('\n\n')}\n\n🕒 *Current Server Clock:* ${timeStr}`;
+        await sendAntiBanMessage(jid, { text: msgText });
+        return true;
+    }
+
     // 6.2 List Discovered Groups (v1.6.1) - whitelisted for Admins
     if (lower === 'list groups' || lower === 'show groups' || lower === 'groups list' || lower === 'groups') {
         const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
