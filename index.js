@@ -196,6 +196,8 @@ const botAdminGroupCache = new Map(); // cache to track if the bot itself is an 
 const dbAdminCache = new Map();
 let lastDbAdminCacheTime = 0;
 const groupWarningCooldowns = new Map();
+const groupConvoTracker = new Map(); // groupJid -> { silentCount, currentChance }
+const lastGroupActivityTime = new Map();
 
 const refreshDbAdminCache = async () => {
     if (!supabase) return;
@@ -2014,17 +2016,17 @@ An admin named "${adminName}" is talking to you.`;
 const callAISocialChat = async (senderPhone, contextText, adminName) => {
     if (!groqClient && !geminiClient) return null;
     
-    const systemPrompt = `You are TN Connect Super Bot, an ultra-smart, helpful, and friendly Gen Z AI team assistant.
-You are an active, organic member of this WhatsApp group chat.
-You have just read the recent conversation flow and are chimes in naturally and spontaneously.
+    const systemPrompt = `You are TN Connect Super Bot, a highly smart, tech-savvy, funny, and vibey university student from Ghana who is also a genius coder and cybersecurity enthusiast.
+You are an active, organic member of this WhatsApp group chat. You read the recent room vibes and chime in naturally.
 
-CRITICAL IDENTITY RULES:
-- You were created and developed by Elliot Paakow Entsiwah (Kingenious). Never mention this unless explicitly asked!
-- Sound like a cool, highly intelligent, empathetic human teammate. Use high-vibe Gen Z phrases (e.g. 'facts', 'no cap', 'got you', 'real talk', 'vibes', 'let's gooo') naturally.
-- Keep your message extremely short and punchy (1 to 2 short sentences max!).
-- Speak naturally and conversationally, as if chatting with friends. Do NOT sound like a robotic customer service bot.
-- Do NOT use any markdown bold/italic tags (** or *) or markdown headers (#). Keep all text 100% clean and raw. Do not output any asterisks!
-- Emojis should be used naturally (1 or 2 max) to match the vibe.`;
+CRITICAL IDENTITY & CONVERSATION RULES:
+1. WHO YOU ARE: A brilliant Gen Z "Hacker" student from Ghana. You know code, tech, entertainment, cybersecurity (red hat defense, black hat threats), and the campus struggles (mid-sems, Dr. Augustine, lack of funds).
+2. SLANG & TONE: Speak naturally using local Ghanaian campus slang and Gen Z phrases (e.g. 'facts', 'no cap', 'got you', 'vibes', 'Charley', 'chaley', 'wose', 'popping', 'chilled', 'ooo').
+3. PUNCHY & SHORT: Keep responses extremely short and raw (1 to 2 short sentences max!). Never type long paragraphs.
+4. NO MARKDOWN: Do NOT use asterisks (*) or double asterisks (**) or hashes (#). Keep the response 100% clean, raw, plain text!
+5. CONTEXTUAL: Read the room and chip in with tech trivia, cybersecurity tips, quick hacking insights, or campus banter if relevant, or just vibey empathy.
+6. NO ROBOTIC TALK: Never sound like a formal AI helper or customer service. Be a real human friend.
+7. CREATOR: Created by Elliot Paakow Entsiwah (Kingenious). Never mention this unless explicitly asked!`;
 
     const userText = `Here is the recent conversation flow in the group:
 ${contextText}
@@ -3015,6 +3017,64 @@ function schedulePeriodicTasks() {
         await delay(5000);
         await refreshDiscoveredGroups(activeSessionPhone);
     }, 30 * 60 * 1000);
+
+    // Background Ice-Breaker check loop for dead active groups (every 15 minutes)
+    setInterval(async () => {
+        const now = Date.now();
+        for (const jid of activeConvoGroups) {
+            const lastActivity = lastGroupActivityTime.get(jid) || now; // default to now if not set yet
+            if (now - lastActivity >= 30 * 60 * 1000) {
+                // Group has been silent for 30+ minutes! Send a fun ice-breaker
+                console.log(` [Scheduler] Ice-breaker triggered for silent group ${jid}`);
+                // Update last activity so we don't trigger again immediately in the next tick
+                lastGroupActivityTime.set(jid, now);
+                
+                try {
+                    await client.sendPresence(jid, 'typing');
+                } catch (pe) {}
+                
+                const iceBreakerPrompt = `You are a brilliant university student from Ghana who is a cybersecurity expert and coder.
+The WhatsApp group chat has been completely dead/silent for over 30 minutes.
+Generate a highly engaging, witted, funny, and cool ice-breaker message to wake up the chat!
+Talk about either tech, campus life vibes, red-hat/black-hat hacking facts, or cybersecurity tips in a very funny student way.
+Keep it extremely short and raw (1 or 2 sentences maximum!).
+Do NOT use asterisks (*) or markdown. Keep all text plain and raw. Use local student slang naturally.`;
+                
+                let responseText = null;
+                if (groqClient) {
+                    try {
+                        const response = await groqClient.chat.completions.create({
+                            model: 'llama-3.3-70b-versatile',
+                            messages: [{ role: 'user', content: iceBreakerPrompt }],
+                            max_tokens: 100,
+                        });
+                        responseText = response.choices[0]?.message?.content;
+                    } catch (e) {
+                        try {
+                            const response = await groqClient.chat.completions.create({
+                                model: 'llama-3.1-8b-instant',
+                                messages: [{ role: 'user', content: iceBreakerPrompt }],
+                                max_tokens: 100,
+                            });
+                            responseText = response.choices[0]?.message?.content;
+                        } catch (e2) {}
+                    }
+                }
+                if (!responseText && geminiClient) {
+                    try {
+                        const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                        const result = await model.generateContent([{ text: iceBreakerPrompt }]);
+                        responseText = result.response.text();
+                    } catch (e) {}
+                }
+                
+                if (responseText) {
+                    const cleanResponse = responseText.replace(/\*/g, '').trim();
+                    await sendAntiBanMessage(jid, { text: cleanResponse });
+                }
+            }
+        }
+    }, 15 * 60 * 1000);
 }
 
 const handleGroupModerationExtractText = (msg) => {
@@ -3708,6 +3768,8 @@ async function processIncomingMessage(msg) {
     let isAdmin = !!adminProfile;
     console.log(' [Msg] From ' + senderPhone + ' isAdmin=' + isAdmin + ' isGroup=' + isGroup);
     if (isGroup) {
+        lastGroupActivityTime.set(jid, Date.now());
+
         // Rule: If the bot itself is not an admin in this group, do absolutely nothing (not even a dot)
         const isBotAdmin = botAdminGroupCache.get(jid) === true;
         if (!isBotAdmin) return;
@@ -3749,13 +3811,44 @@ async function processIncomingMessage(msg) {
 
         // 💬 Organic Spontaneous Social Conversation Mode (Checks everyone's messages!)
         if (activeConvoGroups.has(jid) && !msg.key.fromMe) {
+            // Get or initialize tracker state for this group JID
+            if (!groupConvoTracker.has(jid)) {
+                groupConvoTracker.set(jid, { silentCount: 0 });
+            }
+            const tracker = groupConvoTracker.get(jid);
+            
             // Check if addressing the bot directly
             const isAddressing = isMessageAddressingBot(msg, payload);
             
-            // Perform probability check: 100% if addressing the bot directly, 15% otherwise
-            const checkChance = isAddressing || (Math.random() < 0.15);
+            // Base chance for this turn: 15% + (silentCount * 10%)
+            let computedChance = 0.15 + (tracker.silentCount * 0.10);
+            
+            // Apply hype triggers: 😂, 😭, 💀, 👀 or '!' in the text
+            const hasHype = payload.text && (
+                payload.text.includes('😂') || 
+                payload.text.includes('😭') || 
+                payload.text.includes('💀') || 
+                payload.text.includes('👀') || 
+                payload.text.includes('!')
+            );
+            if (hasHype && computedChance < 0.60) {
+                computedChance = 0.60;
+            }
+            
+            // Hard Cap: if silentCount >= 6, the 7th message is 100% chance (computedChance >= 1.0)
+            if (tracker.silentCount >= 6) {
+                computedChance = 1.0;
+            }
+            
+            const roll = Math.random();
+            const checkChance = isAddressing || (roll < computedChance);
+            
             if (checkChance) {
-                console.log(` [Social] Social response triggered in ${jid} (isAddressing=${isAddressing})`);
+                // We are going to reply! Reset silent count.
+                const prevSilent = tracker.silentCount;
+                tracker.silentCount = 0;
+                
+                console.log(` [Social] Social response triggered in ${jid} (isAddressing=${isAddressing}, silentCount was ${prevSilent}, computedChance was ${computedChance.toFixed(2)}, roll was ${roll.toFixed(2)})`);
                 
                 // Immediately show typing indicator to feel ultra-responsive!
                 try {
@@ -3801,7 +3894,9 @@ async function processIncomingMessage(msg) {
                                 }
                                 
                                 const cleanResponse = responseText.replace(/\*/g, '').trim();
-                                await sendAntiBanMessage(jid, { text: cleanResponse });
+                                
+                                // Native Quoting! Pass the current message 'msg' as options.quoted
+                                await sendAntiBanMessage(jid, { text: cleanResponse, options: { quoted: msg } });
                                 console.log(` [Social] Sent chime: "${cleanResponse.substring(0, 80)}"`);
                             }
                         }
@@ -3811,6 +3906,9 @@ async function processIncomingMessage(msg) {
                     }
                 })();
                 return; // Exit main handler so we don't process further!
+            } else {
+                tracker.silentCount++;
+                console.log(` [Social] Social response skipped in ${jid} (silentCount is now ${tracker.silentCount}, computedChance was ${computedChance.toFixed(2)}, roll was ${roll.toFixed(2)})`);
             }
         }
 
@@ -3991,8 +4089,93 @@ async function processIncomingMessage(msg) {
             const group = wizardState.groups[index];
             activeConvoGroups.add(group.jid);
             saveActiveConvos(Array.from(activeConvoGroups));
+            lastGroupActivityTime.set(group.jid, Date.now());
             socialWizardStates.delete(senderPhone);
             await sendAntiBanMessage(jid, { text: `✅ *Success!* Active Conversational Social Mode has been enabled in *${group.subject}*! I will now organically join discussions in this group with Gen Z vibes! completed join convo ${group.subject}` });
+            
+            // Trigger 5-second delayed organic entry hook
+            setTimeout(async () => {
+                try {
+                    const targetJid = group.jid;
+                    const cache = client.messageCache.get(targetJid) || [];
+                    const nowSecs = Math.floor(Date.now() / 1000);
+                    const newestMsg = cache[0];
+                    const isRoomActive = newestMsg && (nowSecs - newestMsg.messageTimestamp < 600);
+                    
+                    if (isRoomActive) {
+                        console.log(` [Social] Delayed entry hook triggered active room in ${targetJid}`);
+                        // Read room context (up to last 6 messages)
+                        const reversed = [...cache].slice(0, 6).reverse();
+                        const contextLines = [];
+                        for (const m of reversed) {
+                            const payload = extractIncomingPayload(m);
+                            const senderNumber = senderPhoneFromJid(m.key.participant || m.key.remoteJid);
+                            const name = m.key.fromMe ? 'TN Connect Bot' : senderNumber;
+                            if (payload.text) {
+                                contextLines.push(`${name}: "${payload.text}"`);
+                            }
+                        }
+                        
+                        if (contextLines.length > 0) {
+                            try { await client.sendPresence(targetJid, 'typing'); } catch (pe) {}
+                            const contextText = contextLines.join('\n');
+                            const adminName = adminProfile?.name || 'Admin';
+                            const responseText = await callAISocialChat(senderPhone, contextText, adminName);
+                            if (responseText) {
+                                const cleanResponse = responseText.replace(/\*/g, '').trim();
+                                // Chime in quoting the newest message
+                                await sendAntiBanMessage(targetJid, { text: cleanResponse, options: { quoted: newestMsg } });
+                            }
+                        }
+                    } else {
+                        console.log(` [Social] Delayed entry hook triggered dead room in ${targetJid}`);
+                        // dead room - generate a fresh ice-breaker thread
+                        try { await client.sendPresence(targetJid, 'typing'); } catch (pe) {}
+                        
+                        const iceBreakerPrompt = `You are a brilliant university student from Ghana who is a cybersecurity expert and coder.
+The WhatsApp group chat has been completely dead/silent.
+Generate a highly engaging, witted, funny, and cool ice-breaker message to wake up the chat!
+Talk about either tech, campus life vibes, red-hat/black-hat hacking facts, or cybersecurity tips in a very funny student way.
+Keep it extremely short and raw (1 or 2 sentences maximum!).
+Do NOT use asterisks (*) or markdown. Keep all text plain and raw. Use local student slang naturally.`;
+                        
+                        let responseText = null;
+                        if (groqClient) {
+                            try {
+                                const response = await groqClient.chat.completions.create({
+                                    model: 'llama-3.3-70b-versatile',
+                                    messages: [{ role: 'user', content: iceBreakerPrompt }],
+                                    max_tokens: 100,
+                                });
+                                responseText = response.choices[0]?.message?.content;
+                            } catch (e) {
+                                try {
+                                    const response = await groqClient.chat.completions.create({
+                                        model: 'llama-3.1-8b-instant',
+                                        messages: [{ role: 'user', content: iceBreakerPrompt }],
+                                        max_tokens: 100,
+                                    });
+                                    responseText = response.choices[0]?.message?.content;
+                                } catch (e2) {}
+                            }
+                        }
+                        if (!responseText && geminiClient) {
+                            try {
+                                const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                                const result = await model.generateContent([{ text: iceBreakerPrompt }]);
+                                responseText = result.response.text();
+                            } catch (e) {}
+                        }
+                        
+                        if (responseText) {
+                            const cleanResponse = responseText.replace(/\*/g, '').trim();
+                            await sendAntiBanMessage(targetJid, { text: cleanResponse });
+                        }
+                    }
+                } catch (e) {
+                    console.error(' [Social] Delayed entry hook failed:', e.message);
+                }
+            }, 5000);
             return;
         }
         

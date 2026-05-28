@@ -144,7 +144,12 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
             }
         }
 
-        return this.sock.sendMessage(to, msg);
+        const msgOptions = {};
+        if (options.quoted) {
+            msgOptions.quoted = options.quoted;
+        }
+
+        return this.sock.sendMessage(to, msg, msgOptions);
     }
 
     async sendMedia(to, mediaUrl, caption, options = {}) {
