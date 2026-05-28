@@ -2492,7 +2492,7 @@ function wireBaileysEvents() {
 }
 
 // ==========================================
-// 📅 AUTOMATED TIMETABLE NOTIFICATION ENGINE (v1.5.4)
+// 📅 AUTOMATED TIMETABLE NOTIFICATION ENGINE (v1.5.5)
 // ==========================================
 const WEEKLY_TIMETABLE = [
     // Market Days for Niche Groups & Fun Page
@@ -3232,7 +3232,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             }
         }
     }
-    // 6.2 List Discovered Groups (v1.5.4) - whitelisted for Admins
+    // 6.2 List Discovered Groups (v1.5.5) - whitelisted for Admins
     if (lower === 'list groups' || lower === 'show groups' || lower === 'groups list' || lower === 'groups') {
         const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
         if (!allGroups.length) {
@@ -3258,7 +3258,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
 
-    // 6.5 Timetable Testing Commands (v1.5.4) - ONLY for Kingenious (233597626090)
+    // 6.5 Timetable Testing Commands (v1.5.5) - ONLY for Kingenious (233597626090)
     if (lower === 'test alerts' || lower === 'test alert') {
         if (senderPhone !== '233597626090') {
             await sendAntiBanMessage(jid, { text: '🔒 Sorry, only Kingenious (supreme owner) is authorized to trigger test alerts!' });
@@ -3369,6 +3369,27 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
     return false;
 };
 
+const isMessageAddressingBot = (msg, payload) => {
+    if (!payload || !payload.text) return false;
+    const cleanText = payload.text.toLowerCase();
+    
+    // 1. Check if the word "bot" is explicitly mentioned as a word
+    if (/\bbot\b/i.test(cleanText)) return true;
+    
+    // 2. Check if the bot's own number is tagged/mentioned
+    const botPhone = client?.user ? senderPhoneFromJid(client.user.id) : '';
+    if (botPhone && cleanText.includes(botPhone)) return true;
+    
+    // 3. Check if it's a quote reply to the bot's own message
+    const quotedParticipant = msg.message?.extendedTextMessage?.contextInfo?.participant || '';
+    if (quotedParticipant) {
+        const quotedPhone = senderPhoneFromJid(quotedParticipant);
+        if (botPhone && quotedPhone === botPhone) return true;
+    }
+    
+    return false;
+};
+
 async function processIncomingMessage(msg) {
     if (!msg || !msg.key || msg.key.fromMe) return;
     const jid = msg.key.remoteJid;
@@ -3404,7 +3425,7 @@ async function processIncomingMessage(msg) {
         const moderated = await handleGroupModeration(msg, jid, sender, senderPhone, isAdmin);
         if (moderated) return;
 
-        // 🔔 Interactive Takeover Response Handler in Leader Group (v1.5.4)
+        // 🔔 Interactive Takeover Response Handler in Leader Group (v1.5.5)
         const isLeaderGroup = jid === findLeaderGroupJid();
         if (isLeaderGroup && isAdmin && pendingTakeoverState && Date.now() < pendingTakeoverState.expiresAt) {
             const { text: groupText } = extractIncomingPayload(msg);
@@ -3437,11 +3458,21 @@ async function processIncomingMessage(msg) {
 
         // 💬 Organic Spontaneous Social Conversation Mode (Checks everyone's messages!)
         if (activeConvoGroups.has(jid) && !msg.key.fromMe) {
-            // Perform 15% probability check
-            const checkChance = Math.random() < 0.15;
+            // Check if addressing the bot directly
+            const isAddressing = isMessageAddressingBot(msg, payload);
+            
+            // Perform probability check: 100% if addressing the bot directly, 15% otherwise
+            const checkChance = isAddressing || (Math.random() < 0.15);
             if (checkChance) {
-                console.log(` [Social] Spontaneous chime triggered in ${jid} (15% chance met)`);
+                console.log(` [Social] Social response triggered in ${jid} (isAddressing=${isAddressing})`);
+                
+                // Immediately show typing indicator to feel ultra-responsive!
+                try {
+                    await client.sendPresence(jid, 'typing');
+                } catch (pe) {}
+                
                 (async () => {
+                    let typingInterval = null;
                     try {
                         // Gather context from client messageCache
                         const cache = client.messageCache.get(jid) || [];
@@ -3461,13 +3492,22 @@ async function processIncomingMessage(msg) {
                         if (contextLines.length > 0) {
                             const contextText = contextLines.join('\n');
                             const adminName = adminProfile?.name || 'Admin';
+                            
+                            // Keep typing presence alive during the API call
+                            typingInterval = setInterval(() => {
+                                try { client.sendPresence(jid, 'typing'); } catch (e) {}
+                            }, 5000);
+                            
+                            const startTime = Date.now();
                             const responseText = await callAISocialChat(senderPhone, contextText, adminName);
+                            if (typingInterval) clearInterval(typingInterval);
                             
                             if (responseText) {
-                                // Add typing presence effect for a natural human feel
-                                await client.sendPresence(jid, 'typing');
-                                const humanDelay = 3000 + Math.floor(Math.random() * 3000);
-                                await delay(humanDelay);
+                                // Natural pacing delay: we want the typing state to be visible for at least 1.5s
+                                const elapsed = Date.now() - startTime;
+                                if (elapsed < 1500) {
+                                    await delay(1500 - elapsed);
+                                }
                                 
                                 const cleanResponse = responseText.replace(/\*/g, '').trim();
                                 await sendAntiBanMessage(jid, { text: cleanResponse });
@@ -3475,6 +3515,7 @@ async function processIncomingMessage(msg) {
                             }
                         }
                     } catch (e) {
+                        if (typingInterval) clearInterval(typingInterval);
                         console.error(' [Social] Spontaneous chime failed:', e.message);
                     }
                 })();
@@ -4168,7 +4209,7 @@ process.on('SIGINT', () => cleanShutdown('SIGINT'));
 
 const server = http.createServer(app);
 server.listen(PORT, async () => {
-    console.log(' [Server] Gatekeeper v1.5.4 (Baileys) is live on port ' + PORT);
+    console.log(' [Server] Gatekeeper v1.5.5 (Baileys) is live on port ' + PORT);
     
     await acquireLock();
     await ensureRegistryLoaded();
