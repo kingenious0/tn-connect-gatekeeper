@@ -2492,7 +2492,7 @@ function wireBaileysEvents() {
 }
 
 // ==========================================
-// 📅 AUTOMATED TIMETABLE NOTIFICATION ENGINE (v1.5.2)
+// 📅 AUTOMATED TIMETABLE NOTIFICATION ENGINE (v1.5.3)
 // ==========================================
 const WEEKLY_TIMETABLE = [
     // Market Days for Niche Groups & Fun Page
@@ -2524,9 +2524,13 @@ const findLeaderGroupJid = () => {
     return found ? found.jid : null;
 };
 
-const findGeneralMarketGroupJid = () => {
-    const found = cachedGroups.find(g => (g.subject || '').toLowerCase().includes('general market'));
-    return found ? found.jid : null;
+const findGeneralMarketGroupJids = () => {
+    return cachedGroups
+        .filter(g => {
+            const subj = (g.subject || '').toLowerCase();
+            return subj.includes('market') && !subj.includes('niche leaders');
+        })
+        .map(g => g.jid);
 };
 
 const checkMarketDayWindow = () => {
@@ -2696,17 +2700,21 @@ const checkTimetableAlerts = async () => {
             const activityName = activeTakeoverSession.activityName;
             activeTakeoverSession = null; // Clear takeover session
             
-            const targetJid = findGeneralMarketGroupJid();
-            if (targetJid) {
+            const targetJids = findGeneralMarketGroupJids();
+            let lockedCount = 0;
+            for (const tjid of targetJids) {
                 try {
-                    await client.setGroupAdminsOnly(targetJid, true); // Lock General Market Group!
-                    console.log(` [Scheduler] Locked General Market Group at end time: ${eHour}:${eMin}`);
-                    const leaderJid = findLeaderGroupJid();
-                    if (leaderJid) {
-                        await sendAntiBanMessage(leaderJid, { text: `Market session completed! 🔒 General Market Group has been successfully LOCKED back. You can continue resting! 🤖💤` });
-                    }
+                    await client.setGroupAdminsOnly(tjid, true); // Lock General Market Group!
+                    lockedCount++;
                 } catch (e) {
-                    console.error(` [Scheduler] Failed to lock General Market Group back:`, e.message);
+                    console.error(` [Scheduler] Failed to lock group ${tjid} back:`, e.message);
+                }
+            }
+            if (lockedCount > 0) {
+                console.log(` [Scheduler] Locked ${lockedCount} General Market Groups at end time: ${eHour}:${eMin}`);
+                const leaderJid = findLeaderGroupJid();
+                if (leaderJid) {
+                    await sendAntiBanMessage(leaderJid, { text: `Market session completed! 🔒 General Market Groups (${lockedCount}) have been successfully LOCKED back. You can continue resting! 🤖💤` });
                 }
             }
         }
@@ -2739,17 +2747,21 @@ const checkTimetableAlerts = async () => {
                 
                 // If takeover is active for this General Market activity, UNLOCK group!
                 if (activeTakeoverSession && activeTakeoverSession.activityName === item.activity && item.type === 'general_market') {
-                    const targetJid = findGeneralMarketGroupJid();
-                    if (targetJid) {
+                    const targetJids = findGeneralMarketGroupJids();
+                    let unlockedCount = 0;
+                    for (const tjid of targetJids) {
                         try {
-                            await client.setGroupAdminsOnly(targetJid, false); // Unlock General Market Group!
-                            console.log(` [Scheduler] Unlocked General Market Group at start time: ${item.time}`);
-                            const leaderJid = findLeaderGroupJid();
-                            if (leaderJid) {
-                                await sendAntiBanMessage(leaderJid, { text: `General Market Group has been successfully UNLOCKED for the market session! 🔓 Let the marketing begin!` });
-                            }
+                            await client.setGroupAdminsOnly(tjid, false); // Unlock General Market Group!
+                            unlockedCount++;
                         } catch (e) {
-                            console.error(` [Scheduler] Failed to unlock General Market Group at start time:`, e.message);
+                            console.error(` [Scheduler] Failed to unlock General Market Group ${tjid} at start time:`, e.message);
+                        }
+                    }
+                    if (unlockedCount > 0) {
+                        console.log(` [Scheduler] Unlocked ${unlockedCount} General Market Groups at start time: ${item.time}`);
+                        const leaderJid = findLeaderGroupJid();
+                        if (leaderJid) {
+                            await sendAntiBanMessage(leaderJid, { text: `General Market Groups (${unlockedCount}) have been successfully UNLOCKED for the market session! 🔓 Let the marketing begin!` });
                         }
                     }
                 }
@@ -3220,7 +3232,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             }
         }
     }
-    // 6.2 List Discovered Groups (v1.5.2) - whitelisted for Admins
+    // 6.2 List Discovered Groups (v1.5.3) - whitelisted for Admins
     if (lower === 'list groups' || lower === 'show groups' || lower === 'groups list' || lower === 'groups') {
         const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
         if (!allGroups.length) {
@@ -3229,12 +3241,14 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         }
         
         const leaderJid = findLeaderGroupJid();
-        const genMarketJid = findGeneralMarketGroupJid();
+        const genMarketJids = findGeneralMarketGroupJids();
         
         const rows = allGroups.map((g, i) => {
             let role = '📦 Niche Group';
+            const subj = (g.subject || '').toLowerCase();
             if (g.jid === leaderJid) role = '👑 Niche Leaders Group';
-            else if (g.jid === genMarketJid) role = '🏪 General Market Group';
+            else if (genMarketJids.includes(g.jid)) role = '🏪 General Market Group';
+            else if (subj.includes('business hub') || subj.includes('business')) role = '💼 Business Group';
             
             return `${i + 1}. ${g.subject}\n   • Role: ${role}\n   • JID: ${g.jid}`;
         });
@@ -3244,7 +3258,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
 
-    // 6.5 Timetable Testing Commands (v1.5.2) - ONLY for Kingenious (233597626090)
+    // 6.5 Timetable Testing Commands (v1.5.3) - ONLY for Kingenious (233597626090)
     if (lower === 'test alerts' || lower === 'test alert') {
         if (senderPhone !== '233597626090') {
             await sendAntiBanMessage(jid, { text: '🔒 Sorry, only Kingenious (supreme owner) is authorized to trigger test alerts!' });
@@ -3390,7 +3404,7 @@ async function processIncomingMessage(msg) {
         const moderated = await handleGroupModeration(msg, jid, sender, senderPhone, isAdmin);
         if (moderated) return;
 
-        // 🔔 Interactive Takeover Response Handler in Leader Group (v1.5.2)
+        // 🔔 Interactive Takeover Response Handler in Leader Group (v1.5.3)
         const isLeaderGroup = jid === findLeaderGroupJid();
         if (isLeaderGroup && isAdmin && pendingTakeoverState && Date.now() < pendingTakeoverState.expiresAt) {
             const { text: groupText } = extractIncomingPayload(msg);
@@ -4154,7 +4168,7 @@ process.on('SIGINT', () => cleanShutdown('SIGINT'));
 
 const server = http.createServer(app);
 server.listen(PORT, async () => {
-    console.log(' [Server] Gatekeeper v1.5.1 (Baileys) is live on port ' + PORT);
+    console.log(' [Server] Gatekeeper v1.5.3 (Baileys) is live on port ' + PORT);
     
     await acquireLock();
     await ensureRegistryLoaded();
