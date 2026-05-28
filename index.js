@@ -198,6 +198,7 @@ let lastDbAdminCacheTime = 0;
 const groupWarningCooldowns = new Map();
 const groupConvoTracker = new Map(); // groupJid -> { silentCount, currentChance }
 const lastGroupActivityTime = new Map();
+const lastBotReplyTime = new Map();
 
 const refreshDbAdminCache = async () => {
     if (!supabase) return;
@@ -3071,6 +3072,7 @@ Do NOT use asterisks (*) or markdown. Keep all text plain and raw. Use local stu
                 if (responseText) {
                     const cleanResponse = responseText.replace(/\*/g, '').trim();
                     await sendAntiBanMessage(jid, { text: cleanResponse });
+                    lastBotReplyTime.set(jid, Date.now());
                 }
             }
         }
@@ -3820,8 +3822,16 @@ async function processIncomingMessage(msg) {
             // Check if addressing the bot directly
             const isAddressing = isMessageAddressingBot(msg, payload);
             
+            // Active Flow State: if the bot replied in the last 90 seconds, boost the base chance to 70%
+            const lastBotReply = lastBotReplyTime.get(jid) || 0;
+            const inActiveFlow = (Date.now() - lastBotReply) < 90 * 1000;
+            
             // Base chance for this turn: 15% + (silentCount * 10%)
             let computedChance = 0.15 + (tracker.silentCount * 0.10);
+            
+            if (inActiveFlow && computedChance < 0.70) {
+                computedChance = 0.70;
+            }
             
             // Apply hype triggers: 😂, 😭, 💀, 👀 or '!' in the text
             const hasHype = payload.text && (
@@ -3897,6 +3907,7 @@ async function processIncomingMessage(msg) {
                                 
                                 // Native Quoting! Pass the current message 'msg' as options.quoted
                                 await sendAntiBanMessage(jid, { text: cleanResponse, options: { quoted: msg } });
+                                lastBotReplyTime.set(jid, Date.now());
                                 console.log(` [Social] Sent chime: "${cleanResponse.substring(0, 80)}"`);
                             }
                         }
@@ -4125,6 +4136,7 @@ async function processIncomingMessage(msg) {
                                 const cleanResponse = responseText.replace(/\*/g, '').trim();
                                 // Chime in quoting the newest message
                                 await sendAntiBanMessage(targetJid, { text: cleanResponse, options: { quoted: newestMsg } });
+                                lastBotReplyTime.set(targetJid, Date.now());
                             }
                         }
                     } else {
@@ -4170,6 +4182,7 @@ Do NOT use asterisks (*) or markdown. Keep all text plain and raw. Use local stu
                         if (responseText) {
                             const cleanResponse = responseText.replace(/\*/g, '').trim();
                             await sendAntiBanMessage(targetJid, { text: cleanResponse });
+                            lastBotReplyTime.set(targetJid, Date.now());
                         }
                     }
                 } catch (e) {
