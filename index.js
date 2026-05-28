@@ -2568,26 +2568,37 @@ const checkMarketDayWindow = () => {
     return { active: false, when: 'different_day' };
 };
 
-const execute3MinBroadcast = async (activityName) => {
-    console.log(` [Scheduler] Sending 3-minute broadcast warning for: "${activityName}"`);
+const execute3MinBroadcast = async (activityName, isTest = false) => {
+    console.log(` [Scheduler] Sending 3-minute broadcast warning for: "${activityName}" (isTest=${isTest})`);
     const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
     if (!allGroups.length) return;
 
     const msgText = `📢 TN Universities Connect Notice\n\nHey guys! We have exactly 3 more minutes to kick start our ${activityName}! Get ready to dive in... let's go! 🚀🔥`;
     
     const leaderJid = findLeaderGroupJid();
-    const targets = allGroups.filter(g => g.jid !== leaderJid);
+    
+    // If it's a test, only target groups with 'test' or 'testing' in their name
+    let targets = allGroups;
+    if (isTest) {
+        targets = allGroups.filter(g => {
+            const subj = (g.subject || '').toLowerCase();
+            return subj.includes('testing') || subj.includes('test');
+        });
+    }
+    
+    const targetsFiltered = targets.filter(g => g.jid !== leaderJid);
+    const targetsFinal = targetsFiltered;
     
     let sent = 0;
-    for (let i = 0; i < targets.length; i++) {
-        const group = targets[i];
+    for (let i = 0; i < targetsFinal.length; i++) {
+        const group = targetsFinal[i];
         try {
             await sendAntiBanMessage(group.jid, { text: msgText });
             sent++;
         } catch (e) {
             console.error(` [Scheduler] Broadcast failed for ${group.subject}:`, e.message);
         }
-        if (i < targets.length - 1) {
+        if (i < targetsFinal.length - 1) {
             const pacingDelay = 3000 + Math.floor(Math.random() * 3000);
             await delay(pacingDelay);
         }
@@ -3216,10 +3227,10 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             return true;
         }
         
-        await sendAntiBanMessage(jid, { text: '🧪 *Initializing Test Alerts workflow...*' });
+        await sendAntiBanMessage(jid, { text: '🧪 *Initializing Test Alerts workflow (sending 3-minute alert to test groups only)...*' });
         
-        // 1. Trigger 3-minute alert (to all groups except Leaders)
-        await execute3MinBroadcast("Test Market Session");
+        // 1. Trigger 3-minute alert (passing isTest = true so it ONLY goes to test groups!)
+        await execute3MinBroadcast("Test Market Session", true);
         
         // 2. Trigger 2-minute alert (to Niche Leaders with 30s takeover timeout for fast testing!)
         const leaderJid = findLeaderGroupJid();
@@ -3242,18 +3253,38 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             return true;
         }
         
-        const targetJid = findGeneralMarketGroupJid();
-        if (!targetJid) {
-            await sendAntiBanMessage(jid, { text: '❌ Could not find the General Market Group in cache.' });
+        // Find a test group first (contains testing/test, like TN TESTING GROUP)
+        let targetGroup = cachedGroups.find(g => {
+            const subj = (g.subject || '').toLowerCase();
+            return subj.includes('tn testing') || subj.includes('testing') || subj.includes('test');
+        });
+        
+        if (!targetGroup) {
+            // Fallback to General Market if no test group is found
+            targetGroup = cachedGroups.find(g => (g.subject || '').toLowerCase().includes('general market'));
+        }
+        
+        if (!targetGroup) {
+            await sendAntiBanMessage(jid, { text: '❌ Could not find a suitable test group or General Market group in cache.' });
             return true;
         }
         
-        await sendAntiBanMessage(jid, { text: '🧪 *Testing Market Group Unlocking (everyone can message)...*' });
-        await client.setGroupAdminsOnly(targetJid, false);
+        await sendAntiBanMessage(jid, { text: `🧪 *Testing Group Unlocking on test group: "${targetGroup.subject}" (everyone can message)...*` });
+        await client.setGroupAdminsOnly(targetGroup.jid, false);
+        
+        const leaderJid = findLeaderGroupJid();
+        if (leaderJid) {
+            await sendAntiBanMessage(leaderJid, { text: `🔔 *[TEST]* Group "${targetGroup.subject}" has been successfully UNLOCKED for the market session! 🔓 Let the marketing begin!` });
+        }
+        
         await delay(15000); // Wait 15 seconds
         
-        await sendAntiBanMessage(jid, { text: '🧪 *Testing Market Group Locking (admins only)...*' });
-        await client.setGroupAdminsOnly(targetJid, true);
+        await sendAntiBanMessage(jid, { text: `🧪 *Testing Group Locking on test group: "${targetGroup.subject}" (admins only)...*` });
+        await client.setGroupAdminsOnly(targetGroup.jid, true);
+        
+        if (leaderJid) {
+            await sendAntiBanMessage(leaderJid, { text: `🔔 *[TEST]* Market session completed! 🔒 Group "${targetGroup.subject}" has been successfully LOCKED back. You can continue resting! 🤖💤` });
+        }
         
         await sendAntiBanMessage(jid, { text: '✅ *Market Lock/Unlock test complete!*' });
         return true;
