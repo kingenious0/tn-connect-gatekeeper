@@ -2492,7 +2492,7 @@ function wireBaileysEvents() {
 }
 
 // ==========================================
-// 📅 AUTOMATED TIMETABLE NOTIFICATION ENGINE (v1.5.3)
+// 📅 AUTOMATED TIMETABLE NOTIFICATION ENGINE (v1.5.4)
 // ==========================================
 const WEEKLY_TIMETABLE = [
     // Market Days for Niche Groups & Fun Page
@@ -2528,7 +2528,7 @@ const findGeneralMarketGroupJids = () => {
     return cachedGroups
         .filter(g => {
             const subj = (g.subject || '').toLowerCase();
-            return subj.includes('market') && !subj.includes('niche leaders');
+            return subj.includes('market') && subj.includes('news') && !subj.includes('niche leaders');
         })
         .map(g => g.jid);
 };
@@ -3232,7 +3232,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             }
         }
     }
-    // 6.2 List Discovered Groups (v1.5.3) - whitelisted for Admins
+    // 6.2 List Discovered Groups (v1.5.4) - whitelisted for Admins
     if (lower === 'list groups' || lower === 'show groups' || lower === 'groups list' || lower === 'groups') {
         const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
         if (!allGroups.length) {
@@ -3248,7 +3248,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             const subj = (g.subject || '').toLowerCase();
             if (g.jid === leaderJid) role = '👑 Niche Leaders Group';
             else if (genMarketJids.includes(g.jid)) role = '🏪 General Market Group';
-            else if (subj.includes('business hub') || subj.includes('business')) role = '💼 Business Group';
+            else if (subj.includes('business hub')) role = '💼 Business Group';
             
             return `${i + 1}. ${g.subject}\n   • Role: ${role}\n   • JID: ${g.jid}`;
         });
@@ -3258,7 +3258,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
 
-    // 6.5 Timetable Testing Commands (v1.5.3) - ONLY for Kingenious (233597626090)
+    // 6.5 Timetable Testing Commands (v1.5.4) - ONLY for Kingenious (233597626090)
     if (lower === 'test alerts' || lower === 'test alert') {
         if (senderPhone !== '233597626090') {
             await sendAntiBanMessage(jid, { text: '🔒 Sorry, only Kingenious (supreme owner) is authorized to trigger test alerts!' });
@@ -3404,7 +3404,7 @@ async function processIncomingMessage(msg) {
         const moderated = await handleGroupModeration(msg, jid, sender, senderPhone, isAdmin);
         if (moderated) return;
 
-        // 🔔 Interactive Takeover Response Handler in Leader Group (v1.5.3)
+        // 🔔 Interactive Takeover Response Handler in Leader Group (v1.5.4)
         const isLeaderGroup = jid === findLeaderGroupJid();
         if (isLeaderGroup && isAdmin && pendingTakeoverState && Date.now() < pendingTakeoverState.expiresAt) {
             const { text: groupText } = extractIncomingPayload(msg);
@@ -4168,7 +4168,7 @@ process.on('SIGINT', () => cleanShutdown('SIGINT'));
 
 const server = http.createServer(app);
 server.listen(PORT, async () => {
-    console.log(' [Server] Gatekeeper v1.5.3 (Baileys) is live on port ' + PORT);
+    console.log(' [Server] Gatekeeper v1.5.4 (Baileys) is live on port ' + PORT);
     
     await acquireLock();
     await ensureRegistryLoaded();
