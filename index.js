@@ -3822,15 +3822,15 @@ async function processIncomingMessage(msg) {
             // Check if addressing the bot directly
             const isAddressing = isMessageAddressingBot(msg, payload);
             
-            // Active Flow State: if the bot replied in the last 90 seconds, boost the base chance to 70%
+            // Active Flow State: if the bot replied in the last 90 seconds, boost the chance to 100%
             const lastBotReply = lastBotReplyTime.get(jid) || 0;
             const inActiveFlow = (Date.now() - lastBotReply) < 90 * 1000;
             
             // Base chance for this turn: 15% + (silentCount * 10%)
             let computedChance = 0.15 + (tracker.silentCount * 0.10);
             
-            if (inActiveFlow && computedChance < 0.70) {
-                computedChance = 0.70;
+            if (inActiveFlow) {
+                computedChance = 1.0; // 100% reply rate during active conversation flow!
             }
             
             // Apply hype triggers: 😂, 😭, 💀, 👀 or '!' in the text
@@ -4098,25 +4098,37 @@ async function processIncomingMessage(msg) {
                 return;
             }
             const group = wizardState.groups[index];
-            activeConvoGroups.add(group.jid);
-            saveActiveConvos(Array.from(activeConvoGroups));
-            lastGroupActivityTime.set(group.jid, Date.now());
-            socialWizardStates.delete(senderPhone);
-            await sendAntiBanMessage(jid, { text: `✅ *Success!* Active Conversational Social Mode has been enabled in *${group.subject}*! I will now organically join discussions in this group with Gen Z vibes! completed join convo ${group.subject}` });
             
-            // Trigger 5-second delayed organic entry hook
-            setTimeout(async () => {
-                try {
-                    const targetJid = group.jid;
-                    const cache = client.messageCache.get(targetJid) || [];
-                    const nowSecs = Math.floor(Date.now() / 1000);
-                    const newestMsg = cache[0];
-                    const isRoomActive = newestMsg && (nowSecs - newestMsg.messageTimestamp < 600);
-                    
-                    if (isRoomActive) {
-                        console.log(` [Social] Delayed entry hook triggered active room in ${targetJid}`);
-                        // Read room context (up to last 6 messages)
-                        const reversed = [...cache].slice(0, 6).reverse();
+            socialWizardStates.set(senderPhone, {
+                step: 'CHOOSING_CONVO_FLOW_STYLE',
+                group: group
+            });
+            
+            await sendAntiBanMessage(jid, { text: `💬 *Select Entry Style for ${group.subject}*\n\nHow should I enter the group conversation?\n\n1. *Flow with ongoing topic* (Read the room and resume/continue the active chat thread) 💬\n2. *Start a new topic* (Generate a fresh ice-breaker complain about UCC strict lecturers) 🆕\n\nReply with *1* or *2*. (Type *cancel* to abort):` });
+            return;
+        }
+        
+        if (wizardState.step === 'CHOOSING_CONVO_FLOW_STYLE') {
+            const group = wizardState.group;
+            const choice = lowerInput.trim();
+            if (choice === '1' || choice.includes('flow') || choice.includes('ongoing') || choice.includes('resume')) {
+                activeConvoGroups.add(group.jid);
+                saveActiveConvos(Array.from(activeConvoGroups));
+                lastGroupActivityTime.set(group.jid, Date.now());
+                socialWizardStates.delete(senderPhone);
+                
+                await sendAntiBanMessage(jid, { text: `✅ *Success!* Enabled in *${group.subject}* with *Flow* mode! I will read the room and immediately resume their active discussion! completed join convo ${group.subject}` });
+                
+                // Immediately (5-second delay) trigger flow entry hook
+                setTimeout(async () => {
+                    try {
+                        const targetJid = group.jid;
+                        const cache = client.messageCache.get(targetJid) || [];
+                        const newestMsg = cache[0];
+                        
+                        console.log(` [Social] Entry flow hook reading the room in ${targetJid}`);
+                        // Gather context from cache (up to 10 messages for a complete picture)
+                        const reversed = [...cache].slice(0, 10).reverse();
                         const contextLines = [];
                         for (const m of reversed) {
                             const payload = extractIncomingPayload(m);
@@ -4131,25 +4143,83 @@ async function processIncomingMessage(msg) {
                             try { await client.sendPresence(targetJid, 'typing'); } catch (pe) {}
                             const contextText = contextLines.join('\n');
                             const adminName = adminProfile?.name || 'Admin';
-                            const responseText = await callAISocialChat(senderPhone, contextText, adminName);
+                            
+                            const flowPrompt = `You are a highly smart, tech-savvy university student from UCC Ghana.
+Here is the recent active discussion in the WhatsApp group:
+${contextText}
+
+Your task:
+- Read the room and see what they are currently talking about.
+- Do NOT start a new topic. Resume the ongoing topic beautifully and wittedly.
+- Act like you are returning to the chat or chiming in directly on the exact subject. Include UCC vibe references or complain about strict UCC lecturers (Mr. Akoto, Mr. Nimo Kwateng, Wofa Yaw) if it fits.
+- Keep your response extremely short and punchy (1 to 2 sentences max!).
+- Plain text, 100% clean raw text, NO asterisks, no markdown bold/italics.`;
+
+                            let responseText = null;
+                            if (groqClient) {
+                                try {
+                                    const response = await groqClient.chat.completions.create({
+                                        model: 'llama-3.3-70b-versatile',
+                                        messages: [{ role: 'user', content: flowPrompt }],
+                                        max_tokens: 150,
+                                    });
+                                    responseText = response.choices[0]?.message?.content;
+                                } catch (e) {
+                                    try {
+                                        const response = await groqClient.chat.completions.create({
+                                            model: 'llama-3.1-8b-instant',
+                                            messages: [{ role: 'user', content: flowPrompt }],
+                                            max_tokens: 150,
+                                        });
+                                        responseText = response.choices[0]?.message?.content;
+                                    } catch (e2) {}
+                                }
+                            }
+                            if (!responseText && geminiClient) {
+                                try {
+                                    const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                                    const result = await model.generateContent([{ text: flowPrompt }]);
+                                    responseText = result.response.text();
+                                } catch (e) {}
+                            }
+                            
                             if (responseText) {
                                 const cleanResponse = responseText.replace(/\*/g, '').trim();
-                                // Chime in quoting the newest message
-                                await sendAntiBanMessage(targetJid, { text: cleanResponse, options: { quoted: newestMsg } });
+                                if (newestMsg) {
+                                    await sendAntiBanMessage(targetJid, { text: cleanResponse, options: { quoted: newestMsg } });
+                                } else {
+                                    await sendAntiBanMessage(targetJid, { text: cleanResponse });
+                                }
                                 lastBotReplyTime.set(targetJid, Date.now());
                             }
+                        } else {
+                            await sendAntiBanMessage(targetJid, { text: "Charley, where is everyone ooo? Room is silent! UCC hostels are dead today? 👀" });
+                            lastBotReplyTime.set(targetJid, Date.now());
                         }
-                    } else {
-                        console.log(` [Social] Delayed entry hook triggered dead room in ${targetJid}`);
-                        // dead room - generate a fresh ice-breaker thread
+                    } catch (e) {
+                        console.error(' [Social] Flow entry hook failed:', e.message);
+                    }
+                }, 5000);
+                return;
+            } else if (choice === '2' || choice.includes('new') || choice.includes('topic') || choice.includes('ice')) {
+                activeConvoGroups.add(group.jid);
+                saveActiveConvos(Array.from(activeConvoGroups));
+                lastGroupActivityTime.set(group.jid, Date.now());
+                socialWizardStates.delete(senderPhone);
+                
+                await sendAntiBanMessage(jid, { text: `✅ *Success!* Enabled in *${group.subject}* with *New Topic* mode! I will trigger a fresh campus ice-breaker! completed join convo ${group.subject}` });
+                
+                setTimeout(async () => {
+                    try {
+                        const targetJid = group.jid;
                         try { await client.sendPresence(targetJid, 'typing'); } catch (pe) {}
                         
-                        const iceBreakerPrompt = `You are a brilliant university student from Ghana who is a cybersecurity expert and coder.
+                        const iceBreakerPrompt = `You are a brilliant UCC university student from Ghana who is a cybersecurity expert and coder complaning about Mr. Akoto or Wofa Yaw.
 The WhatsApp group chat has been completely dead/silent.
 Generate a highly engaging, witted, funny, and cool ice-breaker message to wake up the chat!
-Talk about either tech, campus life vibes, red-hat/black-hat hacking facts, or cybersecurity tips in a very funny student way.
+Talk about UCC campus life, strict lecturers, red-hat hacking, or cybersecurity tips in a very funny student way.
 Keep it extremely short and raw (1 or 2 sentences maximum!).
-Do NOT use asterisks (*) or markdown. Keep all text plain and raw. Use local student slang naturally.`;
+Do NOT use asterisks (*) or markdown. Keep all text plain and raw.`;
                         
                         let responseText = null;
                         if (groqClient) {
@@ -4184,12 +4254,15 @@ Do NOT use asterisks (*) or markdown. Keep all text plain and raw. Use local stu
                             await sendAntiBanMessage(targetJid, { text: cleanResponse });
                             lastBotReplyTime.set(targetJid, Date.now());
                         }
+                    } catch (e) {
+                        console.error(' [Social] Ice-breaker entry hook failed:', e.message);
                     }
-                } catch (e) {
-                    console.error(' [Social] Delayed entry hook failed:', e.message);
-                }
-            }, 5000);
-            return;
+                }, 5000);
+                return;
+            } else {
+                await sendAntiBanMessage(jid, { text: '❌ Invalid choice. Please reply with *1* (Flow with ongoing) or *2* (Start a new topic).' });
+                return;
+            }
         }
         
         if (wizardState.step === 'CHOOSING_CONVO_LEAVE') {
