@@ -2272,6 +2272,9 @@ const handleGroupLockDM = async (jid, senderPhone, textInput, adminProfile) => {
     const firstWord = lower.split(/\s+/)[0];
     const isLock = firstWord === 'lock' || firstWord === 'locks';
     const state = groupLockStates.get(senderPhone);
+    if (state && state.jid && state.jid !== jid) {
+        return false;
+    }
     const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
     if (!allGroups.length) {
         await sendAntiBanMessage(jid, { text: '❌ No groups available.' });
@@ -2285,7 +2288,7 @@ const handleGroupLockDM = async (jid, senderPhone, textInput, adminProfile) => {
             return (i + 1) + '. ' + (g.subject || 'Unknown') + (isLocked ? ' 🔒' : '');
         });
         const action = isLock ? 'lock' : 'unlock';
-        groupLockStates.set(senderPhone, { step: 'choose_groups', action, groupJids: allGroups.map(g => g.jid), groupSubjects: allGroups.map(g => g.subject || 'Unknown') });
+        groupLockStates.set(senderPhone, { step: 'choose_groups', action, groupJids: allGroups.map(g => g.jid), groupSubjects: allGroups.map(g => g.subject || 'Unknown'), jid: jid });
         await sendAntiBanMessage(jid, {
             text: '📋 *Groups to ' + action + '* (reply with numbers like "1,3" or "all"):\n\n' + lines.join('\n')
         });
@@ -2342,7 +2345,11 @@ const handleGroupLockDM = async (jid, senderPhone, textInput, adminProfile) => {
 };
 
 const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile, rawSender, originalMsg) => {
-    console.log(' [Broadcast] ' + (jid.endsWith('@g.us') ? 'Group' : 'DM') + ' from ' + senderPhone + ': "' + (textInput || '').substring(0, 60) + '" state=' + (adminBroadcastStates.has(senderPhone) ? adminBroadcastStates.get(senderPhone).step : 'none'));
+    const activeState = adminBroadcastStates.get(senderPhone);
+    if (activeState && activeState.jid && activeState.jid !== jid) {
+        return false;
+    }
+    console.log(' [Broadcast] ' + (jid.endsWith('@g.us') ? 'Group' : 'DM') + ' from ' + senderPhone + ': "' + (textInput || '').substring(0, 60) + '" state=' + (activeState ? activeState.step : 'none'));
     const lower = (textInput || '').trim().toLowerCase();
     if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
         adminBroadcastStates.delete(senderPhone);
@@ -2379,7 +2386,8 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
                 step: 'MANAGING_GROUPS',
                 groups: allGroups,
                 selected: [],
-                adminName: adminProfile?.name || 'Admin'
+                adminName: adminProfile?.name || 'Admin',
+                jid: jid
             });
             const list = allGroups.map((g, i) => (i + 1) + '. ' + (wl.includes(g.jid) ? '✓ ' : '  ') + g.subject).join('\n');
             await sendAntiBanMessage(jid, { text: '📋 *Broadcast Group Manager*\n\nReply with numbers to REMOVE groups from broadcast (e.g., "1,3,5").\nType *done* when finished. Type *cancel* to abort.\n\n' + list });
@@ -2399,7 +2407,8 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
             step: 'CHOOSING_GROUPS',
             groups,
             selected: [],
-            adminName: adminProfile?.name || 'Admin'
+            adminName: adminProfile?.name || 'Admin',
+            jid: jid
         });
         const list = groups.map((g, i) => (i + 1) + '. ' + g.subject).join('\n');
         await sendAntiBanMessage(jid, { text: '📢 *Broadcast Wizard*\n\nSelect groups by replying with numbers (e.g., "1,3,5") or "all" for all groups.\nType *broadcast manage* to control which groups appear here. Type *cancel* to abort:\n\n' + list });
@@ -2563,6 +2572,9 @@ const adminReplyStates = new Map(); // phone -> { imageBuffer, mime, lastSuggest
 const handleAdminRegistration = async (jid, senderPhone, textInput) => {
     const lower = (textInput || '').trim().toLowerCase();
     const state = adminRegistrationStates.get(senderPhone);
+    if (state && state.jid && state.jid !== jid) {
+        return false;
+    }
 
     // start registration
     if (!state && (lower === 'register' || lower === 'admin' || lower === 'signup')) {
@@ -2578,7 +2590,7 @@ const handleAdminRegistration = async (jid, senderPhone, textInput) => {
             await sendAntiBanMessage(jid, { text: '✅ You\'re already registered as *' + existingName + '*. No need to register again.' });
             return true;
         }
-        adminRegistrationStates.set(senderPhone, { step: 'AWAITING_NAME' });
+        adminRegistrationStates.set(senderPhone, { step: 'AWAITING_NAME', jid: jid });
         await sendAntiBanMessage(jid, { text: '👤 *Admin Registration*\n\nReply with your full name to register as an admin.\n(Type *cancel* to abort.)' });
         return true;
     }
@@ -3619,7 +3631,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                     step: 'CAPTURING_RAW_BODY',
                     groups: allGroups,
                     selected: uniqueMatched,
-                    adminName: adminProfile?.name || 'Admin'
+                    adminName: adminProfile?.name || 'Admin',
+                    jid: jid
                 });
                 
                 const groupNames = uniqueMatched.map(g => '• ' + g.subject).join('\n');
@@ -3815,7 +3828,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         if (lower === 'join convo' || lower === 'join conversation') {
             socialWizardStates.set(senderPhone, {
                 step: 'CHOOSING_CONVO_JOIN',
-                groups: allGroups
+                groups: allGroups,
+                jid: jid
             });
             const list = allGroups.map((g, i) => (i + 1) + '. ' + (activeConvoGroups.has(g.jid) ? '✓ ' : '  ') + g.subject).join('\n');
             await sendAntiBanMessage(jid, { text: '💬 *Supreme Social Mode Selection*\n\nReply with the group number you want the bot to actively join and banter in. (Type *cancel* to abort):\n\n' + list });
@@ -3829,7 +3843,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             }
             socialWizardStates.set(senderPhone, {
                 step: 'CHOOSING_CONVO_LEAVE',
-                groups: activeList
+                groups: activeList,
+                jid: jid
             });
             const list = activeList.map((g, i) => (i + 1) + '. ' + g.subject).join('\n');
             await sendAntiBanMessage(jid, { text: '💬 *Supreme Social Mode Removal*\n\nReply with the group number you want to remove from active banter. (Type *cancel* to abort):\n\n' + list });
@@ -4205,26 +4220,30 @@ async function processIncomingMessage(msg) {
     // Supreme Social Convo selection response
     if (dmText && socialWizardStates.has(senderPhone)) {
         const wizardState = socialWizardStates.get(senderPhone);
-        const lowerInput = dmText.trim().toLowerCase();
-        
-        if (lowerInput === 'cancel' || lowerInput === 'stop') {
-            socialWizardStates.delete(senderPhone);
-            await sendAntiBanMessage(jid, { text: '🚫 Supreme Social Selection cancelled.' });
-            return;
-        }
-        
-        if (wizardState.step === 'CHOOSING_CONVO_JOIN') {
-            const index = parseInt(lowerInput) - 1;
-            if (isNaN(index) || index < 0 || index >= wizardState.groups.length) {
-                await sendAntiBanMessage(jid, { text: '❌ Invalid group selection. Please reply with a valid number from the list above.' });
+        if (wizardState.jid && wizardState.jid !== jid) {
+            // Ignore - let it fall through naturally!
+        } else {
+            const lowerInput = dmText.trim().toLowerCase();
+            
+            if (lowerInput === 'cancel' || lowerInput === 'stop') {
+                socialWizardStates.delete(senderPhone);
+                await sendAntiBanMessage(jid, { text: '🚫 Supreme Social Selection cancelled.' });
                 return;
             }
-            const group = wizardState.groups[index];
             
-            socialWizardStates.set(senderPhone, {
-                step: 'CHOOSING_CONVO_FLOW_STYLE',
-                group: group
-            });
+            if (wizardState.step === 'CHOOSING_CONVO_JOIN') {
+                const index = parseInt(lowerInput) - 1;
+                if (isNaN(index) || index < 0 || index >= wizardState.groups.length) {
+                    await sendAntiBanMessage(jid, { text: '❌ Invalid group selection. Please reply with a valid number from the list above.' });
+                    return;
+                }
+                const group = wizardState.groups[index];
+                
+                socialWizardStates.set(senderPhone, {
+                    step: 'CHOOSING_CONVO_FLOW_STYLE',
+                    group: group,
+                    jid: jid
+                });
             
             await sendAntiBanMessage(jid, { text: `💬 *Select Entry Style for ${group.subject}*\n\nHow should I enter the group conversation?\n\n1. *Flow with ongoing topic* (Read the room and resume/continue the active chat thread) 💬\n2. *Start a new topic* (Generate a fresh ice-breaker complain about UCC strict lecturers) 🆕\n\nReply with *1* or *2*. (Type *cancel* to abort):` });
             return;
@@ -4419,6 +4438,7 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). No specific names, 
             socialWizardStates.delete(senderPhone);
             await sendAntiBanMessage(jid, { text: `✅ *Success!* Bot has exited Conversational Social Mode for *${group.subject}*. completed leave convo ${group.subject}` });
             return;
+        }
         }
     }
 
