@@ -335,7 +335,7 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
         // 1. Try Microlink API (excellent for complex SPAs/TikTok/YouTube redirects)
         try {
             const microlinkUrl = `https://api.microlink.io/?url=${encodeURIComponent(url)}`;
-            const res = await this._fetchJson(microlinkUrl, 4000);
+            const res = await this._fetchJson(microlinkUrl, 15000);
             if (res && res.status === 'success' && res.data) {
                 meta = {
                     title: res.data.title || '',
@@ -351,7 +351,7 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
         // 2. Fallback to direct HTML crawling for standard websites
         if (!meta) {
             try {
-                const html = await this._fetchHtml(url, 4000);
+                const html = await this._fetchHtml(url, 10000);
                 if (html) {
                     meta = this._extractOgMetadata(html, url);
                 }
@@ -365,7 +365,7 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
             let thumbnailBuffer = null;
             if (meta.image) {
                 try {
-                    thumbnailBuffer = await this._downloadBufferWithTimeout(meta.image, 3000);
+                    thumbnailBuffer = await this._downloadBufferWithTimeout(meta.image, 10000);
                 } catch (e) {
                     console.warn(` [Preview] Failed to download thumbnail for ${url}:`, e.message);
                 }
@@ -494,11 +494,27 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
         };
     }
 
-    _downloadBufferWithTimeout(url, timeoutMs = 3000) {
+    _downloadBufferWithTimeout(url, timeoutMs = 10000) {
         return new Promise((resolve, reject) => {
             const parsed = new URL(url);
             const mod = parsed.protocol === 'https:' ? require('https') : require('http');
-            const req = mod.get(url, { timeout: timeoutMs }, (res) => {
+            const options = {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Referer': 'https://www.tiktok.com/'
+                },
+                timeout: timeoutMs
+            };
+            const req = mod.get(url, options, (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    const redirectUrl = new URL(res.headers.location, url).toString();
+                    return this._downloadBufferWithTimeout(redirectUrl, timeoutMs).then(resolve).catch(reject);
+                }
+                if (res.statusCode !== 200) {
+                    return reject(new Error(`Failed to download image: Status ${res.statusCode}`));
+                }
                 const chunks = [];
                 res.on('data', (c) => chunks.push(c));
                 res.on('end', () => resolve(Buffer.concat(chunks)));
