@@ -3911,7 +3911,175 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         await sendAntiBanMessage(jid, { text: '✅ *Market Lock/Unlock test complete!*' });
         return true;
     }
+
+    // ==========================================================
+    // 6.7 Promote / Demote Whatsapp Group Admin Commands (v1.6.3)
+    // ==========================================================
+    const promoteDemoteRegex = /^(promote|demote)\s+(?:(@?\d{9,15})|(<@?\d{9,15}>))(?:\s+(in\s+)?(all\s+groups|all|this\s+group|this))?$/i;
+    const promoteDemoteMatch = cleanText.match(promoteDemoteRegex);
+    if (promoteDemoteMatch) {
+        const action = promoteDemoteMatch[1].toLowerCase(); // "promote" or "demote"
+        const targetRaw = (promoteDemoteMatch[2] || promoteDemoteMatch[3] || '').replace(/[^0-9]/g, '');
+        const scope = (promoteDemoteMatch[5] || 'this').toLowerCase().trim();
+        
+        let targetJid = null;
+        if (targetRaw) {
+            targetJid = targetRaw + '@s.whatsapp.net';
+        } else {
+            const mentions = originalMsg?.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+            if (mentions.length > 0) {
+                targetJid = mentions[0];
+            }
+        }
+        
+        if (!targetJid) {
+            await sendAntiBanMessage(jid, { text: `❌ Please specify a valid phone number or tag the user (e.g. *${action} @user* or *${action} 23350YYYYYYY*).` });
+            return true;
+        }
+        
+        const targetPhone = targetJid.split('@')[0];
+        const isAll = scope.includes('all');
+        
+        if (isAll) {
+            const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+            if (!allGroups.length) {
+                await sendAntiBanMessage(jid, { text: '❌ No monitored groups available.' });
+                return true;
+            }
+            
+            // Filter groups where the bot itself is admin
+            const adminGroups = allGroups.filter(g => botAdminGroupCache.get(g.jid) === true);
+            if (!adminGroups.length) {
+                await sendAntiBanMessage(jid, { text: '❌ The bot is not an admin in any of the monitored groups, so it cannot promote/demote anyone.' });
+                return true;
+            }
+            
+            const actionWord = action === 'promote' ? 'Promoting' : 'Demoting';
+            const actionEmoji = action === 'promote' ? '👑' : '👤';
+            await sendAntiBanMessage(jid, { text: `${actionEmoji} *${actionWord} user +${targetPhone} in all groups where bot is admin...*\nExecuting on ${adminGroups.length} group(s) with a human-paced delay (3-6 seconds between groups).` });
+            
+            const results = [];
+            for (let i = 0; i < adminGroups.length; i++) {
+                const g = adminGroups[i];
+                try {
+                    if (action === 'promote') {
+                        await client.promoteGroupParticipant(g.jid, targetJid);
+                    } else {
+                        await client.demoteGroupParticipant(g.jid, targetJid);
+                    }
+                    results.push(`✅ ${g.subject} → Successful`);
+                } catch (e) {
+                    results.push(`❌ ${g.subject} → ${e.message.substring(0, 60)}`);
+                }
+                if (i < adminGroups.length - 1) {
+                    const delayMs = 3000 + Math.floor(Math.random() * 3000);
+                    await delay(delayMs);
+                }
+            }
+            await sendAntiBanMessage(jid, { text: `📋 *Admin Management Summary*\nUser: *+${targetPhone}*\nAction: *${action.toUpperCase()}*\n\n` + results.join('\n') });
+            return true;
+        } else {
+            // Promote in the current group
+            if (!jid.endsWith('@g.us')) {
+                await sendAntiBanMessage(jid, { text: '❌ You can only use the single-group promote/demote command inside a group chat. To update all groups, use *in all* (e.g. *promote @user in all*).' });
+                return true;
+            }
+            
+            const isBotAdmin = botAdminGroupCache.get(jid) === true;
+            if (!isBotAdmin) {
+                await sendAntiBanMessage(jid, { text: '❌ The bot must be an admin in this group to promote/demote members.' });
+                return true;
+            }
+            
+            const actionWord = action === 'promote' ? 'promoting to Admin' : 'demoting to Member';
+            const actionEmoji = action === 'promote' ? '👑' : '👤';
+            try {
+                if (action === 'promote') {
+                    await client.promoteGroupParticipant(jid, targetJid);
+                } else {
+                    await client.demoteGroupParticipant(jid, targetJid);
+                }
+                await sendAntiBanMessage(jid, { text: `${actionEmoji} Successfully updated *+${targetPhone}* in this group (${actionWord}).` });
+            } catch (e) {
+                await sendAntiBanMessage(jid, { text: `❌ Failed to update *+${targetPhone}*: ${e.message}` });
+            }
+            return true;
+        }
+    }
+
+    // ==========================================================
+    // 6.8 Manage Broadcast Roster Commands (v1.6.3)
+    // ==========================================================
+    const addRosterRegex = /^(?:add\s+admin|add\s+to\s+roster|roster\s+add|register\s+admin)\s+(\d{9,15})(?:\s+(?:named|as)\s+)?\s*(.+)$/i;
+    const addRosterMatch = cleanText.match(addRosterRegex);
+    if (addRosterMatch) {
+        const targetPhone = addRosterMatch[1].replace(/[^0-9]/g, '');
+        const targetName = addRosterMatch[2].trim();
+        
+        if (targetPhone.length < 9) {
+            await sendAntiBanMessage(jid, { text: '❌ Invalid phone number. Please enter at least 9 digits.' });
+            return true;
+        }
+        
+        // Save to dynamic registered admins
+        registeredAdmins.set(targetPhone, { name: targetName, registeredAt: new Date().toISOString() });
+        const localData = loadRegisteredAdmins();
+        localData[targetPhone] = { name: targetName, registeredAt: new Date().toISOString() };
+        saveRegisteredAdmins(localData);
+        
+        if (supabase) {
+            try {
+                await supabase.from('gatekeeper_sessions').upsert({
+                    phone: targetPhone, admin_name: targetName, role: 'admin_node', updated_at: new Date().toISOString()
+                });
+            } catch (e) {
+                console.warn(' [Roster] Supabase roster save failed:', e.message);
+            }
+        }
+        
+        await sendAntiBanMessage(jid, { text: `✅ *Roster Update Successful*\n\nUser *+${targetPhone}* has been successfully registered as a Broadcast Admin named *${targetName}*.\n\nThey can now run administrative commands and send broadcasts via direct messages.` });
+        return true;
+    }
     
+    const removeRosterRegex = /^(?:remove\s+admin|remove\s+from\s+roster|roster\s+remove|delete\s+admin)\s+(\d{9,15})$/i;
+    const removeRosterMatch = cleanText.match(removeRosterRegex);
+    if (removeRosterMatch) {
+        const targetPhone = removeRosterMatch[1].replace(/[^0-9]/g, '');
+        
+        const localData = loadRegisteredAdmins();
+        const exists = registeredAdmins.has(targetPhone) || localData[targetPhone] || (await (async () => {
+            if (supabase) {
+                try {
+                    const { data } = await supabase.from('gatekeeper_sessions').select('phone').eq('phone', targetPhone).maybeSingle();
+                    return !!data;
+                } catch (e) {}
+            }
+            return false;
+        })());
+        
+        if (!exists) {
+            await sendAntiBanMessage(jid, { text: `❌ User *+${targetPhone}* was not found in the dynamic broadcast roster.` });
+            return true;
+        }
+        
+        registeredAdmins.delete(targetPhone);
+        if (localData[targetPhone]) {
+            delete localData[targetPhone];
+            saveRegisteredAdmins(localData);
+        }
+        
+        if (supabase) {
+            try {
+                await supabase.from('gatekeeper_sessions').delete().eq('phone', targetPhone);
+            } catch (e) {
+                console.warn(' [Roster] Supabase roster delete failed:', e.message);
+            }
+        }
+        
+        await sendAntiBanMessage(jid, { text: `✅ *Roster Update Successful*\n\nUser *+${targetPhone}* has been successfully removed from the Broadcast Admin roster.` });
+        return true;
+    }
+
     // 7. Active Social Convo Mode - ONLY for Kingenious (233597626090)
     if (lower === 'join convo' || lower === 'join conversation' || lower === 'leave convo' || lower === 'leave conversation') {
         if (senderPhone !== '233597626090') {
