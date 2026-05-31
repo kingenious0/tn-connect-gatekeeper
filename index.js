@@ -4551,6 +4551,7 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). No specific names, 
         if (handledReg) return;
     }
     if (isAdmin) {
+        const lower = (dmText || '').trim().toLowerCase();
         const handledNatural = await handleNaturalLanguageCommand(jid, senderPhone, dmText, adminProfile, msg);
         if (handledNatural) return;
 
