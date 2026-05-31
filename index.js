@@ -4127,7 +4127,7 @@ const isMessageAddressingBot = (msg, payload) => {
     if (/\bbot\b/i.test(cleanText)) return true;
     
     // 2. Check if the bot's own number is tagged/mentioned
-    const botPhone = client?.user ? senderPhoneFromJid(client.user.id) : '';
+    const botPhone = client?.phoneNumber || (client?.sock?.user?.id ? senderPhoneFromJid(client.sock.user.id) : '');
     if (botPhone && cleanText.includes(botPhone)) return true;
     
     // 3. Check if it's a quote reply to the bot's own message
