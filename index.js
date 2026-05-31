@@ -797,13 +797,34 @@ const classifyGroupType = (groupSubject, groupJid, adminPhone) => {
     return 'niche';
 };
 
+const unwrapMessage = (message) => {
+    if (!message) return null;
+    let content = message;
+    while (true) {
+        if (content.viewOnceMessage?.message) {
+            content = content.viewOnceMessage.message;
+        } else if (content.viewOnceMessageV2?.message) {
+            content = content.viewOnceMessageV2.message;
+        } else if (content.ephemeralMessage?.message) {
+            content = content.ephemeralMessage.message;
+        } else if (content.documentWithCaptionMessage?.message) {
+            content = content.documentWithCaptionMessage.message;
+        } else {
+            break;
+        }
+    }
+    return content;
+};
+
 const extractIncomingPayload = (msg) => {
-    const content = msg.message;
-    if (!content) return { text: '', hasImage: false };
+    const rawContent = msg.message;
+    if (!rawContent) return { text: '', hasImage: false };
+    const content = unwrapMessage(rawContent);
     const text =
         content.conversation ||
         content.extendedTextMessage?.text ||
         content.imageMessage?.caption ||
+        content.videoMessage?.caption ||
         content.documentMessage?.caption ||
         '';
     const hasImage = !!content.imageMessage || (!!content.documentMessage && content.documentMessage?.mimetype?.startsWith('image/'));
@@ -814,14 +835,15 @@ const extractQuotedMessageText = (msg) => {
     const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.imageMessage?.contextInfo || msg.message?.videoMessage?.contextInfo || msg.message?.documentMessage?.contextInfo;
     const quoted = contextInfo?.quotedMessage;
     if (!quoted) return '';
+    const m = unwrapMessage(quoted);
     
-    if (quoted.conversation) return quoted.conversation;
-    if (quoted.extendedTextMessage?.text) return quoted.extendedTextMessage.text;
+    if (m.conversation) return m.conversation;
+    if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
     
     try {
-        const ct = Object.keys(quoted).find(k => k !== 'messageContextInfo');
-        if (ct && quoted[ct]?.text) return quoted[ct].text;
-        if (ct && quoted[ct]?.caption) return quoted[ct].caption;
+        const ct = Object.keys(m).find(k => k !== 'messageContextInfo');
+        if (ct && m[ct]?.text) return m[ct].text;
+        if (ct && m[ct]?.caption) return m[ct].caption;
     } catch (e) { }
     return '';
 };
@@ -3306,8 +3328,9 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). No specific names, 
 }
 
 const handleGroupModerationExtractText = (msg) => {
-    const m = msg.message;
-    if (!m) return '';
+    const rawContent = msg.message;
+    if (!rawContent) return '';
+    const m = unwrapMessage(rawContent);
     if (m.conversation) return m.conversation;
     if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
     try {
