@@ -2841,12 +2841,12 @@ const checkMarketDayWindow = () => {
     return { active: false, when: 'different_day' };
 };
 
-const execute3MinBroadcast = async (activityName, isTest = false) => {
-    console.log(` [Scheduler] Sending 3-minute broadcast warning for: "${activityName}" (isTest=${isTest})`);
+const execute5MinBroadcast = async (activityName, isTest = false) => {
+    console.log(` [Scheduler] Sending 5-minute broadcast warning for: "${activityName}" (isTest=${isTest})`);
     const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
     if (!allGroups.length) return;
 
-    const msgText = `📢 TN Universities Connect Notice\n\nHey guys! We have exactly 3 more minutes to kick start our ${activityName}! Get ready to dive in... let's go! 🚀🔥`;
+    const msgText = `📢 *TN Universities Connect Notice*\n\nHey guys! We have just a *few minutes* to kick start our *${activityName}*! Get ready to dive in... let's go! 🚀🔥`;
     
     const leaderJid = findLeaderGroupJid();
     
@@ -2876,7 +2876,7 @@ const execute3MinBroadcast = async (activityName, isTest = false) => {
             await delay(pacingDelay);
         }
     }
-    console.log(` [Scheduler] Finished 3-minute broadcast. Sent: ${sent}/${targets.length}`);
+    console.log(` [Scheduler] Finished 5-minute broadcast. Sent: ${sent}/${targets.length}`);
 };
 
 const execute2MinLeaderPrompt = async (activityName) => {
@@ -3037,12 +3037,12 @@ const checkTimetableAlerts = async () => {
             }
         }
 
-        // 3-minute broadcast warning
-        if (diffMins === 3) {
-            const key = `${day}-${hour}-${minute}-3min`;
+        // 5-minute broadcast warning
+        if (diffMins === 5) {
+            const key = `${day}-${hour}-${minute}-5min`;
             if (!sentTimetableAlerts.has(key)) {
                 sentTimetableAlerts.add(key);
-                await execute3MinBroadcast(item.activity);
+                await execute5MinBroadcast(item.activity);
             }
         }
         
@@ -3749,10 +3749,10 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             return true;
         }
         
-        await sendAntiBanMessage(jid, { text: '🧪 *Initializing Test Alerts workflow (sending 3-minute alert to test groups only)...*' });
+        await sendAntiBanMessage(jid, { text: '🧪 *Initializing Test Alerts workflow (sending 5-minute alert to test groups only)...*' });
         
-        // 1. Trigger 3-minute alert (passing isTest = true so it ONLY goes to test groups!)
-        await execute3MinBroadcast("Test Market Session", true);
+        // 1. Trigger 5-minute alert (passing isTest = true so it ONLY goes to test groups!)
+        await execute5MinBroadcast("Test Market Session", true);
         
         // 2. Trigger 2-minute alert (to Niche Leaders with 30s takeover timeout for fast testing!)
         const leaderJid = findLeaderGroupJid();
