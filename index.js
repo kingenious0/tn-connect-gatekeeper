@@ -3911,20 +3911,21 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
     // ==========================================================
     // 6.7 Promote / Demote Whatsapp Group Admin Commands (v1.6.3)
     // ==========================================================
-    const promoteDemoteRegex = /^(promote|demote)\s+(?:(@?\d{9,15})|(<@?\d{9,15}>))(?:\s+(in\s+)?(all\s+groups|all|this\s+group|this))?$/i;
+    const promoteDemoteRegex = /^(promote|demote)\s+(.+?)(?:\s+(in\s+)?(all\s+groups|all|this\s+group|this))?$/i;
     const promoteDemoteMatch = cleanText.match(promoteDemoteRegex);
     if (promoteDemoteMatch) {
         const action = promoteDemoteMatch[1].toLowerCase(); // "promote" or "demote"
-        const targetRaw = (promoteDemoteMatch[2] || promoteDemoteMatch[3] || '').replace(/[^0-9]/g, '');
-        const scope = (promoteDemoteMatch[5] || 'this').toLowerCase().trim();
+        const targetRaw = (promoteDemoteMatch[2] || '').trim();
+        const scope = (promoteDemoteMatch[4] || 'this').toLowerCase().trim();
         
         let targetJid = null;
-        if (targetRaw) {
-            targetJid = targetRaw + '@s.whatsapp.net';
+        const mentions = originalMsg?.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        if (mentions.length > 0) {
+            targetJid = mentions[0];
         } else {
-            const mentions = originalMsg?.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-            if (mentions.length > 0) {
-                targetJid = mentions[0];
+            const digits = targetRaw.replace(/[^0-9]/g, '');
+            if (digits.length >= 9) {
+                targetJid = digits + '@s.whatsapp.net';
             }
         }
         
