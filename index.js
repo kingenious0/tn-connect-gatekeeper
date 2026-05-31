@@ -2347,6 +2347,102 @@ const handleGroupLockDM = async (jid, senderPhone, textInput, adminProfile) => {
     return true;
 };
 
+const handleAdminAddUserDM = async (jid, senderPhone, textInput, adminProfile) => {
+    const lower = (textInput || '').trim().toLowerCase();
+    if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
+        adminAddUserStates.delete(senderPhone);
+        await sendAntiBanMessage(jid, { text: '🚫 Add user cancelled.' });
+        return true;
+    }
+
+    const state = adminAddUserStates.get(senderPhone);
+    if (state && state.jid && state.jid !== jid) {
+        return false;
+    }
+
+    const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+    if (!allGroups.length) {
+        await sendAntiBanMessage(jid, { text: '❌ No monitored groups available.' });
+        adminAddUserStates.delete(senderPhone);
+        return true;
+    }
+
+    if (!state) {
+        adminAddUserStates.set(senderPhone, { step: 'AWAITING_PHONE', jid: jid });
+        await sendAntiBanMessage(jid, {
+            text: '👤 *Add User Wizard*\n\nPlease reply with the phone number of the person you want to add (including country code, e.g., *23324XXXXXXX* or *23350YYYYYYY*).\n(Type *cancel* to abort.)'
+        });
+        return true;
+    }
+
+    if (state.step === 'AWAITING_PHONE') {
+        const cleanedPhone = textInput.replace(/[^0-9]/g, '');
+        if (cleanedPhone.length < 9) {
+            await sendAntiBanMessage(jid, { text: '❌ Invalid phone number. Please enter a valid number with country code (at least 9 digits), or type *cancel*.' });
+            return true;
+        }
+
+        const formattedJid = cleanedPhone + '@s.whatsapp.net';
+        state.phone = formattedJid;
+        state.groupJids = allGroups.map(g => g.jid);
+        state.groupSubjects = allGroups.map(g => g.subject || 'Unknown');
+        state.step = 'choose_groups';
+        adminAddUserStates.set(senderPhone, state);
+
+        const lines = allGroups.map((g, i) => (i + 1) + '. ' + (g.subject || 'Unknown'));
+        await sendAntiBanMessage(jid, {
+            text: `👤 *Add User Wizard*\n\nTarget Contact: *+${cleanedPhone}*\n\nSelect the groups you want to add this user to (reply with numbers like "1,3" or "all"):\n\n` + lines.join('\n')
+        });
+        return true;
+    }
+
+    if (state.step === 'choose_groups') {
+        let selectedJids = [];
+        if (lower === 'all') {
+            selectedJids = state.groupJids;
+        } else {
+            const indices = lower.split(/[,\s]+/).map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0 && n <= state.groupJids.length);
+            if (!indices.length) {
+                await sendAntiBanMessage(jid, { text: '❌ No valid numbers selected. Please reply with numbers (e.g. "1, 3") or "all", or type *cancel*.' });
+                return true;
+            }
+            selectedJids = indices.map(i => state.groupJids[i - 1]);
+        }
+
+        await sendAntiBanMessage(jid, { text: `⏳ *Adding member...*\nAdding user *+${state.phone.split('@')[0]}* to ${selectedJids.length} selected group(s) with a safe pacing delay (5–10 seconds per group) to prevent ban risk...` });
+
+        const results = [];
+        let successCount = 0;
+        let failedCount = 0;
+
+        for (let i = 0; i < selectedJids.length; i++) {
+            const gjid = selectedJids[i];
+            const groupSubject = state.groupSubjects[state.groupJids.indexOf(gjid)] || gjid;
+            try {
+                await client.addGroupParticipant(gjid, state.phone);
+                results.push(`✅ Added to *${groupSubject}*`);
+                successCount++;
+            } catch (e) {
+                results.push(`❌ Failed for *${groupSubject}*: ${e.message.substring(0, 60)}`);
+                failedCount++;
+            }
+            if (i < selectedJids.length - 1) {
+                const pacingDelay = 5000 + Math.floor(Math.random() * 5000);
+                await delay(pacingDelay);
+            }
+        }
+
+        adminAddUserStates.delete(senderPhone);
+        await sendAntiBanMessage(jid, {
+            text: `👤 *Add User Wizard Complete*\n\nUser: *+${state.phone.split('@')[0]}*\nSuccessfully Added: *${successCount}*\nFailed: *${failedCount}*\n\n*Results:*\n` + results.join('\n')
+        });
+        return true;
+    }
+
+    return false;
+};
+
+
 const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile, rawSender, originalMsg) => {
     const activeState = adminBroadcastStates.get(senderPhone);
     if (activeState && activeState.jid && activeState.jid !== jid) {
@@ -2571,6 +2667,7 @@ const indices = lower.replace(/\./g, ',').split(',').map(s => parseInt(s.trim())
 const adminRegistrationStates = new Map(); // senderPhone -> { step: 'AWAITING_NAME', name?: ... }
 const nicheFinderStates = new Map(); // phone -> { step, matchedGroups, ... }
 const adminReplyStates = new Map(); // phone -> { imageBuffer, mime, lastSuggestion, ... }
+const adminAddUserStates = new Map(); // phone -> { step, phone, groupJids, groupSubjects, jid }
 
 const handleAdminRegistration = async (jid, senderPhone, textInput) => {
     const lower = (textInput || '').trim().toLowerCase();
@@ -4462,6 +4559,12 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). No specific names, 
             const handledLock = await handleGroupLockDM(jid, senderPhone, dmText, adminProfile);
             if (handledLock) return;
         }
+        const hasAddUserWizard = adminAddUserStates.has(senderPhone);
+        if (lower === 'add user' || lower === 'add member' || lower === 'add contact' || lower === 'add participant' || hasAddUserWizard) {
+            const handledAdd = await handleAdminAddUserDM(jid, senderPhone, dmText, adminProfile);
+            if (handledAdd) return;
+        }
+
         const hasBroadcastWizard = adminBroadcastStates.has(senderPhone);
         if (dmText || hasBroadcastWizard) {
             const handled = await handleAdminBroadcastDM(jid, senderPhone, dmText, adminProfile, sender, msg);
