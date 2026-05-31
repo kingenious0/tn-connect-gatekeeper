@@ -2820,16 +2820,12 @@ function wireBaileysEvents() {
                     if (phone) {
                         const dirPath = path.join(__dirname, 'auth_session_' + phone);
                         if (fs.existsSync(dirPath)) fs.rmSync(dirPath, { recursive: true, force: true });
-                        if (supabase) {
-                            await supabase.from('gatekeeper_sessions').delete().eq('phone', phone);
-                        }
+                        // Keep gatekeeper_sessions in Supabase to survive transient disconnects
                     }
                     const authPath = path.join(AUTH_FOLDER, 'creds.json');
                     if (fs.existsSync(authPath)) fs.rmSync(authPath, { force: true });
-                    if (supabase) {
-                        await supabase.from('bot_auth').delete().eq('id', 'creds');
-                    }
-                    console.log(' [Auth] Wiped credentials from local disk and Supabase.');
+                    // Keep creds in Supabase to survive Zero-Downtime redeploys!
+                    console.log(' [Auth] Wiped credentials from local disk (Supabase preserved).');
                 } catch (clearErr) {
                     console.error(' [Auth] Failed to clear credentials:', clearErr.message);
                 }
