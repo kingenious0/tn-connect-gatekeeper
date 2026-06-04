@@ -5181,7 +5181,7 @@ app.get('/api/filter/groups', async (req, res) => {
                     jid: g.jid,
                     subject: g.subject || freshGroup.subject || 'Unknown',
                     participants: (freshGroup.participants || []).map(p => {
-                        const phone = (p.id || '').split(':')[0].replace(/[^0-9]/g, '');
+                        const phone = p.phoneNumber || (p.id || '').split(':')[0].replace(/[^0-9]/g, '');
                         const cachedName = contactsNameCache.get(phone) || '';
                         return {
                             id: p.id,
