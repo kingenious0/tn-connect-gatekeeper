@@ -761,7 +761,7 @@ const isJidMe = (jid) => {
     if (cleanMyLid && targetJid + '@lid' === cleanMyLid) return true;
     
     if (activeSessionPhone) {
-        const digits = cleanJidStr.replace(/@s\.whatsapp\.net/gi, '').replace(/@lid/gi, '').replace(/\D/g, '');
+        const digits = cleanJidStr.split(':')[0].replace(/@s\.whatsapp\.net/gi, '').replace(/@lid/gi, '').replace(/\D/g, '');
         if (digits === activeSessionPhone) return true;
     }
     return false;
@@ -772,7 +772,7 @@ const participantDigits = (jid) => {
     const str = String(jid || '');
     const lidPhone = resolveLidToPhone(str);
     if (lidPhone) return lidPhone;
-    return str.replace(/@s\.whatsapp\.net/gi, '').replace(/@lid/gi, '').replace(/\D/g, '');
+    return str.split(':')[0].replace(/@s\.whatsapp\.net/gi, '').replace(/@lid/gi, '').replace(/\D/g, '');
 };
 
 const buildRegistryKey = (groupJid, participantJid) => {
@@ -782,7 +782,7 @@ const buildRegistryKey = (groupJid, participantJid) => {
 const dmJidFromParticipant = (participantJid) => {
     if (!participantJid) return null;
     if (typeof participantJid === 'object') participantJid = participantJid.phoneNumber || participantJid.id || participantJid.jid || '';
-    const normalized = String(participantJid || '').replace(/@lid.*$/, '').replace(/[^0-9]/g, '');
+    const normalized = String(participantJid || '').split(':')[0].replace(/@lid.*$/, '').replace(/[^0-9]/g, '');
     if (!normalized) return null;
     return normalized + '@s.whatsapp.net';
 };
@@ -956,12 +956,12 @@ const processJoinRequest = async (groupJid, participantJid, action, groupSubject
 
 const extractPhoneFromParticipant = (p) => {
     if (!p) return '';
-    if (typeof p === 'string') return p.replace(/[^0-9]/g, '');
+    if (typeof p === 'string') return p.split(':')[0].replace(/[^0-9]/g, '');
     if (typeof p === 'object') {
         const phone = p.phoneNumber || p.id || p.jid || p.user || '';
-        return String(phone).replace(/[^0-9]/g, '');
+        return String(phone).split(':')[0].replace(/[^0-9]/g, '');
     }
-    return String(p).replace(/[^0-9]/g, '');
+    return String(p).split(':')[0].replace(/[^0-9]/g, '');
 };
 
 const resolveParticipantPhone = (p) => {
@@ -1293,7 +1293,7 @@ const populateLidMap = async () => {
         for (const g of Object.values(allGroups)) {
             for (const p of (g.participants || [])) {
                 if (p.id && p.id.endsWith('@lid') && p.phoneNumber) {
-                    const phone = p.phoneNumber.replace(/[^0-9]/g, '');
+                    const phone = (p.phoneNumber || '').split(':')[0].replace(/[^0-9]/g, '');
                     adminLidMap.set(p.id, { phone, name: p.name || '' });
                     count++;
                 }
@@ -2782,7 +2782,7 @@ function wireBaileysEvents() {
                 const raw = mk.remoteJid || '';
                 const isGrp = raw.endsWith('@g.us');
                 const sender = isGrp ? (mk.participant || raw) : raw;
-                const ph = sender.replace(/[^0-9]/g, '');
+                const ph = sender.split(':')[0].replace(/[^0-9]/g, '');
                 if (ph && ph.length >= 8) contactsNameCache.set(ph, pn);
             }
 
@@ -4218,7 +4218,7 @@ async function processIncomingMessage(msg) {
     if (pushName) {
         const isGrp = jid.endsWith('@g.us');
         const senderJid = isGrp ? (msg.key.participant || jid) : jid;
-        const phone = senderJid.replace(/[^0-9]/g, '');
+        const phone = senderJid.split(':')[0].replace(/[^0-9]/g, '');
         if (phone && phone.length >= 8 && !contactsNameCache.has(phone)) {
             contactsNameCache.set(phone, pushName);
         }
@@ -5181,7 +5181,7 @@ app.get('/api/filter/groups', async (req, res) => {
                     jid: g.jid,
                     subject: g.subject || freshGroup.subject || 'Unknown',
                     participants: (freshGroup.participants || []).map(p => {
-                        const phone = (p.id || '').replace(/[^0-9]/g, '');
+                        const phone = (p.id || '').split(':')[0].replace(/[^0-9]/g, '');
                         const cachedName = contactsNameCache.get(phone) || '';
                         return {
                             id: p.id,
@@ -5207,7 +5207,7 @@ app.get('/api/filter/groups', async (req, res) => {
                     memberGroupCount[phone] = { phone, count: 0, groups: [], isAdminIn: [], id: p.id, name: p.name || contactsNameCache.get(phone) || '' };
                 }
                 memberGroupCount[phone].count++;
-                memberGroupCount[phone].groups.push({ jid: g.jid, subject: g.subject, isAdmin: !!(p.admin === 'admin' || p.admin === 'superadmin') });
+                memberGroupCount[phone].groups.push({ jid: g.jid, subject: g.subject, participantJid: p.id, isAdmin: !!(p.admin === 'admin' || p.admin === 'superadmin') });
                 if (p.admin === 'admin' || p.admin === 'superadmin') {
                     memberGroupCount[phone].isAdminIn.push(g.jid);
                 }
@@ -5253,7 +5253,7 @@ app.post('/api/filter/remove', async (req, res) => {
             return res.status(400).json({ error: 'Bot is not an admin in this group' });
         }
 
-        const participantJid = phone.includes('@') ? phone : phone + '@s.whatsapp.net';
+        const participantJid = req.body.participantJid || (phone.includes('@') ? phone : phone + '@s.whatsapp.net');
         const result = await client.removeGroupParticipant(groupJid, [participantJid]);
 
         const hasError = result && Array.isArray(result) && result.some(r => r.error);

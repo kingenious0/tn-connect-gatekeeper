@@ -181,10 +181,11 @@ let groupsHtml=m.groups.map(g=>{
 const inSelectedGroup=groupJid?g.jid===groupJid:true;
 const isAdminInGroup=g.isAdmin;
 const checkboxId='chk_'+m.phone+'_'+g.jid.replace(/[^a-z0-9]/gi,'');
-const checked=selectedRemovals.has(m.phone+':'+g.jid)?'checked':'';
+const pJid=g.participantJid||m.id||m.phone+'@s.whatsapp.net';
+const checked=selectedRemovals.has(pJid+':'+g.jid)?'checked':'';
 const disabled=isAdminInGroup||!inSelectedGroup?'disabled':'';
 const tag=isAdminInGroup?'<span class="group-admin-tag">admin</span>':'';
-return '<div class="group-row"><input type="checkbox" class="group-check" id="'+checkboxId+'" data-phone="'+m.phone+'" data-gjid="'+g.jid+'" '+checked+' '+disabled+'><span class="group-name">'+g.subject+'</span>'+tag+'</div>';
+return '<div class="group-row"><input type="checkbox" class="group-check" id="'+checkboxId+'" data-pjid="'+pJid+'" data-gjid="'+g.jid+'" '+checked+' '+disabled+'><span class="group-name">'+g.subject+'</span>'+tag+'</div>';
 }).join('');
 
 const badgeAdmin=isAdmin?'<span class="badge badge-admin">admin</span>':'';
@@ -202,7 +203,7 @@ h.parentElement.classList.toggle('open');
 
 container.querySelectorAll('.group-check').forEach(cb=>{
 cb.addEventListener('change',()=>{
-const key=cb.dataset.phone+':'+cb.dataset.gjid;
+const key=cb.dataset.pjid+':'+cb.dataset.gjid;
 if(cb.checked)selectedRemovals.add(key);else selectedRemovals.delete(key);
 updateCount();
 });
@@ -233,7 +234,8 @@ if(!allData)return;
 allData.members.filter(m=>m.count>=3).forEach(m=>{
 m.groups.forEach(g=>{
 const isAdminInGroup=g.isAdmin;
-if(!isAdminInGroup)selectedRemovals.add(m.phone+':'+g.jid);
+const pJid=g.participantJid||m.id||m.phone+'@s.whatsapp.net';
+if(!isAdminInGroup)selectedRemovals.add(pJid+':'+g.jid);
 });
 });
 filterAndRender();showToast('Selected all members in 3+ groups');
@@ -248,11 +250,13 @@ if(!selectedRemovals.size)return;
 const list=document.getElementById('previewList');
 list.innerHTML='';
 selectedRemovals.forEach(key=>{
-const[phone,gjid]=key.split(':');
-const member=allData.members.find(m=>m.phone===phone);
+const sep=key.indexOf(':');
+const pJid=key.substring(0,sep);
+const gjid=key.substring(sep+1);
+const member=allData.members.find(m=>m.id===pJid||m.phone===pJid.split(':')[0].replace(/\D/g,''));
 const group=allData.groups.find(g=>g.jid===gjid);
 const li=document.createElement('li');
-li.innerHTML='<span>'+(member?.name||phone)+' → '+(group?.subject||gjid)+'</span><span style="color:var(--danger)">REMOVE</span>';
+li.innerHTML='<span>'+(member?.name||pJid)+' → '+(group?.subject||gjid)+'</span><span style="color:var(--danger)">REMOVE</span>';
 list.appendChild(li);
 });
 document.getElementById('previewModal').classList.add('show');
@@ -272,9 +276,12 @@ btn.disabled=true;btn.textContent='Executing...';
 let success=0;let failed=0;
 const removals=Array.from(selectedRemovals);
 for(const key of removals){
-const[phone,gjid]=key.split(':');
+const sep=key.indexOf(':');
+const pJid=key.substring(0,sep);
+const gjid=key.substring(sep+1);
+const phone=pJid.split(':')[0].replace(/\D/g,'');
 try{
-const res=await fetch('/api/filter/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({groupJid:gjid,phone,sessionPhone})});
+const res=await fetch('/api/filter/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({groupJid:gjid,phone,participantJid:pJid,sessionPhone})});
 const data=await res.json();
 if(data.success)success++;else failed++;
 }catch(e){failed++;}
