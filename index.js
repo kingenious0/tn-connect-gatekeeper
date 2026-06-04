@@ -382,6 +382,19 @@ let adminAlertsGroupJid = null;
 let cachedGroups = [];
 let cachedGroupsLastRefresh = 0;
 
+// Contacts name cache: maps phone number -> display name (populated from incoming messages)
+const contactsNameCache = new Map();
+
+// Pre-populate from CAMPUS_ADMIN_ROSTER
+for (const a of CAMPUS_ADMIN_ROSTER) {
+    if (a.phone && a.admin_name) contactsNameCache.set(a.phone, a.admin_name);
+}
+
+// Pre-populate from registeredAdmins (loaded from disk above)
+for (const [phone, entry] of registeredAdmins) {
+    if (phone && entry?.name && !contactsNameCache.has(phone)) contactsNameCache.set(phone, entry.name);
+}
+
 let lastFullSyncTime = 0;
 const FULL_SYNC_COOLDOWN_MS = 120000;
 
@@ -2762,6 +2775,17 @@ function wireBaileysEvents() {
     // Incoming messages
     client.onMessage = async (msg) => {
         try {
+            // Cache display name from every incoming message (even filtered ones)
+            const pn = msg?.pushName || '';
+            const mk = msg?.key;
+            if (pn && mk && !mk.fromMe) {
+                const raw = mk.remoteJid || '';
+                const isGrp = raw.endsWith('@g.us');
+                const sender = isGrp ? (mk.participant || raw) : raw;
+                const ph = sender.replace(/[^0-9]/g, '');
+                if (ph && ph.length >= 8) contactsNameCache.set(ph, pn);
+            }
+
             const jid = msg?.key?.remoteJid;
             const fromMe = msg?.key?.fromMe;
             addDebugLog(`[RECV] raw msg from=${jid} fromMe=${fromMe} keys=${msg?.message ? Object.keys(msg.message).join(',') : 'none'}`);
@@ -4188,7 +4212,18 @@ async function processIncomingMessage(msg) {
     if (!msg || !msg.key || msg.key.fromMe) return;
     const jid = msg.key.remoteJid;
     if (!jid) return;
-    
+
+    // Cache sender display name for filter dashboard
+    const pushName = msg.pushName || '';
+    if (pushName) {
+        const isGrp = jid.endsWith('@g.us');
+        const senderJid = isGrp ? (msg.key.participant || jid) : jid;
+        const phone = senderJid.replace(/[^0-9]/g, '');
+        if (phone && phone.length >= 8 && !contactsNameCache.has(phone)) {
+            contactsNameCache.set(phone, pushName);
+        }
+    }
+
     // Ignore protocol/status/receipt messages that have no actual content to prevent duplicate blank catches
     const payload = extractIncomingPayload(msg);
     const isStatus = !!(msg.message?.groupStatusMentionMessage);
@@ -5127,26 +5162,37 @@ app.get('/api/filter/groups', async (req, res) => {
 
         // Fetch full participant lists from Baileys for groups where bot is admin
         const groupsWithParticipants = [];
+        let freshGroups = null;
+        try {
+            freshGroups = await client.fetchGroups(true);
+        } catch (e) {
+            console.warn(' [Filter] Failed to fetch groups:', e.message);
+        }
+        const freshData = freshGroups?.data || freshGroups?.groups || freshGroups?.results || (Array.isArray(freshGroups) ? freshGroups : []);
+        const freshDataMap = {};
+        for (const fg of (Array.isArray(freshData) ? freshData : Object.values(freshData))) {
+            freshDataMap[fg.id || fg.jid] = fg;
+        }
+
         for (const g of botAdminGroups) {
-            try {
-                const freshGroups = await client.fetchGroups(true);
-                const freshData = freshGroups?.data || freshGroups?.groups || freshGroups?.results || (Array.isArray(freshGroups) ? freshGroups : []);
-                const freshGroup = Object.values(freshData).find(fg => (fg.id || fg.jid) === g.jid);
-                if (freshGroup) {
-                    groupsWithParticipants.push({
-                        jid: g.jid,
-                        subject: g.subject || freshGroup.subject || 'Unknown',
-                        participants: (freshGroup.participants || []).map(p => ({
+            const freshGroup = freshDataMap[g.jid];
+            if (freshGroup) {
+                groupsWithParticipants.push({
+                    jid: g.jid,
+                    subject: g.subject || freshGroup.subject || 'Unknown',
+                    participants: (freshGroup.participants || []).map(p => {
+                        const phone = (p.id || '').replace(/[^0-9]/g, '');
+                        const cachedName = contactsNameCache.get(phone) || '';
+                        return {
                             id: p.id,
-                            phoneNumber: (p.id || '').replace(/[^0-9]/g, ''),
-                            name: p.name || '',
+                            phoneNumber: phone,
+                            name: p.name || cachedName || '',
                             admin: p.admin || null,
-                        })),
-                        size: freshGroup.size || freshGroup.participants?.length || 0,
-                    });
-                }
-            } catch (e) {
-                console.warn(' [Filter] Failed to fetch participants for ' + g.subject + ':', e.message);
+                        };
+                    }),
+                    size: freshGroup.size || freshGroup.participants?.length || 0,
+                });
+            } else {
                 groupsWithParticipants.push({ jid: g.jid, subject: g.subject, participants: [], size: 0 });
             }
         }
@@ -5158,7 +5204,7 @@ app.get('/api/filter/groups', async (req, res) => {
                 const phone = p.phoneNumber;
                 if (!phone || phone.length < 8) continue;
                 if (!memberGroupCount[phone]) {
-                    memberGroupCount[phone] = { phone, count: 0, groups: [], isAdminIn: [], id: p.id, name: p.name || '' };
+                    memberGroupCount[phone] = { phone, count: 0, groups: [], isAdminIn: [], id: p.id, name: p.name || contactsNameCache.get(phone) || '' };
                 }
                 memberGroupCount[phone].count++;
                 memberGroupCount[phone].groups.push({ jid: g.jid, subject: g.subject, isAdmin: !!(p.admin === 'admin' || p.admin === 'superadmin') });
@@ -5166,6 +5212,10 @@ app.get('/api/filter/groups', async (req, res) => {
                     memberGroupCount[phone].isAdminIn.push(g.jid);
                 }
                 if (p.name && !memberGroupCount[phone].name) memberGroupCount[phone].name = p.name;
+                if (!memberGroupCount[phone].name) {
+                    const cached = contactsNameCache.get(phone);
+                    if (cached) memberGroupCount[phone].name = cached;
+                }
             }
         }
 
