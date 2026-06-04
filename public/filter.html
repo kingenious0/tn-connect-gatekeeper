@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TN Connect — Member Filter</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0b1120;--card:#111827;--border:#1e293b;--text:#e2e8f0;--muted:#64748b;--accent:#3b82f6;--danger:#ef4444;--success:#22c55e;--warning:#f59e0b;--admin:#a855f7}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:0}
+.header{background:linear-gradient(135deg,#1e1b4b,#312e81);padding:20px 24px;border-bottom:1px solid var(--border)}
+.header h1{font-size:20px;font-weight:700;margin-bottom:4px}
+.header p{color:var(--muted);font-size:13px}
+.stats-bar{display:flex;gap:16px;padding:16px 24px;border-bottom:1px solid var(--border);background:var(--card);flex-wrap:wrap}
+.stat{display:flex;flex-direction:column}
+.stat-val{font-size:22px;font-weight:700;color:var(--accent)}
+.stat-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px}
+.toolbar{display:flex;gap:10px;padding:16px 24px;border-bottom:1px solid var(--border);background:var(--card);flex-wrap:wrap;align-items:center}
+.toolbar input[type=text]{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 14px;color:var(--text);font-size:14px;width:280px;outline:none}
+.toolbar input[type=text]:focus{border-color:var(--accent)}
+.toolbar select{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:13px;outline:none}
+.toolbar label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer;user-select:none}
+.toolbar label input{accent-color:var(--accent)}
+.btn{border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.15s}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:#2563eb}
+.btn-danger{background:var(--danger);color:#fff}.btn-danger:hover{background:#dc2626}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}.btn-outline:hover{border-color:var(--muted)}
+.btn:disabled{opacity:0.4;cursor:not-allowed}
+.action-bar{display:flex;gap:10px;padding:16px 24px;border-bottom:1px solid var(--border);background:var(--card);align-items:center;flex-wrap:wrap}
+.action-bar .count{font-size:13px;color:var(--warning);font-weight:600}
+.main{padding:16px 24px}
+.member-card{background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden;transition:border-color 0.2s}
+.member-card.highlight{border-color:var(--danger)}
+.member-card.selected{border-color:var(--accent)}
+.member-header{display:flex;align-items:center;padding:14px 16px;cursor:pointer;gap:12px}
+.member-header:hover{background:rgba(255,255,255,0.02)}
+.member-avatar{width:40px;height:40px;border-radius:50%;background:var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.member-avatar.admin{background:rgba(168,85,247,0.2);border:2px solid var(--admin)}
+.member-info{flex:1;min-width:0}
+.member-name{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.member-phone{font-size:12px;color:var(--muted)}
+.member-badges{display:flex;gap:6px;align-items:center;flex-shrink:0}
+.badge{font-size:11px;padding:2px 8px;border-radius:12px;font-weight:600}
+.badge-admin{background:rgba(168,85,247,0.15);color:var(--admin)}
+.badge-groups{background:rgba(239,68,68,0.15);color:var(--danger)}
+.badge-safe{background:rgba(34,197,94,0.15);color:var(--danger)}
+.badge-count{background:rgba(59,130,246,0.1);color:var(--accent)}
+.member-chevron{color:var(--muted);transition:transform 0.2s;font-size:12px}
+.member-card.open .member-chevron{transform:rotate(90deg)}
+.member-groups{display:none;padding:0 16px 14px}
+.member-card.open .member-groups{display:block}
+.group-row{display:flex;align-items:center;padding:8px 0;border-top:1px solid var(--border);gap:10px}
+.group-row:first-child{border-top:none}
+.group-name{flex:1;font-size:13px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.group-admin-tag{font-size:10px;padding:1px 6px;border-radius:8px;background:rgba(168,85,247,0.15);color:var(--admin);font-weight:600;flex-shrink:0}
+.group-check{width:18px;height:18px;accent-color:var(--danger);cursor:pointer;flex-shrink:0}
+.group-check:disabled{opacity:0.3;cursor:not-allowed}
+.loading{text-align:center;padding:60px 20px;color:var(--muted)}
+.loading .spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty{text-align:center;padding:60px 20px;color:var(--muted)}
+.preview-modal{position:fixed;inset:0;background:rgba(0,0,0,0.7);display:none;align-items:center;justify-content:center;z-index:100;padding:20px}
+.preview-modal.show{display:flex}
+.preview-box{background:var(--card);border-radius:16px;max-width:500px;width:100%;max-height:80vh;overflow-y:auto;padding:24px}
+.preview-box h2{font-size:18px;margin-bottom:16px}
+.preview-list{list-style:none;margin-bottom:20px}
+.preview-list li{padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;display:flex;justify-content:space-between}
+.preview-actions{display:flex;gap:10px;justify-content:flex-end}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--success);color:#fff;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:600;z-index:200;display:none;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
+.toast.show{display:block;animation:fadeIn 0.3s}
+@keyframes fadeIn{from{opacity:0;transform:translateX(-50%) translateY(10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+</style>
+</head>
+<body>
+<div class="header">
+<h1>🔍 Member Filter Dashboard</h1>
+<p>Cross-group member analysis & removal — TN Connect</p>
+</div>
+<div class="stats-bar" id="statsBar">
+<div class="stat"><span class="stat-val" id="totalGroups">-</span><span class="stat-label">Groups</span></div>
+<div class="stat"><span class="stat-val" id="totalMembers">-</span><span class="stat-label">Unique Members</span></div>
+<div class="stat"><span class="stat-val" id="multiGroupCount">-</span><span class="stat-label">In 3+ Groups</span></div>
+<div class="stat"><span class="stat-val" id="adminCount">-</span><span class="stat-label">Admins</span></div>
+</div>
+<div class="toolbar">
+<input type="text" id="searchInput" placeholder="Search by name or phone...">
+<select id="groupFilter"><option value="">All Groups</option></select>
+<label><input type="checkbox" id="showMultiOnly"> Only 3+ groups</label>
+<label><input type="checkbox" id="showAdminOnly"> Only admins</label>
+</div>
+<div class="action-bar">
+<button class="btn btn-outline" id="selectAllBtn">Select All in 3+</button>
+<button class="btn btn-outline" id="deselectAllBtn">Deselect All</button>
+<span class="count" id="selectedCount">0 selected</span>
+<div style="flex:1"></div>
+<button class="btn btn-outline" id="previewBtn" disabled>Preview Removals</button>
+<button class="btn btn-danger" id="confirmBtn" disabled>Confirm & Execute</button>
+</div>
+<div class="main" id="memberList">
+<div class="loading"><div class="spinner"></div>Loading members...</div>
+</div>
+<div class="preview-modal" id="previewModal">
+<div class="preview-box">
+<h2>⚠️ Confirm Removals</h2>
+<p style="color:var(--muted);font-size:13px;margin-bottom:16px">The following members will be removed from their selected groups:</p>
+<ul class="preview-list" id="previewList"></ul>
+<div class="preview-actions">
+<button class="btn btn-outline" id="cancelPreview">Cancel</button>
+<button class="btn btn-danger" id="executeBtn">Execute Removals</button>
+</div>
+</div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const params=new URLSearchParams(window.location.search);
+const sessionPhone=params.get('phone')||'';
+let allData=null;
+let selectedRemovals=new Set();
+
+async function loadData(){
+try{
+const res=await fetch('/api/filter/groups');
+if(!res.ok)throw new Error(await res.text());
+allData=await res.json();
+render();
+}catch(e){
+document.getElementById('memberList').innerHTML='<div class="empty">❌ Failed to load: '+e.message+'</div>';
+}
+}
+
+function render(){
+if(!allData)return;
+const{groups,members,totalGroups,totalUniqueMembers}=allData;
+document.getElementById('totalGroups').textContent=totalGroups;
+document.getElementById('totalMembers').textContent=totalUniqueMembers;
+const multi=members.filter(m=>m.count>=3);
+document.getElementById('multiGroupCount').textContent=multi.length;
+const admins=members.filter(m=>m.isAdminIn.length>0);
+document.getElementById('adminCount').textContent=admins.length;
+
+const sel=document.getElementById('groupFilter');
+const cur=sel.value;
+sel.innerHTML='<option value="">All Groups ('+groups.length+')</option>';
+groups.forEach(g=>{
+const opt=document.createElement('option');
+opt.value=g.jid;opt.textContent=g.subject+' ('+g.size+')';
+sel.appendChild(opt);
+});
+sel.value=cur;
+filterAndRender();
+}
+
+function filterAndRender(){
+if(!allData)return;
+const search=document.getElementById('searchInput').value.toLowerCase();
+const groupJid=document.getElementById('groupFilter').value;
+const multiOnly=document.getElementById('showMultiOnly').checked;
+const adminOnly=document.getElementById('showAdminOnly').checked;
+
+let filtered=allData.members.filter(m=>{
+if(search&&!m.phone.includes(search)&&!(m.name||'').toLowerCase().includes(search))return false;
+if(multiOnly&&m.count<3)return false;
+if(adminOnly&&m.isAdminIn.length===0)return false;
+return true;
+});
+
+const container=document.getElementById('memberList');
+if(!filtered.length){
+container.innerHTML='<div class="empty">No members match your filters</div>';
+updateCount();return;
+}
+
+container.innerHTML=filtered.map(m=>{
+const isHighlight=m.count>=3;
+const isAdmin=m.isAdminIn.length>0;
+const cardClass='member-card'+(isHighlight?' highlight':'');
+const avatarClass='member-avatar'+(isAdmin?' admin':'');
+const initials=(m.name||m.phone||'?').substring(0,2).toUpperCase();
+
+let groupsHtml=m.groups.map(g=>{
+const inSelectedGroup=groupJid?g.jid===groupJid:true;
+const isAdminInGroup=g.isAdmin;
+const checkboxId='chk_'+m.phone+'_'+g.jid.replace(/[^a-z0-9]/gi,'');
+const checked=selectedRemovals.has(m.phone+':'+g.jid)?'checked':'';
+const disabled=isAdminInGroup||!inSelectedGroup?'disabled':'';
+const tag=isAdminInGroup?'<span class="group-admin-tag">admin</span>':'';
+return '<div class="group-row"><input type="checkbox" class="group-check" id="'+checkboxId+'" data-phone="'+m.phone+'" data-gjid="'+g.jid+'" '+checked+' '+disabled+'><span class="group-name">'+g.subject+'</span>'+tag+'</div>';
+}).join('');
+
+const badgeAdmin=isAdmin?'<span class="badge badge-admin">admin</span>':'';
+const badgeGroups=m.count>=3?'<span class="badge badge-groups">'+m.count+' groups</span>':m.count>1?'<span class="badge badge-count">'+m.count+' groups</span>':'';
+const adminIn=m.isAdminIn.length?'admin in: '+m.isAdminIn.length:'';
+
+return '<div class="'+cardClass+'" id="card_'+m.phone+'"><div class="member-header"><div class="'+avatarClass+'">'+initials+'</div><div class="member-info"><div class="member-name">'+(m.name||'Unknown')+'</div><div class="member-phone">+'+m.phone+(adminIn?' · <span style="color:var(--admin)">'+adminIn+'</span>':'')+'</div></div><div class="member-badges">'+badgeAdmin+badgeGroups+'</div><span class="member-chevron">▶</span></div><div class="member-groups">'+groupsHtml+'</div></div>';
+}).join('');
+
+container.querySelectorAll('.member-header').forEach(h=>{
+h.addEventListener('click',()=>{
+h.parentElement.classList.toggle('open');
+});
+});
+
+container.querySelectorAll('.group-check').forEach(cb=>{
+cb.addEventListener('change',()=>{
+const key=cb.dataset.phone+':'+cb.dataset.gjid;
+if(cb.checked)selectedRemovals.add(key);else selectedRemovals.delete(key);
+updateCount();
+});
+});
+
+updateCount();
+}
+
+function updateCount(){
+const count=selectedRemovals.size;
+document.getElementById('selectedCount').textContent=count+' selected';
+document.getElementById('previewBtn').disabled=count===0;
+document.getElementById('confirmBtn').disabled=count===0;
+}
+
+function showToast(msg,ms=3000){
+const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');
+setTimeout(()=>t.classList.remove('show'),ms);
+}
+
+document.getElementById('searchInput').addEventListener('input',filterAndRender);
+document.getElementById('groupFilter').addEventListener('change',filterAndRender);
+document.getElementById('showMultiOnly').addEventListener('change',filterAndRender);
+document.getElementById('showAdminOnly').addEventListener('change',filterAndRender);
+
+document.getElementById('selectAllBtn').addEventListener('click',()=>{
+if(!allData)return;
+allData.members.filter(m=>m.count>=3).forEach(m=>{
+m.groups.forEach(g=>{
+const isAdminInGroup=g.isAdmin;
+if(!isAdminInGroup)selectedRemovals.add(m.phone+':'+g.jid);
+});
+});
+filterAndRender();showToast('Selected all members in 3+ groups');
+});
+
+document.getElementById('deselectAllBtn').addEventListener('click',()=>{
+selectedRemovals.clear();filterAndRender();showToast('All deselected');
+});
+
+document.getElementById('previewBtn').addEventListener('click',()=>{
+if(!selectedRemovals.size)return;
+const list=document.getElementById('previewList');
+list.innerHTML='';
+selectedRemovals.forEach(key=>{
+const[phone,gjid]=key.split(':');
+const member=allData.members.find(m=>m.phone===phone);
+const group=allData.groups.find(g=>g.jid===gjid);
+const li=document.createElement('li');
+li.innerHTML='<span>'+(member?.name||phone)+' → '+(group?.subject||gjid)+'</span><span style="color:var(--danger)">REMOVE</span>';
+list.appendChild(li);
+});
+document.getElementById('previewModal').classList.add('show');
+});
+
+document.getElementById('cancelPreview').addEventListener('click',()=>{
+document.getElementById('previewModal').classList.remove('show');
+});
+
+document.getElementById('confirmBtn').addEventListener('click',()=>{
+document.getElementById('previewBtn').click();
+});
+
+document.getElementById('executeBtn').addEventListener('click',async()=>{
+const btn=document.getElementById('executeBtn');
+btn.disabled=true;btn.textContent='Executing...';
+let success=0;let failed=0;
+const removals=Array.from(selectedRemovals);
+for(const key of removals){
+const[phone,gjid]=key.split(':');
+try{
+const res=await fetch('/api/filter/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({groupJid:gjid,phone,sessionPhone})});
+const data=await res.json();
+if(data.success)success++;else failed++;
+}catch(e){failed++;}
+}
+document.getElementById('previewModal').classList.remove('show');
+selectedRemovals.clear();filterAndRender();
+showToast('Done! Removed: '+success+' | Failed: '+failed);
+btn.disabled=false;btn.textContent='Execute Removals';
+});
+
+loadData();
+</script>
+</body>
+</html>

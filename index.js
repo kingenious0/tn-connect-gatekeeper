@@ -4140,6 +4140,26 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         }
     }
     
+    // 8. Filter Members — Cross-group member removal dashboard
+    if (lower === 'filter') {
+        if (!client.connected) {
+            await sendAntiBanMessage(jid, { text: '❌ Bot is not connected. Cannot generate filter dashboard.' });
+            return true;
+        }
+        const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+        const botAdminGroups = allGroups.filter(g => botAdminGroupCache.get(g.jid) === true);
+        if (!botAdminGroups.length) {
+            await sendAntiBanMessage(jid, { text: '❌ No groups found where the bot is an admin.' });
+            return true;
+        }
+        const baseUrl = SERVER_URL || ('http://localhost:' + PORT);
+        const filterUrl = `${baseUrl}/filter?phone=${senderPhone}`;
+        await sendAntiBanMessage(jid, {
+            text: `🔍 *Member Filter Dashboard*\n\nI found *${botAdminGroups.length}* groups where I'm an admin.\n\nOpen the dashboard to view & filter members:\n${filterUrl}\n\n⚠️ *How it works:*\n• See all members across all groups\n• Members in >3 groups are highlighted\n• Admins are auto-protected\n• Check boxes to remove members from specific groups\n• Preview before confirming`
+        });
+        return true;
+    }
+
     return false;
 };
 
@@ -5094,6 +5114,113 @@ app.get('/qr', async (req, res) => {
         return res.end(img);
     }
     res.status(404).json({ error: 'No QR available. Check server logs for status.' });
+});
+
+// ==========================================
+// 🔍 MEMBER FILTER — Cross-Group Dashboard API
+// ==========================================
+app.get('/api/filter/groups', async (req, res) => {
+    try {
+        if (!client.connected) return res.status(503).json({ error: 'Bot not connected' });
+        const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+        const botAdminGroups = allGroups.filter(g => botAdminGroupCache.get(g.jid) === true);
+
+        // Fetch full participant lists from Baileys for groups where bot is admin
+        const groupsWithParticipants = [];
+        for (const g of botAdminGroups) {
+            try {
+                const freshGroups = await client.fetchGroups(true);
+                const freshData = freshGroups?.data || freshGroups?.groups || freshGroups?.results || (Array.isArray(freshGroups) ? freshGroups : []);
+                const freshGroup = Object.values(freshData).find(fg => (fg.id || fg.jid) === g.jid);
+                if (freshGroup) {
+                    groupsWithParticipants.push({
+                        jid: g.jid,
+                        subject: g.subject || freshGroup.subject || 'Unknown',
+                        participants: (freshGroup.participants || []).map(p => ({
+                            id: p.id,
+                            phoneNumber: (p.id || '').replace(/[^0-9]/g, ''),
+                            name: p.name || '',
+                            admin: p.admin || null,
+                        })),
+                        size: freshGroup.size || freshGroup.participants?.length || 0,
+                    });
+                }
+            } catch (e) {
+                console.warn(' [Filter] Failed to fetch participants for ' + g.subject + ':', e.message);
+                groupsWithParticipants.push({ jid: g.jid, subject: g.subject, participants: [], size: 0 });
+            }
+        }
+
+        // Build cross-group member count map: phone -> { count, groupNames, isAdminIn }
+        const memberGroupCount = {};
+        for (const g of groupsWithParticipants) {
+            for (const p of g.participants) {
+                const phone = p.phoneNumber;
+                if (!phone || phone.length < 8) continue;
+                if (!memberGroupCount[phone]) {
+                    memberGroupCount[phone] = { phone, count: 0, groups: [], isAdminIn: [], id: p.id, name: p.name || '' };
+                }
+                memberGroupCount[phone].count++;
+                memberGroupCount[phone].groups.push({ jid: g.jid, subject: g.subject, isAdmin: !!(p.admin === 'admin' || p.admin === 'superadmin') });
+                if (p.admin === 'admin' || p.admin === 'superadmin') {
+                    memberGroupCount[phone].isAdminIn.push(g.jid);
+                }
+                if (p.name && !memberGroupCount[phone].name) memberGroupCount[phone].name = p.name;
+            }
+        }
+
+        const allAdminPhones = new Set();
+        for (const a of CAMPUS_ADMIN_ROSTER) allAdminPhones.add(a.phone);
+        for (const [phone] of registeredAdmins) allAdminPhones.add(phone);
+
+        const members = Object.values(memberGroupCount).sort((a, b) => b.count - a.count);
+
+        res.json({
+            groups: groupsWithParticipants.map(g => ({ jid: g.jid, subject: g.subject, size: g.participants.length })),
+            members,
+            totalGroups: groupsWithParticipants.length,
+            totalUniqueMembers: members.length,
+            allAdminPhones: Array.from(allAdminPhones),
+        });
+    } catch (err) {
+        console.error(' [Filter] API error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/filter/remove', async (req, res) => {
+    try {
+        if (!client.connected) return res.status(503).json({ error: 'Bot not connected' });
+        const { groupJid, phone, sessionPhone } = req.body || {};
+        if (!groupJid || !phone || !sessionPhone) return res.status(400).json({ error: 'groupJid, phone, and sessionPhone required' });
+
+        // Verify requester is an admin
+        const adminProfile = await lookupBroadcastAdmin(sessionPhone, null);
+        if (!adminProfile) return res.status(403).json({ error: 'Unauthorized — not an admin' });
+
+        // Verify bot is admin in target group
+        if (botAdminGroupCache.get(groupJid) !== true) {
+            return res.status(400).json({ error: 'Bot is not an admin in this group' });
+        }
+
+        const participantJid = phone.includes('@') ? phone : phone + '@s.whatsapp.net';
+        const result = await client.removeGroupParticipant(groupJid, [participantJid]);
+
+        const hasError = result && Array.isArray(result) && result.some(r => r.error);
+        if (hasError) {
+            const errMsg = result.find(r => r.error)?.error || 'Unknown error';
+            return res.json({ success: false, error: errMsg, phone, groupJid });
+        }
+
+        res.json({ success: true, phone, groupJid, message: `Removed ${phone} from group` });
+    } catch (err) {
+        console.error(' [Filter] Remove error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/filter', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'filter.html'));
 });
 
 app.use('/api', (req, res) => {

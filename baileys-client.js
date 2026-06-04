@@ -249,6 +249,12 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
         return this.sock.groupParticipantsUpdate(groupJid, jids, 'demote');
     }
 
+    async removeGroupParticipant(groupJid, participants) {
+        const raw = Array.isArray(participants) ? participants : [participants];
+        const jids = raw.map(j => j.includes('@') ? j : j + '@s.whatsapp.net');
+        return this.sock.groupParticipantsUpdate(groupJid, jids, 'remove');
+    }
+
     async approveGroupJoinRequest(groupJid, participant) {
         const jid = participant.includes('@') ? participant : participant + '@s.whatsapp.net';
         return this.sock.groupRequestParticipantsUpdate(groupJid, [jid], 'approve');
