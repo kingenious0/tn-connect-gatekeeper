@@ -5157,44 +5157,64 @@ app.get('/qr', async (req, res) => {
 app.get('/api/filter/groups', async (req, res) => {
     try {
         if (!client.connected) return res.status(503).json({ error: 'Bot not connected' });
-        const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
-        const botAdminGroups = allGroups.filter(g => botAdminGroupCache.get(g.jid) === true);
 
-        // Fetch full participant lists from Baileys for groups where bot is admin
-        const groupsWithParticipants = [];
+        // Fetch FRESH group data from Baileys — always up to date (not from stale cache)
         let freshGroups = null;
         try {
             freshGroups = await client.fetchGroups(true);
         } catch (e) {
             console.warn(' [Filter] Failed to fetch groups:', e.message);
         }
-        const freshData = freshGroups?.data || freshGroups?.groups || freshGroups?.results || (Array.isArray(freshGroups) ? freshGroups : []);
-        const freshDataMap = {};
-        for (const fg of (Array.isArray(freshData) ? freshData : Object.values(freshData))) {
-            freshDataMap[fg.id || fg.jid] = fg;
+        if (!freshGroups) {
+            // Fallback to cached groups if Baileys fetch fails entirely
+            const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+            const botAdminGroups = allGroups.filter(g => botAdminGroupCache.get(g.jid) === true);
+            const allAdminPhones = new Set();
+            for (const a of CAMPUS_ADMIN_ROSTER) allAdminPhones.add(a.phone);
+            for (const [phone] of registeredAdmins) allAdminPhones.add(phone);
+            return res.json({
+                groups: botAdminGroups.map(g => ({ jid: g.jid, subject: g.subject, size: 0 })),
+                members: [],
+                totalGroups: botAdminGroups.length,
+                totalUniqueMembers: 0,
+                allAdminPhones: Array.from(allAdminPhones),
+            });
         }
 
-        for (const g of botAdminGroups) {
-            const freshGroup = freshDataMap[g.jid];
-            if (freshGroup) {
-                groupsWithParticipants.push({
-                    jid: g.jid,
-                    subject: g.subject || freshGroup.subject || 'Unknown',
-                    participants: (freshGroup.participants || []).map(p => {
-                        const phone = p.phoneNumber || (p.id || '').split(':')[0].replace(/[^0-9]/g, '');
-                        const cachedName = contactsNameCache.get(phone) || '';
-                        return {
-                            id: p.id,
-                            phoneNumber: phone,
-                            name: p.name || cachedName || '',
-                            admin: p.admin || null,
-                        };
-                    }),
-                    size: freshGroup.size || freshGroup.participants?.length || 0,
-                });
-            } else {
-                groupsWithParticipants.push({ jid: g.jid, subject: g.subject, participants: [], size: 0 });
+        const freshData = freshGroups?.data || freshGroups?.groups || freshGroups?.results || (Array.isArray(freshGroups) ? freshGroups : []);
+        const allGroupEntries = Array.isArray(freshData) ? freshData : Object.values(freshData);
+
+        // Filter to groups where bot is admin — check cache first, then compute from fresh participants
+        const groupsWithParticipants = [];
+        for (const g of allGroupEntries) {
+            const gJid = g.jid || g.id;
+            let isBotAdmin = botAdminGroupCache.get(gJid) === true;
+
+            // Double-check from fresh data (catches groups added since last cache refresh)
+            if (!isBotAdmin) {
+                const rawParticipants = g.participants || [];
+                const me = rawParticipants.find(p => isJidMe(p));
+                isBotAdmin = !!(me && (me.admin === 'admin' || me.admin === 'superadmin'));
+                if (isBotAdmin) botAdminGroupCache.set(gJid, true);
             }
+
+            if (!isBotAdmin) continue;
+
+            groupsWithParticipants.push({
+                jid: gJid,
+                subject: g.subject || g.name || 'Unknown',
+                participants: (g.participants || []).map(p => {
+                    const phone = p.phoneNumber || (p.id || '').split(':')[0].replace(/[^0-9]/g, '');
+                    const cachedName = contactsNameCache.get(phone) || '';
+                    return {
+                        id: p.id,
+                        phoneNumber: phone,
+                        name: p.name || cachedName || '',
+                        admin: p.admin || null,
+                    };
+                }),
+                size: g.size || g.participants?.length || 0,
+            });
         }
 
         // Build cross-group member count map: phone -> { count, groupNames, isAdminIn }
