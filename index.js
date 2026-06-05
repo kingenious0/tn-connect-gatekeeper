@@ -5485,21 +5485,33 @@ app.post('/api/filter/warn', async (req, res) => {
 
         if (!targets.length) return res.json({ sent: 0, total: 0, message: 'No members found in ' + threshold + '+ niche groups' });
 
-        const defaultMsg = "Hello, you are currently in {count} niche groups. You can only stay in 3 niche groups. We'll be removing you from some niche groups and you'll remain in 3. Please contact an admin if you have any concerns.";
-        const template = message || defaultMsg;
-
+        // Message templates with variation to avoid detection
+        const WARN_TEMPLATES = [
+            "Hello, you're currently in {count} niche groups. TN Connect allows a maximum of 3. We'll be removing you from some groups so you stay within the limit. Please contact an admin if you have any concerns.",
+            "Hi there, our records show you're in {count} niche groups. The limit is 3. You'll be removed from a few groups to stay within that. Reach out to an admin if you have questions.",
+            "Hi, you're subscribed to {count} niche groups right now. Max is 3. We'll be adjusting this so you remain in 3. Feel free to contact an admin if anything is unclear.",
+        ];
+        const useTemplates = !message;
         const results = [];
         let sentCount = 0;
         for (const target of targets) {
-            const msgText = template.replace(/\{count\}/g, String(target.nicheCount));
+            let msgText;
+            if (useTemplates) {
+                const tpl = WARN_TEMPLATES[Math.floor(Math.random() * WARN_TEMPLATES.length)];
+                msgText = tpl.replace(/\{count\}/g, String(target.nicheCount));
+            } else {
+                msgText = message.replace(/\{count\}/g, String(target.nicheCount));
+            }
             try {
                 const jid = target.participantJid;
                 if (!jid) { results.push({ phone: target.phone, error: 'No JID' }); continue; }
-                await client.sendText(jid, msgText);
+                await sendAntiBanMessage(jid, msgText);
                 sentCount++;
                 results.push({ phone: target.phone, name: target.name, sent: true });
-                // Rate limiting: 1.5s delay between sends
-                await new Promise(r => setTimeout(r, 1500));
+                // Human-like delay: 8-25s between sends (anti-ban)
+                const humanDelay = 8000 + Math.floor(Math.random() * 17000);
+                console.log(' [Warn] Sent to ' + target.phone + ', waiting ' + Math.round(humanDelay / 1000) + 's before next...');
+                await new Promise(r => setTimeout(r, humanDelay));
             } catch (e) {
                 results.push({ phone: target.phone, name: target.name, error: e.message });
             }
