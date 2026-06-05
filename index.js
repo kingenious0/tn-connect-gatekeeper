@@ -1655,18 +1655,25 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
     const isStatusMention = !!(msg.message?.groupStatusMentionMessage);
     try { fs.appendFileSync('_trace.log', 'MOD status=' + (msg.status || '?') + ' jid=' + jid + ' sender=' + senderPhone + ' isAdmin=' + isAdmin + ' text="' + textInput.substring(0, 80) + '" msgKeys=[' + (msg.message ? Object.keys(msg.message).join(',') : '') + ']\n'); } catch (e) { }
     const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/');
+    const containsWaChannelLink = lowerText.includes('whatsapp.com/channel/') || lowerText.includes('chat.whatsapp.com/');
     
     let isLinkAllowed = false;
     let customLinkAlert = null;
     
     if (containsLink && !isAdmin) {
-        const marketStatus = checkMarketDayWindow();
-        if (marketStatus.active) {
-            isLinkAllowed = true;
-        } else if (marketStatus.when === 'before') {
-            customLinkAlert = `⚠️ @${senderPhone} link sharing is not allowed yet! Please wait until the Market session begins at ${marketStatus.startTime} GMT! 🕒`;
-        } else if (marketStatus.when === 'after') {
-            customLinkAlert = `⚠️ @${senderPhone} link sharing is restricted! The marketing period ended at ${marketStatus.endTime} GMT! 🕒`;
+        // WhatsApp channel/group invites are ALWAYS restricted — never allowed
+        if (containsWaChannelLink) {
+            isLinkAllowed = false;
+            customLinkAlert = `⚠️ @${senderPhone} WhatsApp channel/group links not allowed — deleted`;
+        } else {
+            const marketStatus = checkMarketDayWindow();
+            if (marketStatus.active) {
+                isLinkAllowed = true;
+            } else if (marketStatus.when === 'before') {
+                customLinkAlert = `⚠️ @${senderPhone} link sharing is not allowed yet! Please wait until the Market session begins at ${marketStatus.startTime} GMT! 🕒`;
+            } else if (marketStatus.when === 'after') {
+                customLinkAlert = `⚠️ @${senderPhone} link sharing is restricted! The marketing period ended at ${marketStatus.endTime} GMT! 🕒`;
+            }
         }
     }
     
