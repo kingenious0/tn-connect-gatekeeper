@@ -5424,13 +5424,14 @@ app.post('/api/filter/remove', async (req, res) => {
 app.post('/api/filter/warn', async (req, res) => {
     try {
         if (!client.connected) return res.status(503).json({ error: 'Bot not connected' });
-        const { sessionPhone, message, maxGroups } = req.body || {};
+        const { sessionPhone, message, maxGroups, phones: selectedPhones } = req.body || {};
         if (!sessionPhone) return res.status(400).json({ error: 'sessionPhone required' });
 
         const adminProfile = await lookupBroadcastAdmin(sessionPhone, null);
         if (!adminProfile) return res.status(403).json({ error: 'Unauthorized' });
 
         const threshold = parseInt(maxGroups) || 3;
+        const hasSelection = Array.isArray(selectedPhones) && selectedPhones.length > 0;
 
         // Fetch fresh group data
         const freshGroups = await client.fetchGroups(true);
@@ -5479,9 +5480,14 @@ app.post('/api/filter/warn', async (req, res) => {
         for (const [phone] of registeredAdmins) allAdminPhones.add(phone);
 
         // Filter to non-admin members ABOVE threshold NICHE groups (exactly threshold is safe)
-        const targets = Object.values(memberGroupMap)
+        let targets = Object.values(memberGroupMap)
             .filter(m => m.nicheCount > threshold && !allAdminPhones.has(m.phone))
             .sort((a, b) => b.nicheCount - a.nicheCount);
+
+        // If specific phones were selected, only send to those
+        if (hasSelection) {
+            targets = targets.filter(m => selectedPhones.includes(m.phone));
+        }
 
         if (!targets.length) return res.json({ sent: 0, total: 0, message: 'No members found in ' + threshold + '+ niche groups' });
 
@@ -5515,8 +5521,8 @@ app.post('/api/filter/warn', async (req, res) => {
                 await sendAntiBanMessage(jid, msgText);
                 sentCount++;
                 results.push({ phone: target.phone, name: target.name, sent: true });
-                // Human-like delay: 8-25s between sends (anti-ban)
-                const humanDelay = 8000 + Math.floor(Math.random() * 17000);
+                // Human-like delay: 3-7s random between sends (anti-ban safe, matches broadcast)
+                const humanDelay = Math.floor(Math.random() * 4000) + 3000;
                 console.log(' [Warn] Sent to ' + target.phone + ', waiting ' + Math.round(humanDelay / 1000) + 's before next...');
                 await new Promise(r => setTimeout(r, humanDelay));
             } catch (e) {

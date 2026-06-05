@@ -199,7 +199,13 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 <textarea id="warnMessage" placeholder="Type your message... Use {count} for group count"></textarea>
 <p style="font-size:12px;color:var(--text-tertiary);margin-top:6px">Use <code>{count}</code> to insert their niche group count.</p>
 <div style="margin-top:12px">
-<p style="font-size:13px;font-weight:600;margin-bottom:6px">Will be sent to:</p>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+<p style="font-size:13px;font-weight:600;margin:0">Will be sent to:</p>
+<div style="font-size:12px">
+<label style="cursor:pointer;margin-right:10px"><input type="checkbox" id="warnSelectAll" checked> Select All</label>
+<label style="cursor:pointer"><input type="checkbox" id="warnDeselectAll"> Deselect All</label>
+</div>
+</div>
 <ul class="target-list" id="warnTargetList"></ul>
 </div>
 <div id="warnProgress" style="display:none;margin-top:10px">
@@ -430,11 +436,19 @@ if(!targets.length){
 list.innerHTML='<li class="empty-msg">No non-admin members in 4+ niche groups</li>';
 document.getElementById('sendWarnBtn').disabled=true;
 }else{
-list.innerHTML=targets.map(t=>'<li><span><span class="name">'+(t.name||'Unknown')+'</span> +'+t.phone+'</span><span class="count-badge">'+t.nicheCount+' niche</span></li>').join('');
+list.innerHTML=targets.map((t,i)=>'<li><label style="display:flex;align-items:center;gap:8px;cursor:pointer;width:100%"><input type="checkbox" class="warn-check" data-phone="'+t.phone+'" checked> <span style="flex:1"><span class="name">'+(t.name||'Unknown')+'</span> +'+t.phone+'</span><span class="count-badge">'+t.nicheCount+' niche</span></label></li>').join('');
 document.getElementById('sendWarnBtn').disabled=false;
 }
 document.getElementById('warnProgress').style.display='none';
 modal.classList.add('show');
+});
+
+// Warn select/deselect all
+document.getElementById('warnSelectAll').addEventListener('change',function(){
+document.querySelectorAll('.warn-check').forEach(c=>c.checked=this.checked);
+});
+document.getElementById('warnDeselectAll').addEventListener('change',function(){
+document.querySelectorAll('.warn-check').forEach(c=>c.checked=!this.checked);
 });
 
 ['closeWarnModal','closeWarnModal2'].forEach(id=>{
@@ -446,22 +460,24 @@ const btn=document.getElementById('sendWarnBtn');
 const msg=document.getElementById('warnMessage').value.trim();
 if(!msg){showToast('Please enter a message');return;}
 
-const adminPhones=new Set(allData.allAdminPhones||[]);
-const targets=allData.members.filter(m=>m.nicheCount>3&&!adminPhones.has(m.phone)).sort((a,b)=>b.nicheCount-a.nicheCount);
-if(!targets.length){showToast('No targets found');return;}
+const checkedPhones=[...document.querySelectorAll('.warn-check:checked')].map(c=>c.dataset.phone);
+if(!checkedPhones.length){showToast('No targets selected');btn.disabled=false;btn.textContent='Send Messages';return;}
+
+const targets=checkedPhones.map(p=>allData.members.find(m=>m.phone===p)).filter(Boolean);
+if(!targets.length){showToast('No targets found');btn.disabled=false;btn.textContent='Send Messages';return;}
 
 btn.disabled=true;btn.textContent='Sending...';
 const progress=document.getElementById('warnProgress');
 const bar=document.getElementById('warnProgressBar');
 const progText=document.getElementById('warnProgressText');
 progress.style.display='block';
-bar.style.width='30%';
-progText.textContent='Sending messages to '+targets.length+' members...';
+bar.style.width='0%';
+progText.textContent='Sending 0 / '+targets.length+'...';
 
 document.getElementById('warnModal').classList.remove('show');
 
 try{
-const res=await fetch('/api/filter/warn',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionPhone,message:msg,maxGroups:3})});
+const res=await fetch('/api/filter/warn',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionPhone,message:msg,maxGroups:3,phones:checkedPhones})});
 const data=await res.json();
 bar.style.width='100%';
 progText.textContent='Sent: '+data.sent+' / '+data.total;
