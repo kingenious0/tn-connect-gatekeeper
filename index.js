@@ -5289,6 +5289,92 @@ app.post('/api/filter/remove', async (req, res) => {
     }
 });
 
+app.post('/api/filter/warn', async (req, res) => {
+    try {
+        if (!client.connected) return res.status(503).json({ error: 'Bot not connected' });
+        const { sessionPhone, message, maxGroups } = req.body || {};
+        if (!sessionPhone) return res.status(400).json({ error: 'sessionPhone required' });
+
+        const adminProfile = await lookupBroadcastAdmin(sessionPhone, null);
+        if (!adminProfile) return res.status(403).json({ error: 'Unauthorized' });
+
+        const threshold = parseInt(maxGroups) || 3;
+
+        // Fetch fresh group data
+        const freshGroups = await client.fetchGroups(true);
+        const freshData = freshGroups?.data || freshGroups?.groups || freshGroups?.results || (Array.isArray(freshGroups) ? freshGroups : []);
+        const allGroupEntries = Array.isArray(freshData) ? freshData : Object.values(freshData);
+
+        // Build member-group map from groups where bot is admin
+        const memberGroupMap = {};
+        for (const g of allGroupEntries) {
+            const gJid = g.jid || g.id;
+            let isBotAdmin = botAdminGroupCache.get(gJid) === true;
+            if (!isBotAdmin) {
+                const rawParticipants = g.participants || [];
+                const me = rawParticipants.find(p => isJidMe(p));
+                isBotAdmin = !!(me && (me.admin === 'admin' || me.admin === 'superadmin'));
+                if (isBotAdmin) botAdminGroupCache.set(gJid, true);
+            }
+            if (!isBotAdmin) continue;
+
+            for (const p of (g.participants || [])) {
+                const phone = p.phoneNumber || (p.id || '').split(':')[0].replace(/[^0-9]/g, '');
+                if (!phone || phone.length < 8) continue;
+                if (!memberGroupMap[phone]) {
+                    memberGroupMap[phone] = { phone, count: 0, jids: new Set(), participantJid: p.id, name: p.name || contactsNameCache.get(phone) || '' };
+                }
+                memberGroupMap[phone].count++;
+                memberGroupMap[phone].jids.add(gJid);
+                if (p.name && !memberGroupMap[phone].name) memberGroupMap[phone].name = p.name;
+                if (!memberGroupMap[phone].name) {
+                    const cached = contactsNameCache.get(phone);
+                    if (cached) memberGroupMap[phone].name = cached;
+                }
+                // Keep the first participant Jid we see (for sending messages)
+                if (!memberGroupMap[phone].participantJid) memberGroupMap[phone].participantJid = p.id;
+            }
+        }
+
+        // Build admin phone set
+        const allAdminPhones = new Set();
+        for (const a of CAMPUS_ADMIN_ROSTER) allAdminPhones.add(a.phone);
+        for (const [phone] of registeredAdmins) allAdminPhones.add(phone);
+
+        // Filter to non-admin members in threshold+ groups
+        const targets = Object.values(memberGroupMap)
+            .filter(m => m.count >= threshold && !allAdminPhones.has(m.phone))
+            .sort((a, b) => b.count - a.count);
+
+        if (!targets.length) return res.json({ sent: 0, total: 0, message: 'No members found in ' + threshold + '+ groups' });
+
+        const defaultMsg = "Hello, you are currently in {count} groups. You can only stay in 3 groups. We'll be removing you from some groups and you'll remain in 3. Please contact an admin if you have any concerns.";
+        const template = message || defaultMsg;
+
+        const results = [];
+        let sentCount = 0;
+        for (const target of targets) {
+            const msgText = template.replace(/\{count\}/g, String(target.count));
+            try {
+                const jid = target.participantJid;
+                if (!jid) { results.push({ phone: target.phone, error: 'No JID' }); continue; }
+                await client.sendText(jid, msgText);
+                sentCount++;
+                results.push({ phone: target.phone, name: target.name, sent: true });
+                // Rate limiting: 1.5s delay between sends
+                await new Promise(r => setTimeout(r, 1500));
+            } catch (e) {
+                results.push({ phone: target.phone, name: target.name, error: e.message });
+            }
+        }
+
+        res.json({ sent: sentCount, total: targets.length, results });
+    } catch (err) {
+        console.error(' [Filter] Warn error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/filter', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'filter.html'));
 });
