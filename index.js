@@ -5521,6 +5521,7 @@ app.post('/api/filter/warn', async (req, res) => {
                 msgText = tpl.replace(/\{count\}/g, String(target.nicheCount));
             } else {
                 msgText = message.replace(/\{count\}/g, String(target.nicheCount));
+                msgText += adminFooter;
             }
             try {
                 const jid = target.participantJid;
