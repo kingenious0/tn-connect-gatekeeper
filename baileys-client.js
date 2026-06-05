@@ -260,6 +260,11 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
         return this.sock.groupRequestParticipantsUpdate(groupJid, [jid], 'approve');
     }
 
+    async rejectGroupJoinRequest(groupJid, participant) {
+        const jid = participant.includes('@') ? participant : participant + '@s.whatsapp.net';
+        return this.sock.groupRequestParticipantsUpdate(groupJid, [jid], 'reject');
+    }
+
     async fetchGroupJoinRequests(groupJid) {
         return this.sock.groupRequestParticipantsList(groupJid);
     }

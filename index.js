@@ -514,10 +514,14 @@ const OFFICIAL_NICHE_GROUPS = [
 
 const isNicheGroup = (subject) => {
     if (!subject) return false;
-    const cleaned = subject.toLowerCase().replace(/[^a-z0-9 &]/g, '');
+    const cleaned = subject.toLowerCase().replace(/[^a-z0-9 &]/g, ' ').replace(/\s+/g, ' ').trim();
+    const cleanedWords = new Set(cleaned.split(' ').filter(w => w.length > 1));
     return OFFICIAL_NICHE_GROUPS.some(niche => {
-        const cleanNiche = niche.toLowerCase().replace(/[^a-z0-9 &]/g, '');
-        return cleaned.includes(cleanNiche);
+        const cleanNiche = niche.toLowerCase().replace(/[^a-z0-9 &]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (cleaned.includes(cleanNiche)) return true;
+        const nicheWords = cleanNiche.split(' ').filter(w => w.length > 2);
+        const keywords = nicheWords.filter(w => !['the','and','for','with','&'].includes(w));
+        return keywords.length >= 3 && keywords.every(w => cleaned.includes(w));
     });
 };
 
@@ -911,6 +915,70 @@ const getVerificationState = (userPhone) => {
     return pendingVerifications.get(userPhone);
 };
 
+const getNicheGroupCountForParticipant = async (participantJid) => {
+    try {
+        const raw = await client.fetchGroups(true);
+        const groups = raw?.groups || raw?.data || raw?.results || (Array.isArray(raw) ? raw : Object.values(raw || {}));
+        const phone = resolveParticipantPhone(participantJid);
+        if (!phone) return 0;
+        let count = 0;
+        const allAdminPhones = new Set();
+        for (const a of CAMPUS_ADMIN_ROSTER) allAdminPhones.add(a.phone);
+        for (const [p] of registeredAdmins) allAdminPhones.add(p);
+        if (allAdminPhones.has(phone)) return 0;
+        for (const g of groups) {
+            const gJid = g.jid || g.id;
+            let isBotAdmin = botAdminGroupCache.get(gJid) === true;
+            if (!isBotAdmin) {
+                const me = (g.participants || []).find(p => isJidMe(p));
+                isBotAdmin = !!(me && (me.admin === 'admin' || me.admin === 'superadmin'));
+                if (isBotAdmin) botAdminGroupCache.set(gJid, true);
+            }
+            if (!isBotAdmin) continue;
+            if (!isNicheGroup(g.subject || g.name || '')) continue;
+            const found = (g.participants || []).some(p => {
+                const pPhone = p.phoneNumber || (p.id || '').split(':')[0].replace(/[^0-9]/g, '');
+                return pPhone === phone;
+            });
+            if (found) count++;
+        }
+        return count;
+    } catch (e) {
+        console.error(' [NicheGate] Failed to check niche count for ' + (participantJid || '?' ) + ':', e.message);
+        return -1;
+    }
+};
+
+const sendNicheJoinRejection = async (participantJid, groupSubject, nicheCount, groupJid) => {
+    try {
+        const dmJid = dmJidFromParticipant(participantJid);
+        if (!dmJid) { console.error(' [NicheGate] Cannot send DM — no JID'); return; }
+        const humanPause1 = 3000 + Math.floor(Math.random() * 27000);
+        console.log(' [NicheGate] Waiting ' + Math.round(humanPause1 / 1000) + 's before sending DM to ' + dmJid);
+        await new Promise(r => setTimeout(r, humanPause1));
+        const TOP_ADMINS = CAMPUS_ADMIN_ROSTER.slice(0, 7);
+        const adminList = TOP_ADMINS.sort(() => Math.random() - 0.5).map(a => '• ' + a.admin_name).join('\n');
+        const msg = [
+            'Hi, you just requested to join *' + groupSubject + '* but our system shows you\'re already in *' + nicheCount + ' niche groups*.',
+            '',
+            'TN Connect allows a maximum of *3 niche groups* per member. Your request has been declined.',
+            '',
+            'Please contact a human admin for help:',
+            adminList,
+            '',
+            '_(Do not reply — this is automated)_'
+        ].join('\n');
+        await client.sendText(dmJid, msg);
+        console.log(' [NicheGate] ✅ DM sent to ' + dmJid);
+        const humanPause2 = 3000 + Math.floor(Math.random() * 7000);
+        await new Promise(r => setTimeout(r, humanPause2));
+        await client.rejectGroupJoinRequest(groupJid, dmJid);
+        console.log(' [NicheGate] ❌ Rejected ' + dmJid + ' from ' + groupSubject);
+    } catch (e) {
+        console.error(' [NicheGate] Failed to reject ' + (participantJid || '?') + ':', e.message);
+    }
+};
+
 const processJoinRequest = async (groupJid, participantJid, action, groupSubjectHint) => {
     if (!participantJid || !groupJid) return;
     if (action && action !== 'created') return;
@@ -926,6 +994,28 @@ const processJoinRequest = async (groupJid, participantJid, action, groupSubject
     }
     const admin = getBotAdminContext();
     const groupSubject = groupSubjectHint || await getGroupSubject(groupJid);
+
+    // Niche Group Gatekeeper: if member already in 3+ niche groups, reject
+    if (isNicheGroup(groupSubject)) {
+        const nicheCount = await getNicheGroupCountForParticipant(participantJid);
+        if (nicheCount >= 3) {
+            console.log(' [Join] ⛔ ' + dmJid + ' already in ' + nicheCount + ' niche groups — rejecting join to "' + groupSubject + '"');
+            const entry = {
+                admin: admin.name, phone: admin.phone, groupJid, groupSubject,
+                rawParticipantJid: participantJid, participantJid: dmJid,
+                status: 'rejected_niche_limit', nicheCount,
+                timestamp: new Date().toISOString()
+            };
+            await saveRegistryItem(registryKey, entry);
+            joinIntroSentKeys.add(registryKey);
+            sendNicheJoinRejection(participantJid, groupSubject, nicheCount, groupJid);
+            return;
+        }
+        if (nicheCount === -1) {
+            console.warn(' [Join] ⚠️ Could not check niche count for ' + dmJid + ' — proceeding with auto-approve');
+        }
+    }
+
     const entry = {
         admin: admin.name, phone: admin.phone, groupJid, groupSubject,
         rawParticipantJid: participantJid, participantJid: dmJid,
