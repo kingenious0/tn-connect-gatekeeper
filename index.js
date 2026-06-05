@@ -382,6 +382,29 @@ let adminAlertsGroupJid = null;
 let cachedGroups = [];
 let cachedGroupsLastRefresh = 0;
 
+// Warned members persistence
+const WARNED_MEMBERS_FILE = path.join(__dirname, 'warned_members.json');
+let warnedMembers = new Set();
+try {
+    if (fs.existsSync(WARNED_MEMBERS_FILE)) {
+        const raw = fs.readFileSync(WARNED_MEMBERS_FILE, 'utf8');
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+            warnedMembers = new Set(arr);
+            console.log(' [Warn] Loaded ' + warnedMembers.size + ' previously warned members');
+        }
+    }
+} catch (e) {
+    console.warn(' [Warn] Failed to load warned_members.json:', e.message);
+}
+const saveWarnedMembers = () => {
+    try {
+        fs.writeFileSync(WARNED_MEMBERS_FILE, JSON.stringify(Array.from(warnedMembers)), 'utf8');
+    } catch (e) {
+        console.warn(' [Warn] Failed to save warned_members.json:', e.message);
+    }
+};
+
 // Contacts name cache: maps phone number -> display name (populated from incoming messages)
 const contactsNameCache = new Map();
 
@@ -5371,11 +5394,12 @@ app.get('/api/filter/groups', async (req, res) => {
         for (const a of CAMPUS_ADMIN_ROSTER) allAdminPhones.add(a.phone);
         for (const [phone] of registeredAdmins) allAdminPhones.add(phone);
 
-        // Add totalCount for backward compatibility, sort by nicheCount
+        // Add totalCount + warned flag for backward compatibility, sort by nicheCount
         const members = Object.values(memberGroupCount).map(m => ({
             ...m,
             count: m.nicheCount,  // backward compat: count = nicheCount
-            totalCount: m.nicheCount + m.otherCount
+            totalCount: m.nicheCount + m.otherCount,
+            warned: warnedMembers.has(m.phone)
         })).sort((a, b) => b.nicheCount - a.nicheCount);
 
         res.json({
@@ -5431,7 +5455,7 @@ app.post('/api/filter/remove', async (req, res) => {
 app.post('/api/filter/warn', async (req, res) => {
     try {
         if (!client.connected) return res.status(503).json({ error: 'Bot not connected' });
-        const { sessionPhone, message, maxGroups, phones: selectedPhones } = req.body || {};
+        const { sessionPhone, message, maxGroups, phones: selectedPhones, includeWarned } = req.body || {};
         if (!sessionPhone) return res.status(400).json({ error: 'sessionPhone required' });
 
         const adminProfile = await lookupBroadcastAdmin(sessionPhone, null);
@@ -5496,6 +5520,12 @@ app.post('/api/filter/warn', async (req, res) => {
             targets = targets.filter(m => selectedPhones.includes(m.phone));
         }
 
+        // Skip already-warned members unless includeWarned is explicitly true
+        const includeAlreadyWarned = includeWarned === true;
+        if (!includeAlreadyWarned) {
+            targets = targets.filter(m => !warnedMembers.has(m.phone));
+        }
+
         if (!targets.length) return res.json({ sent: 0, total: 0, message: 'No members found in ' + threshold + '+ niche groups' });
 
         // Build admin contact list
@@ -5528,6 +5558,8 @@ app.post('/api/filter/warn', async (req, res) => {
                 if (!jid) { results.push({ phone: target.phone, error: 'No JID' }); continue; }
                 await sendAntiBanMessage(jid, msgText);
                 sentCount++;
+                warnedMembers.add(target.phone);
+                saveWarnedMembers();
                 results.push({ phone: target.phone, name: target.name, sent: true });
                 // Human-like delay: 3-7s random between sends (anti-ban safe, matches broadcast)
                 const humanDelay = Math.floor(Math.random() * 4000) + 3000;
