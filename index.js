@@ -5485,11 +5485,18 @@ app.post('/api/filter/warn', async (req, res) => {
 
         if (!targets.length) return res.json({ sent: 0, total: 0, message: 'No members found in ' + threshold + '+ niche groups' });
 
+        // Build admin contact list
+        const adminContacts = CAMPUS_ADMIN_ROSTER.slice(0, 7)
+            .sort(() => Math.random() - 0.5)
+            .map(a => '• ' + a.admin_name + ' (0' + a.phone.slice(3) + ')')
+            .join('\n');
+        const adminFooter = '\n\nContact any of these admins for help:\n' + adminContacts + '\n\n⚠️ Do not reply to this message — the bot won\'t see it.';
+
         // Message templates with variation to avoid detection
         const WARN_TEMPLATES = [
-            "Hello, you're currently in {count} niche groups. TN Connect allows a maximum of 3. We'll be removing you from some groups so you stay within the limit. Please contact an admin if you have any concerns.",
-            "Hi there, our records show you're in {count} niche groups. The limit is 3. You'll be removed from a few groups to stay within that. Reach out to an admin if you have questions.",
-            "Hi, you're subscribed to {count} niche groups right now. Max is 3. We'll be adjusting this so you remain in 3. Feel free to contact an admin if anything is unclear.",
+            "Hello, you're currently in {count} niche groups. TN Connect allows a maximum of 3. We'll be removing you from some groups so you stay within the limit." + adminFooter,
+            "Hi there, our records show you're in {count} niche groups. The limit is 3. You'll be removed from a few groups to stay within that." + adminFooter,
+            "Hi, you're registered in {count} niche groups right now. Max is 3. We'll be adjusting this so you remain in 3." + adminFooter,
         ];
         const useTemplates = !message;
         const results = [];
