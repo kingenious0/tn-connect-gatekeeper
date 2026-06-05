@@ -149,7 +149,7 @@ const BROADCAST_CONFIG_FILE = './broadcast_config.json';
 const LOCKED_GROUPS_FILE = './locked_groups.json';
 
 // Baileys configuration
-const AUTH_FOLDER = process.env.AUTH_FOLDER || './auth_info';
+const AUTH_FOLDER = process.env.AUTH_FOLDER || './auth_session_233536763993';
 const SERVER_URL = process.env.SERVER_URL || process.env.RENDER_EXTERNAL_URL || '';
 const PHONE_NUMBER = process.env.PHONE_NUMBER || '';
 
