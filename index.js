@@ -995,7 +995,7 @@ const processJoinRequest = async (groupJid, participantJid, action, groupSubject
     const admin = getBotAdminContext();
     const groupSubject = groupSubjectHint || await getGroupSubject(groupJid);
 
-    // Niche Group Gatekeeper: if member already in 3+ niche groups, reject
+    // Niche Group Gatekeeper: if member already in 3+ niche groups, reject (3 is max, 4 triggers warn/removal)
     if (isNicheGroup(groupSubject)) {
         const nicheCount = await getNicheGroupCountForParticipant(participantJid);
         if (nicheCount >= 3) {
@@ -5478,9 +5478,9 @@ app.post('/api/filter/warn', async (req, res) => {
         for (const a of CAMPUS_ADMIN_ROSTER) allAdminPhones.add(a.phone);
         for (const [phone] of registeredAdmins) allAdminPhones.add(phone);
 
-        // Filter to non-admin members in threshold+ NICHE groups
+        // Filter to non-admin members ABOVE threshold NICHE groups (exactly threshold is safe)
         const targets = Object.values(memberGroupMap)
-            .filter(m => m.nicheCount >= threshold && !allAdminPhones.has(m.phone))
+            .filter(m => m.nicheCount > threshold && !allAdminPhones.has(m.phone))
             .sort((a, b) => b.nicheCount - a.nicheCount);
 
         if (!targets.length) return res.json({ sent: 0, total: 0, message: 'No members found in ' + threshold + '+ niche groups' });

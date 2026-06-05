@@ -241,7 +241,7 @@ const{groups,members,totalGroups,totalNicheGroups,totalUniqueMembers}=allData;
 document.getElementById('totalGroups').textContent=totalGroups;
 document.getElementById('totalNicheGroups').textContent=totalNicheGroups||'?';
 document.getElementById('totalMembers').textContent=totalUniqueMembers;
-const multi=members.filter(m=>m.nicheCount>=3);
+const multi=members.filter(m=>m.nicheCount>3);
 document.getElementById('multiGroupCount').textContent=multi.length;
 
 const sel=document.getElementById('groupFilter');
@@ -269,7 +269,7 @@ const nicheOnly=document.getElementById('showNicheOnly').checked;
 
 let filtered=allData.members.filter(m=>{
 if(search&&!m.phone.includes(search)&&!(m.name||'').toLowerCase().includes(search))return false;
-if(multiOnly&&m.nicheCount<3)return false;
+if(multiOnly&&m.nicheCount<=3)return false;
 if(adminOnly&&m.isAdminIn.length===0)return false;
 return true;
 });
@@ -281,7 +281,7 @@ updateCount();return;
 }
 
 container.innerHTML=filtered.map(m=>{
-const isHighlight=m.nicheCount>=3;
+const isHighlight=m.nicheCount>3;
 const isAdmin=m.isAdminIn.length>0;
 const cardClass='member-card'+(isHighlight?' highlight':'');
 const avatarClass='member-avatar'+(isAdmin?' admin':'');
@@ -289,7 +289,7 @@ const initials=(m.name||m.phone||'?').substring(0,2).toUpperCase();
 
 // Niche dot color
 let nicheDot='success';
-if(m.nicheCount>=3)nicheDot='danger';
+if(m.nicheCount>3)nicheDot='danger';
 else if(m.nicheCount>=2)nicheDot='warning';
 
 const otherStr=m.otherCount>0?' &middot; +'+m.otherCount+' other':'';
@@ -313,7 +313,7 @@ return '<div class="'+rowClass+'"><input type="checkbox" class="group-check" id=
 }).join('');
 
 // Badges
-const badgeNiche=m.nicheCount>=3?'<span class="badge badge-danger">'+nicheStr+'</span>':m.nicheCount>1?'<span class="badge badge-warning">'+nicheStr+'</span>':m.nicheCount>0?'<span class="badge badge-niche">'+nicheStr+'</span>':'<span class="badge badge-safe">0 niche</span>';
+const badgeNiche=m.nicheCount>3?'<span class="badge badge-danger">'+nicheStr+'</span>':m.nicheCount>1?'<span class="badge badge-warning">'+nicheStr+'</span>':m.nicheCount>0?'<span class="badge badge-niche">'+nicheStr+'</span>':'<span class="badge badge-safe">0 niche</span>';
 
 return '<div class="'+cardClass+'" id="card_'+m.phone+'"><div class="member-header"><div class="'+avatarClass+'">'+initials+'</div><div class="member-info"><div class="member-name">'+(m.name||'Unknown')+'</div><div class="niche-info"><span class="niche-dot '+nicheDot+'"></span> '+nicheStr+otherStr+(adminInfo?' &middot; '+adminInfo:'')+'</div></div><div class="member-badges">'+badgeNiche+'<span class="chevron">&#9654;</span></div></div><div class="member-groups">'+groupsHtml+'</div></div>';
 }).join('');
@@ -355,7 +355,7 @@ document.getElementById('showNicheOnly').addEventListener('change',filterAndRend
 
 document.getElementById('selectAllBtn').addEventListener('click',()=>{
 if(!allData)return;
-allData.members.filter(m=>m.nicheCount>=3).forEach(m=>{
+allData.members.filter(m=>m.nicheCount>3).forEach(m=>{
 m.groups.forEach(g=>{
 if(!g.isAdmin&&g.isNiche){
 const pJid=g.participantJid||m.id||m.phone+'@s.whatsapp.net';
@@ -423,11 +423,11 @@ const modal=document.getElementById('warnModal');
 document.getElementById('warnMessage').value=DEFAULT_WARN_MSG;
 
 const adminPhones=new Set(allData.allAdminPhones||[]);
-const targets=allData.members.filter(m=>m.nicheCount>=3&&!adminPhones.has(m.phone)).sort((a,b)=>b.nicheCount-a.nicheCount);
+const targets=allData.members.filter(m=>m.nicheCount>3&&!adminPhones.has(m.phone)).sort((a,b)=>b.nicheCount-a.nicheCount);
 
 const list=document.getElementById('warnTargetList');
 if(!targets.length){
-list.innerHTML='<li class="empty-msg">No non-admin members in 3+ niche groups</li>';
+list.innerHTML='<li class="empty-msg">No non-admin members in 4+ niche groups</li>';
 document.getElementById('sendWarnBtn').disabled=true;
 }else{
 list.innerHTML=targets.map(t=>'<li><span><span class="name">'+(t.name||'Unknown')+'</span> +'+t.phone+'</span><span class="count-badge">'+t.nicheCount+' niche</span></li>').join('');
@@ -447,7 +447,7 @@ const msg=document.getElementById('warnMessage').value.trim();
 if(!msg){showToast('Please enter a message');return;}
 
 const adminPhones=new Set(allData.allAdminPhones||[]);
-const targets=allData.members.filter(m=>m.nicheCount>=3&&!adminPhones.has(m.phone)).sort((a,b)=>b.nicheCount-a.nicheCount);
+const targets=allData.members.filter(m=>m.nicheCount>3&&!adminPhones.has(m.phone)).sort((a,b)=>b.nicheCount-a.nicheCount);
 if(!targets.length){showToast('No targets found');return;}
 
 btn.disabled=true;btn.textContent='Sending...';
