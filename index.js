@@ -512,6 +512,15 @@ const OFFICIAL_NICHE_GROUPS = [
     "🔟 Performance & Commercial Talent Personnel"
 ];
 
+const isNicheGroup = (subject) => {
+    if (!subject) return false;
+    const cleaned = subject.toLowerCase().replace(/[^a-z0-9 &]/g, '');
+    return OFFICIAL_NICHE_GROUPS.some(niche => {
+        const cleanNiche = niche.toLowerCase().replace(/[^a-z0-9 &]/g, '');
+        return cleaned.includes(cleanNiche);
+    });
+};
+
 const serializeDirectory = (dirPath) => {
     const filesData = {};
     if (!fs.existsSync(dirPath)) return filesData;
@@ -5158,7 +5167,7 @@ app.get('/api/filter/groups', async (req, res) => {
     try {
         if (!client.connected) return res.status(503).json({ error: 'Bot not connected' });
 
-        // Fetch FRESH group data from Baileys — always up to date (not from stale cache)
+        // Fetch FRESH group data from Baileys — always up to date
         let freshGroups = null;
         try {
             freshGroups = await client.fetchGroups(true);
@@ -5166,14 +5175,13 @@ app.get('/api/filter/groups', async (req, res) => {
             console.warn(' [Filter] Failed to fetch groups:', e.message);
         }
         if (!freshGroups) {
-            // Fallback to cached groups if Baileys fetch fails entirely
             const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
             const botAdminGroups = allGroups.filter(g => botAdminGroupCache.get(g.jid) === true);
             const allAdminPhones = new Set();
             for (const a of CAMPUS_ADMIN_ROSTER) allAdminPhones.add(a.phone);
             for (const [phone] of registeredAdmins) allAdminPhones.add(phone);
             return res.json({
-                groups: botAdminGroups.map(g => ({ jid: g.jid, subject: g.subject, size: 0 })),
+                groups: botAdminGroups.map(g => ({ jid: g.jid, subject: g.subject, size: 0, isNiche: isNicheGroup(g.subject) })),
                 members: [],
                 totalGroups: botAdminGroups.length,
                 totalUniqueMembers: 0,
@@ -5184,13 +5192,12 @@ app.get('/api/filter/groups', async (req, res) => {
         const freshData = freshGroups?.data || freshGroups?.groups || freshGroups?.results || (Array.isArray(freshGroups) ? freshGroups : []);
         const allGroupEntries = Array.isArray(freshData) ? freshData : Object.values(freshData);
 
-        // Filter to groups where bot is admin — check cache first, then compute from fresh participants
+        // First pass: identify admin groups and their niche status
         const groupsWithParticipants = [];
         for (const g of allGroupEntries) {
             const gJid = g.jid || g.id;
             let isBotAdmin = botAdminGroupCache.get(gJid) === true;
 
-            // Double-check from fresh data (catches groups added since last cache refresh)
             if (!isBotAdmin) {
                 const rawParticipants = g.participants || [];
                 const me = rawParticipants.find(p => isJidMe(p));
@@ -5200,9 +5207,13 @@ app.get('/api/filter/groups', async (req, res) => {
 
             if (!isBotAdmin) continue;
 
+            const subject = g.subject || g.name || 'Unknown';
+            const isNiche = isNicheGroup(subject);
+
             groupsWithParticipants.push({
                 jid: gJid,
-                subject: g.subject || g.name || 'Unknown',
+                subject,
+                isNiche,
                 participants: (g.participants || []).map(p => {
                     const phone = p.phoneNumber || (p.id || '').split(':')[0].replace(/[^0-9]/g, '');
                     const cachedName = contactsNameCache.get(phone) || '';
@@ -5217,18 +5228,38 @@ app.get('/api/filter/groups', async (req, res) => {
             });
         }
 
-        // Build cross-group member count map: phone -> { count, groupNames, isAdminIn }
+        // Build cross-group member count map — ONLY count niche groups toward the limit
         const memberGroupCount = {};
         for (const g of groupsWithParticipants) {
             for (const p of g.participants) {
                 const phone = p.phoneNumber;
                 if (!phone || phone.length < 8) continue;
                 if (!memberGroupCount[phone]) {
-                    memberGroupCount[phone] = { phone, count: 0, groups: [], isAdminIn: [], id: p.id, name: p.name || contactsNameCache.get(phone) || '' };
+                    memberGroupCount[phone] = {
+                        phone,
+                        nicheCount: 0,      // only niche groups count toward limit
+                        otherCount: 0,      // non-niche groups (for display only)
+                        groups: [],
+                        isAdminIn: [],
+                        id: p.id,
+                        name: p.name || contactsNameCache.get(phone) || ''
+                    };
                 }
-                memberGroupCount[phone].count++;
-                memberGroupCount[phone].groups.push({ jid: g.jid, subject: g.subject, participantJid: p.id, isAdmin: !!(p.admin === 'admin' || p.admin === 'superadmin') });
-                if (p.admin === 'admin' || p.admin === 'superadmin') {
+                const isAdminInGroup = !!(p.admin === 'admin' || p.admin === 'superadmin');
+                const groupInfo = {
+                    jid: g.jid,
+                    subject: g.subject,
+                    participantJid: p.id,
+                    isAdmin: isAdminInGroup,
+                    isNiche: g.isNiche
+                };
+                memberGroupCount[phone].groups.push(groupInfo);
+                if (g.isNiche) {
+                    memberGroupCount[phone].nicheCount++;
+                } else {
+                    memberGroupCount[phone].otherCount++;
+                }
+                if (isAdminInGroup) {
                     memberGroupCount[phone].isAdminIn.push(g.jid);
                 }
                 if (p.name && !memberGroupCount[phone].name) memberGroupCount[phone].name = p.name;
@@ -5243,12 +5274,23 @@ app.get('/api/filter/groups', async (req, res) => {
         for (const a of CAMPUS_ADMIN_ROSTER) allAdminPhones.add(a.phone);
         for (const [phone] of registeredAdmins) allAdminPhones.add(phone);
 
-        const members = Object.values(memberGroupCount).sort((a, b) => b.count - a.count);
+        // Add totalCount for backward compatibility, sort by nicheCount
+        const members = Object.values(memberGroupCount).map(m => ({
+            ...m,
+            count: m.nicheCount,  // backward compat: count = nicheCount
+            totalCount: m.nicheCount + m.otherCount
+        })).sort((a, b) => b.nicheCount - a.nicheCount);
 
         res.json({
-            groups: groupsWithParticipants.map(g => ({ jid: g.jid, subject: g.subject, size: g.participants.length })),
+            groups: groupsWithParticipants.map(g => ({
+                jid: g.jid,
+                subject: g.subject,
+                size: g.participants.length,
+                isNiche: g.isNiche
+            })),
             members,
             totalGroups: groupsWithParticipants.length,
+            totalNicheGroups: groupsWithParticipants.filter(g => g.isNiche).length,
             totalUniqueMembers: members.length,
             allAdminPhones: Array.from(allAdminPhones),
         });
@@ -5305,7 +5347,7 @@ app.post('/api/filter/warn', async (req, res) => {
         const freshData = freshGroups?.data || freshGroups?.groups || freshGroups?.results || (Array.isArray(freshGroups) ? freshGroups : []);
         const allGroupEntries = Array.isArray(freshData) ? freshData : Object.values(freshData);
 
-        // Build member-group map from groups where bot is admin
+        // Build member-group map from groups where bot is admin — ONLY count niche groups
         const memberGroupMap = {};
         for (const g of allGroupEntries) {
             const gJid = g.jid || g.id;
@@ -5318,14 +5360,19 @@ app.post('/api/filter/warn', async (req, res) => {
             }
             if (!isBotAdmin) continue;
 
+            const subject = g.subject || g.name || 'Unknown';
+            const isNiche = isNicheGroup(subject);
+
             for (const p of (g.participants || [])) {
                 const phone = p.phoneNumber || (p.id || '').split(':')[0].replace(/[^0-9]/g, '');
                 if (!phone || phone.length < 8) continue;
                 if (!memberGroupMap[phone]) {
-                    memberGroupMap[phone] = { phone, count: 0, jids: new Set(), participantJid: p.id, name: p.name || contactsNameCache.get(phone) || '' };
+                    memberGroupMap[phone] = { phone, nicheCount: 0, jids: new Set(), participantJid: p.id, name: p.name || contactsNameCache.get(phone) || '' };
                 }
-                memberGroupMap[phone].count++;
-                memberGroupMap[phone].jids.add(gJid);
+                if (isNiche) {
+                    memberGroupMap[phone].nicheCount++;
+                    memberGroupMap[phone].jids.add(gJid);
+                }
                 if (p.name && !memberGroupMap[phone].name) memberGroupMap[phone].name = p.name;
                 if (!memberGroupMap[phone].name) {
                     const cached = contactsNameCache.get(phone);
@@ -5341,20 +5388,20 @@ app.post('/api/filter/warn', async (req, res) => {
         for (const a of CAMPUS_ADMIN_ROSTER) allAdminPhones.add(a.phone);
         for (const [phone] of registeredAdmins) allAdminPhones.add(phone);
 
-        // Filter to non-admin members in threshold+ groups
+        // Filter to non-admin members in threshold+ NICHE groups
         const targets = Object.values(memberGroupMap)
-            .filter(m => m.count >= threshold && !allAdminPhones.has(m.phone))
-            .sort((a, b) => b.count - a.count);
+            .filter(m => m.nicheCount >= threshold && !allAdminPhones.has(m.phone))
+            .sort((a, b) => b.nicheCount - a.nicheCount);
 
-        if (!targets.length) return res.json({ sent: 0, total: 0, message: 'No members found in ' + threshold + '+ groups' });
+        if (!targets.length) return res.json({ sent: 0, total: 0, message: 'No members found in ' + threshold + '+ niche groups' });
 
-        const defaultMsg = "Hello, you are currently in {count} groups. You can only stay in 3 groups. We'll be removing you from some groups and you'll remain in 3. Please contact an admin if you have any concerns.";
+        const defaultMsg = "Hello, you are currently in {count} niche groups. You can only stay in 3 niche groups. We'll be removing you from some niche groups and you'll remain in 3. Please contact an admin if you have any concerns.";
         const template = message || defaultMsg;
 
         const results = [];
         let sentCount = 0;
         for (const target of targets) {
-            const msgText = template.replace(/\{count\}/g, String(target.count));
+            const msgText = template.replace(/\{count\}/g, String(target.nicheCount));
             try {
                 const jid = target.participantJid;
                 if (!jid) { results.push({ phone: target.phone, error: 'No JID' }); continue; }

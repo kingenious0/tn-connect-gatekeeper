@@ -14,101 +14,76 @@
 --success:#16a34a;--success-light:#f0fdf4;
 --warning:#d97706;--warning-light:#fffbeb;
 --admin:#7c3aed;--admin-light:#f5f3ff;
+--niche:#0891b2;--niche-light:#ecfeff;
 --shadow:0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04);
---shadow-md:0 4px 6px -1px rgba(0,0,0,0.07),0 2px 4px -2px rgba(0,0,0,0.05);
 --radius:10px;--radius-sm:6px;
 --font:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
 html{font-size:16px}
 body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;line-height:1.5;-webkit-font-smoothing:antialiased}
-
-/* Header */
 .header{background:#fff;border-bottom:1px solid var(--border);padding:16px 20px;position:sticky;top:0;z-index:50}
 .header-inner{max-width:1200px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .header h1{font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px}
-.header h1 span{background:var(--accent-light);color:var(--accent);font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px}
+.header h1 span{background:var(--niche-light);color:var(--niche);font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px}
 .header p{font-size:13px;color:var(--text-secondary)}
-.header-right{display:flex;align-items:center;gap:10px}
-
-/* Stats bar */
-.stats-bar{max-width:1200px;margin:16px auto 0;padding:0 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.stats-bar{max-width:1200px;margin:16px auto 0;padding:0 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
 .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow)}
 .stat-val{font-size:24px;font-weight:700;color:var(--text);line-height:1.2}
 .stat-label{font-size:12px;color:var(--text-secondary);font-weight:500;margin-top:2px}
-
-/* Toolbar */
 .toolbar{max-width:1200px;margin:12px auto 0;padding:0 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .toolbar input[type=text]{flex:1;min-width:200px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 14px;font-size:14px;color:var(--text);outline:none;box-shadow:var(--shadow)}
 .toolbar input[type=text]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,0.1)}
-.toolbar select{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;font-size:13px;color:var(--text);outline:none;box-shadow:var(--shadow);cursor:pointer}
+.toolbar select{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;font-size:13px;color:var(--text);outline:none;box-shadow:var(--shadow);cursor:pointer;max-width:300px}
 .toolbar .filters-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .toolbar label{display:flex;align-items:center;gap:5px;font-size:13px;color:var(--text-secondary);cursor:pointer;user-select:none;white-space:nowrap}
 .toolbar label input{accent-color:var(--accent);width:16px;height:16px}
-
-/* Buttons */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:none;border-radius:var(--radius-sm);padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.15s;white-space:nowrap;line-height:1}
 .btn:disabled{opacity:0.45;cursor:not-allowed}
-.btn-primary{background:var(--accent);color:#fff}
-.btn-primary:hover:not(:disabled){background:var(--accent-hover)}
-.btn-danger{background:var(--danger);color:#fff}
-.btn-danger:hover:not(:disabled){background:var(--danger-hover)}
-.btn-outline{background:var(--surface);border:1px solid var(--border);color:var(--text);box-shadow:var(--shadow)}
-.btn-outline:hover:not(:disabled){border-color:var(--text-tertiary);background:#f9fafb}
-.btn-warn{background:var(--warning);color:#fff}
-.btn-warn:hover:not(:disabled){background:#b45309}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover:not(:disabled){background:var(--accent-hover)}
+.btn-danger{background:var(--danger);color:#fff}.btn-danger:hover:not(:disabled){background:var(--danger-hover)}
+.btn-outline{background:var(--surface);border:1px solid var(--border);color:var(--text);box-shadow:var(--shadow)}.btn-outline:hover:not(:disabled){border-color:var(--text-tertiary);background:#f9fafb}
+.btn-warn{background:var(--warning);color:#fff}.btn-warn:hover:not(:disabled){background:#b45309}
 .btn-sm{padding:6px 12px;font-size:12px}
-
-/* Action bar */
 .action-bar{max-width:1200px;margin:12px auto 0;padding:0 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .action-bar .selected-info{font-size:13px;color:var(--text-secondary);font-weight:500}
 .action-bar .selected-info strong{color:var(--text)}
 .action-bar .spacer{flex:1;min-width:0}
-
-/* Member list */
 .main{max-width:1200px;margin:12px auto 32px;padding:0 16px}
-
 .member-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;box-shadow:var(--shadow);transition:border-color 0.2s,box-shadow 0.2s}
 .member-card.highlight{border-left:3px solid var(--danger)}
-.member-card.highlight-3{border-left:3px solid var(--warning)}
 .member-card.selected{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),var(--shadow-md)}
-
 .member-header{display:flex;align-items:center;padding:12px 14px;cursor:pointer;gap:10px;-webkit-tap-highlight-color:transparent}
 .member-header:active{background:var(--border-light)}
-
 .member-avatar{width:38px;height:38px;border-radius:50%;background:var(--border);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:var(--text-secondary);flex-shrink:0}
 .member-avatar.admin{background:var(--admin-light);color:var(--admin);border:1.5px solid var(--admin)}
-
 .member-info{flex:1;min-width:0}
 .member-name{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .member-phone{font-size:12px;color:var(--text-secondary);margin-top:-1px}
 .member-phone .admin-tag{display:inline-block;background:var(--admin-light);color:var(--admin);font-size:10px;font-weight:600;padding:1px 6px;border-radius:10px;margin-left:6px}
-
 .member-badges{display:flex;gap:5px;align-items:center;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
 .badge{font-size:11px;padding:3px 9px;border-radius:20px;font-weight:600;white-space:nowrap}
 .badge-admin{background:var(--admin-light);color:var(--admin)}
-.badge-warning{background:var(--warning-light);color:var(--warning)}
 .badge-danger{background:var(--danger-light);color:var(--danger)}
+.badge-warning{background:var(--warning-light);color:var(--warning)}
 .badge-safe{background:var(--success-light);color:var(--success)}
 .badge-neutral{background:var(--accent-light);color:var(--accent)}
-
+.badge-niche{background:var(--niche-light);color:var(--niche)}
 .chevron{color:var(--text-tertiary);transition:transform 0.2s;font-size:11px;flex-shrink:0;width:16px;text-align:center}
 .member-card.open .chevron{transform:rotate(90deg)}
-
 .member-groups{display:none;padding:0 14px 10px}
 .member-card.open .member-groups{display:block}
-
 .group-row{display:flex;align-items:center;padding:7px 0;border-top:1px solid var(--border-light);gap:8px}
 .group-row:first-child{border-top:none}
+.group-row.non-niche{opacity:0.55}
 .group-check{width:18px;height:18px;accent-color:var(--danger);cursor:pointer;flex-shrink:0}
-.group-check:disabled{opacity:0.3;cursor:not-allowed}
+.group-check:disabled{opacity:0.4;cursor:not-allowed}
 .group-name{flex:1;font-size:13px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.group-admin-tag{font-size:10px;padding:2px 7px;border-radius:10px;background:var(--admin-light);color:var(--admin);font-weight:600;flex-shrink:0}
-
-/* Loading / Empty */
+.group-tag{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600;flex-shrink:0}
+.group-tag.admin{background:var(--admin-light);color:var(--admin)}
+.group-tag.niche{background:var(--niche-light);color:var(--niche)}
+.group-tag.other{background:var(--border);color:var(--text-tertiary)}
 .loading,.empty{text-align:center;padding:60px 20px;color:var(--text-secondary)}
 .spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;margin:0 auto 14px}
 @keyframes spin{to{transform:rotate(360deg)}}
-
-/* Modals */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.4);display:none;align-items:center;justify-content:center;z-index:100;padding:16px;-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
 .modal-overlay.show{display:flex}
 .modal{background:var(--surface);border-radius:14px;max-width:520px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.15)}
@@ -117,49 +92,38 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .modal-close{background:none;border:none;font-size:20px;color:var(--text-tertiary);cursor:pointer;padding:4px;line-height:1}
 .modal-body{padding:16px 20px;overflow-y:auto;flex:1}
 .modal-footer{padding:14px 20px;border-top:1px solid var(--border-light);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
-
 .modal textarea{width:100%;border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-size:13px;font-family:var(--font);color:var(--text);resize:vertical;min-height:90px;outline:none}
 .modal textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,0.1)}
-
-.warn-preview-list{list-style:none;margin-top:8px;max-height:200px;overflow-y:auto;border:1px solid var(--border-light);border-radius:var(--radius-sm)}
-.warn-preview-list li{padding:7px 10px;border-bottom:1px solid var(--border-light);font-size:13px;display:flex;justify-content:space-between;align-items:center}
-.warn-preview-list li:last-child{border-bottom:none}
-.warn-preview-list .name{font-weight:500}
-.warn-preview-list .count-badge{font-size:11px;background:var(--warning-light);color:var(--warning);padding:1px 7px;border-radius:10px;font-weight:600}
-.warn-preview-list .empty-msg{padding:20px;text-align:center;color:var(--text-tertiary);font-size:13px}
-
-/* Progress bar */
+.preview-list,.target-list{list-style:none;margin-top:8px;max-height:250px;overflow-y:auto;border:1px solid var(--border-light);border-radius:var(--radius-sm)}
+.preview-list li,.target-list li{padding:7px 10px;border-bottom:1px solid var(--border-light);font-size:13px;display:flex;justify-content:space-between;align-items:center}
+.preview-list li:last-child,.target-list li:last-child{border-bottom:none}
+.preview-list .name,.target-list .name{font-weight:500}
+.target-list .count-badge{font-size:11px;background:var(--danger-light);color:var(--danger);padding:1px 7px;border-radius:10px;font-weight:600}
+.target-list .empty-msg{padding:20px;text-align:center;color:var(--text-tertiary);font-size:13px}
 .progress-wrap{background:var(--border-light);border-radius:20px;height:6px;overflow:hidden;margin:8px 0}
 .progress-bar{height:100%;background:var(--accent);border-radius:20px;transition:width 0.3s ease;width:0%}
 .progress-text{font-size:12px;color:var(--text-secondary);text-align:center;margin-top:4px}
-
-/* Toast */
+.niche-info{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--text-secondary);margin-top:1px}
+.niche-info .niche-dot{display:inline-block;width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.niche-info .niche-dot.danger{background:var(--danger)}
+.niche-info .niche-dot.warning{background:var(--warning)}
+.niche-info .niche-dot.success{background:var(--success)}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1f2937;color:#fff;padding:10px 20px;border-radius:10px;font-size:14px;font-weight:500;z-index:200;display:none;box-shadow:0 4px 20px rgba(0,0,0,0.25)}
 .toast.show{display:block;animation:slideUp 0.25s ease}
 @keyframes slideUp{from{opacity:0;transform:translateX(-50%) translateY(12px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
-
-/* Responsive */
 @media(max-width:640px){
-.header{padding:12px 14px}
-.header h1{font-size:16px}
+.header{padding:12px 14px}.header h1{font-size:16px}
 .stats-bar{grid-template-columns:repeat(2,1fr);gap:8px;padding:0 12px;margin-top:12px}
-.stat{padding:12px 14px}
-.stat-val{font-size:20px}
-.toolbar{padding:0 12px;gap:6px}
-.toolbar input[type=text]{min-width:140px}
+.stat{padding:12px 14px}.stat-val{font-size:20px}
+.toolbar{padding:0 12px;gap:6px}.toolbar input[type=text]{min-width:140px}
 .action-bar{padding:0 12px;gap:6px}
 .main{padding:0 12px;margin-top:10px}
-.member-header{padding:10px 12px}
-.member-avatar{width:34px;height:34px;font-size:12px}
-.member-name{font-size:13px}
-.member-groups{padding:0 12px 8px}
+.member-header{padding:10px 12px}.member-avatar{width:34px;height:34px;font-size:12px}
+.member-name{font-size:13px}.member-groups{padding:0 12px 8px}
 .badge{font-size:10px;padding:2px 7px}
-.modal{margin:8px;max-height:90vh}
-.modal-header{padding:14px 16px 0}
-.modal-body{padding:12px 16px}
-.modal-footer{padding:10px 16px}
-.modal textarea{min-height:70px;font-size:14px}
-.btn{padding:8px 14px;font-size:12px}
+.modal{margin:8px;max-height:90vh}.modal-header{padding:14px 16px 0}
+.modal-body{padding:12px 16px}.modal-footer{padding:10px 16px}
+.modal textarea{min-height:70px;font-size:14px}.btn{padding:8px 14px;font-size:12px}
 }
 </style>
 </head>
@@ -168,30 +132,31 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 <div class="header">
 <div class="header-inner">
 <div>
-<h1>Member Filter <span>Dashboard</span></h1>
-<p>Cross-group member analysis and management</p>
+<h1>Member Filter <span>Niche Groups</span></h1>
+<p>Only 10 niche groups count toward the 3-group limit</p>
 </div>
 </div>
 </div>
 
 <div class="stats-bar" id="statsBar">
 <div class="stat"><div class="stat-val" id="totalGroups">-</div><div class="stat-label">Groups</div></div>
+<div class="stat"><div class="stat-val" id="totalNicheGroups">-</div><div class="stat-label">Niche Groups</div></div>
 <div class="stat"><div class="stat-val" id="totalMembers">-</div><div class="stat-label">Unique Members</div></div>
-<div class="stat"><div class="stat-val" id="multiGroupCount">-</div><div class="stat-label">In 3+ Groups</div></div>
-<div class="stat"><div class="stat-val" id="adminCount">-</div><div class="stat-label">Admins</div></div>
+<div class="stat"><div class="stat-val" id="multiGroupCount">-</div><div class="stat-label">In 3+ Niche</div></div>
 </div>
 
 <div class="toolbar">
 <input type="text" id="searchInput" placeholder="Search by name or phone...">
 <select id="groupFilter"><option value="">All Groups</option></select>
 <div class="filters-right">
-<label><input type="checkbox" id="showMultiOnly"> 3+ only</label>
+<label><input type="checkbox" id="showMultiOnly"> 3+ niche</label>
 <label><input type="checkbox" id="showAdminOnly"> Admins only</label>
+<label><input type="checkbox" id="showNicheOnly"> Niche groups only</label>
 </div>
 </div>
 
 <div class="action-bar">
-<button class="btn btn-outline btn-sm" id="selectAllBtn">Select All 3+</button>
+<button class="btn btn-outline btn-sm" id="selectAllBtn">Select All 3+ Niche</button>
 <button class="btn btn-outline btn-sm" id="deselectAllBtn">Deselect All</button>
 <span class="selected-info" id="selectedCount"><strong>0</strong> selected</span>
 <div class="spacer"></div>
@@ -204,7 +169,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 <div class="loading"><div class="spinner"></div>Loading members...</div>
 </div>
 
-<!-- Preview / Confirm Modal -->
+<!-- Preview Modal -->
 <div class="modal-overlay" id="previewModal">
 <div class="modal">
 <div class="modal-header">
@@ -212,8 +177,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 <button class="modal-close" id="cancelPreview">&times;</button>
 </div>
 <div class="modal-body">
-<p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">The following members will be removed from their selected groups:</p>
-<ul class="warn-preview-list" id="previewList" style="max-height:300px"></ul>
+<p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">Only niche group removals are shown below:</p>
+<ul class="preview-list" id="previewList" style="max-height:300px"></ul>
 </div>
 <div class="modal-footer">
 <button class="btn btn-outline" id="cancelPreview2">Cancel</button>
@@ -230,12 +195,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 <button class="modal-close" id="closeWarnModal">&times;</button>
 </div>
 <div class="modal-body">
-<p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">Message will be sent to all non-admin members in <strong id="warnThresholdDisplay">3+</strong> groups via your connected WhatsApp.</p>
+<p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">Message sent to non-admin members in <strong>3+ niche groups</strong> via your connected WhatsApp.</p>
 <textarea id="warnMessage" placeholder="Type your message... Use {count} for group count"></textarea>
-<p style="font-size:12px;color:var(--text-tertiary);margin-top:6px">Use <code>{count}</code> to insert each member's group count.</p>
+<p style="font-size:12px;color:var(--text-tertiary);margin-top:6px">Use <code>{count}</code> to insert their niche group count.</p>
 <div style="margin-top:12px">
 <p style="font-size:13px;font-weight:600;margin-bottom:6px">Will be sent to:</p>
-<ul class="warn-preview-list" id="warnTargetList"></ul>
+<ul class="target-list" id="warnTargetList"></ul>
 </div>
 <div id="warnProgress" style="display:none;margin-top:10px">
 <div class="progress-wrap"><div class="progress-bar" id="warnProgressBar"></div></div>
@@ -257,8 +222,7 @@ const sessionPhone=params.get('phone')||'';
 let allData=null;
 let selectedRemovals=new Set();
 
-// Default warning message
-const DEFAULT_WARN_MSG="Hello, you are currently in {count} groups. Our records show you are in more than 3 groups. We will be removing you from some groups and you will remain in 3. Please contact an admin if you have any concerns.";
+const DEFAULT_WARN_MSG="Hello, you are currently in {count} niche groups. Our records show you are in more than 3 niche groups. We'll be removing you from some groups and you'll remain in 3. Please contact an admin if you have any concerns.";
 
 async function loadData(){
 try{
@@ -273,20 +237,22 @@ document.getElementById('memberList').innerHTML='<div class="empty">Failed to lo
 
 function render(){
 if(!allData)return;
-const{groups,members,totalGroups,totalUniqueMembers}=allData;
+const{groups,members,totalGroups,totalNicheGroups,totalUniqueMembers}=allData;
 document.getElementById('totalGroups').textContent=totalGroups;
+document.getElementById('totalNicheGroups').textContent=totalNicheGroups||'?';
 document.getElementById('totalMembers').textContent=totalUniqueMembers;
-const multi=members.filter(m=>m.count>=3);
+const multi=members.filter(m=>m.nicheCount>=3);
 document.getElementById('multiGroupCount').textContent=multi.length;
-const admins=members.filter(m=>m.isAdminIn.length>0);
-document.getElementById('adminCount').textContent=admins.length;
 
 const sel=document.getElementById('groupFilter');
 const cur=sel.value;
 sel.innerHTML='<option value="">All Groups ('+groups.length+')</option>';
 groups.forEach(g=>{
 const opt=document.createElement('option');
-opt.value=g.jid;opt.textContent=g.subject+' ('+g.size+')';
+opt.value=g.jid;
+const label=g.isNiche?'🔵 '+g.subject:g.subject;
+opt.textContent=label+' ('+g.size+')';
+if(g.isNiche)opt.style.fontWeight='600';
 sel.appendChild(opt);
 });
 sel.value=cur;
@@ -299,10 +265,11 @@ const search=document.getElementById('searchInput').value.toLowerCase();
 const groupJid=document.getElementById('groupFilter').value;
 const multiOnly=document.getElementById('showMultiOnly').checked;
 const adminOnly=document.getElementById('showAdminOnly').checked;
+const nicheOnly=document.getElementById('showNicheOnly').checked;
 
 let filtered=allData.members.filter(m=>{
 if(search&&!m.phone.includes(search)&&!(m.name||'').toLowerCase().includes(search))return false;
-if(multiOnly&&m.count<3)return false;
+if(multiOnly&&m.nicheCount<3)return false;
 if(adminOnly&&m.isAdminIn.length===0)return false;
 return true;
 });
@@ -314,32 +281,41 @@ updateCount();return;
 }
 
 container.innerHTML=filtered.map(m=>{
-const isHighlight=m.count>=3;
+const isHighlight=m.nicheCount>=3;
 const isAdmin=m.isAdminIn.length>0;
-const cardClass='member-card'+(isHighlight?' highlight':'')+(m.count===2?' highlight-3':'');
+const cardClass='member-card'+(isHighlight?' highlight':'');
 const avatarClass='member-avatar'+(isAdmin?' admin':'');
 const initials=(m.name||m.phone||'?').substring(0,2).toUpperCase();
 
+// Niche dot color
+let nicheDot='success';
+if(m.nicheCount>=3)nicheDot='danger';
+else if(m.nicheCount>=2)nicheDot='warning';
+
+const otherStr=m.otherCount>0?' &middot; +'+m.otherCount+' other':'';
+const nicheStr=m.nicheCount+' niche group'+(m.nicheCount!==1?'s':'');
+
+const adminInfo=m.isAdminIn.length?'admin in '+m.isAdminIn.length:'';
+
 let groupsHtml=m.groups.map(g=>{
-const inSelectedGroup=groupJid?g.jid===groupJid:true;
 const isAdminInGroup=g.isAdmin;
 const checkboxId='chk_'+m.phone+'_'+g.jid.replace(/[^a-z0-9]/gi,'');
 const pJid=g.participantJid||m.id||m.phone+'@s.whatsapp.net';
 const checked=selectedRemovals.has(pJid+':'+g.jid)?'checked':'';
-const disabled=isAdminInGroup||!inSelectedGroup?'disabled':'';
-const tag=isAdminInGroup?'<span class="group-admin-tag">admin</span>':'';
-return '<div class="group-row"><input type="checkbox" class="group-check" id="'+checkboxId+'" data-pjid="'+pJid+'" data-gjid="'+g.jid+'" '+checked+' '+disabled+'><span class="group-name">'+g.subject+'</span>'+tag+'</div>';
+// Disabled if admin, or not in selected group filter, or NOT niche
+const disabled=isAdminInGroup||!g.isNiche?'disabled':'';
+const rowClass=g.isNiche?'group-row':'group-row non-niche';
+let tag='';
+if(isAdminInGroup)tag='<span class="group-tag admin">admin</span>';
+else if(g.isNiche)tag='<span class="group-tag niche">niche</span>';
+else tag='<span class="group-tag other">other</span>';
+return '<div class="'+rowClass+'"><input type="checkbox" class="group-check" id="'+checkboxId+'" data-pjid="'+pJid+'" data-gjid="'+g.jid+'" '+checked+' '+disabled+'><span class="group-name">'+g.subject+'</span>'+tag+'</div>';
 }).join('');
 
-const badgeAdmin=isAdmin?'<span class="badge badge-admin">Admin</span>':'';
-let badgeGroups;
-if(m.count>=3)badgeGroups='<span class="badge badge-danger">'+m.count+' groups</span>';
-else if(m.count>1)badgeGroups='<span class="badge badge-neutral">'+m.count+' groups</span>';
-else badgeGroups='<span class="badge badge-safe">1 group</span>';
+// Badges
+const badgeNiche=m.nicheCount>=3?'<span class="badge badge-danger">'+nicheStr+'</span>':m.nicheCount>1?'<span class="badge badge-warning">'+nicheStr+'</span>':m.nicheCount>0?'<span class="badge badge-niche">'+nicheStr+'</span>':'<span class="badge badge-safe">0 niche</span>';
 
-const adminInfo=m.isAdminIn.length?'admin in '+m.isAdminIn.length:'';
-
-return '<div class="'+cardClass+'" id="card_'+m.phone+'"><div class="member-header"><div class="'+avatarClass+'">'+initials+'</div><div class="member-info"><div class="member-name">'+(m.name||'Unknown')+'</div><div class="member-phone">+'+m.phone+(adminInfo?' <span class="admin-tag">'+adminInfo+'</span>':'')+'</div></div><div class="member-badges">'+badgeAdmin+badgeGroups+'</div><span class="chevron">&#9654;</span></div><div class="member-groups">'+groupsHtml+'</div></div>';
+return '<div class="'+cardClass+'" id="card_'+m.phone+'"><div class="member-header"><div class="'+avatarClass+'">'+initials+'</div><div class="member-info"><div class="member-name">'+(m.name||'Unknown')+'</div><div class="niche-info"><span class="niche-dot '+nicheDot+'"></span> '+nicheStr+otherStr+(adminInfo?' &middot; '+adminInfo:'')+'</div></div><div class="member-badges">'+badgeNiche+'<span class="chevron">&#9654;</span></div></div><div class="member-groups">'+groupsHtml+'</div></div>';
 }).join('');
 
 container.querySelectorAll('.member-header').forEach(h=>{
@@ -375,17 +351,19 @@ document.getElementById('searchInput').addEventListener('input',filterAndRender)
 document.getElementById('groupFilter').addEventListener('change',filterAndRender);
 document.getElementById('showMultiOnly').addEventListener('change',filterAndRender);
 document.getElementById('showAdminOnly').addEventListener('change',filterAndRender);
+document.getElementById('showNicheOnly').addEventListener('change',filterAndRender);
 
 document.getElementById('selectAllBtn').addEventListener('click',()=>{
 if(!allData)return;
-allData.members.filter(m=>m.count>=3).forEach(m=>{
+allData.members.filter(m=>m.nicheCount>=3).forEach(m=>{
 m.groups.forEach(g=>{
-const isAdminInGroup=g.isAdmin;
+if(!g.isAdmin&&g.isNiche){
 const pJid=g.participantJid||m.id||m.phone+'@s.whatsapp.net';
-if(!isAdminInGroup)selectedRemovals.add(pJid+':'+g.jid);
+selectedRemovals.add(pJid+':'+g.jid);
+}
 });
 });
-filterAndRender();showToast('Selected all members in 3+ groups');
+filterAndRender();showToast('Selected all members with 3+ niche groups');
 });
 
 document.getElementById('deselectAllBtn').addEventListener('click',()=>{
@@ -410,12 +388,11 @@ list.appendChild(li);
 document.getElementById('previewModal').classList.add('show');
 });
 
-document.getElementById('cancelPreview').addEventListener('click',()=>document.getElementById('previewModal').classList.remove('show'));
-document.getElementById('cancelPreview2').addEventListener('click',()=>document.getElementById('previewModal').classList.remove('show'));
-
-document.getElementById('confirmBtn').addEventListener('click',()=>{
-document.getElementById('previewBtn').click();
+['cancelPreview','cancelPreview2'].forEach(id=>{
+document.getElementById(id).addEventListener('click',()=>document.getElementById('previewModal').classList.remove('show'));
 });
+
+document.getElementById('confirmBtn').addEventListener('click',()=>document.getElementById('previewBtn').click());
 
 document.getElementById('executeBtn').addEventListener('click',async()=>{
 const btn=document.getElementById('executeBtn');
@@ -439,31 +416,30 @@ showToast('Done! Removed: '+success+' | Failed: '+failed);
 btn.disabled=false;btn.textContent='Execute Removals';
 });
 
-// ---- Warn Members ----
+// Warn Members
 document.getElementById('warnBtn').addEventListener('click',async()=>{
 if(!allData)return;
 const modal=document.getElementById('warnModal');
 document.getElementById('warnMessage').value=DEFAULT_WARN_MSG;
-document.getElementById('warnThresholdDisplay').textContent='3+';
-document.getElementById('warnProgress').style.display='none';
 
-// Build target list
 const adminPhones=new Set(allData.allAdminPhones||[]);
-const targets=allData.members.filter(m=>m.count>=3&&!adminPhones.has(m.phone)).sort((a,b)=>b.count-a.count);
+const targets=allData.members.filter(m=>m.nicheCount>=3&&!adminPhones.has(m.phone)).sort((a,b)=>b.nicheCount-a.nicheCount);
 
 const list=document.getElementById('warnTargetList');
 if(!targets.length){
-list.innerHTML='<li class="empty-msg">No non-admin members in 3+ groups</li>';
+list.innerHTML='<li class="empty-msg">No non-admin members in 3+ niche groups</li>';
 document.getElementById('sendWarnBtn').disabled=true;
 }else{
-list.innerHTML=targets.map(t=>'<li><span><span class="name">'+(t.name||'Unknown')+'</span> +'+t.phone+'</span><span class="count-badge">'+t.count+' groups</span></li>').join('');
+list.innerHTML=targets.map(t=>'<li><span><span class="name">'+(t.name||'Unknown')+'</span> +'+t.phone+'</span><span class="count-badge">'+t.nicheCount+' niche</span></li>').join('');
 document.getElementById('sendWarnBtn').disabled=false;
 }
+document.getElementById('warnProgress').style.display='none';
 modal.classList.add('show');
 });
 
-document.getElementById('closeWarnModal').addEventListener('click',()=>document.getElementById('warnModal').classList.remove('show'));
-document.getElementById('closeWarnModal2').addEventListener('click',()=>document.getElementById('warnModal').classList.remove('show'));
+['closeWarnModal','closeWarnModal2'].forEach(id=>{
+document.getElementById(id).addEventListener('click',()=>document.getElementById('warnModal').classList.remove('show'));
+});
 
 document.getElementById('sendWarnBtn').addEventListener('click',async()=>{
 const btn=document.getElementById('sendWarnBtn');
@@ -471,7 +447,7 @@ const msg=document.getElementById('warnMessage').value.trim();
 if(!msg){showToast('Please enter a message');return;}
 
 const adminPhones=new Set(allData.allAdminPhones||[]);
-const targets=allData.members.filter(m=>m.count>=3&&!adminPhones.has(m.phone)).sort((a,b)=>b.count-a.count);
+const targets=allData.members.filter(m=>m.nicheCount>=3&&!adminPhones.has(m.phone)).sort((a,b)=>b.nicheCount-a.nicheCount);
 if(!targets.length){showToast('No targets found');return;}
 
 btn.disabled=true;btn.textContent='Sending...';
@@ -493,10 +469,8 @@ showToast('Warned '+data.sent+' members'+(data.sent!==data.total?' ('+data.total
 setTimeout(()=>{progress.style.display='none';bar.style.width='0%';},2000);
 }catch(e){
 showToast('Failed: '+e.message);
-progress.style.display='none';
-bar.style.width='0%';
+progress.style.display='none';bar.style.width='0%';
 }
-
 btn.disabled=false;btn.textContent='Send Messages';
 });
 
