@@ -382,26 +382,59 @@ let adminAlertsGroupJid = null;
 let cachedGroups = [];
 let cachedGroupsLastRefresh = 0;
 
-// Warned members persistence
+// Warned members persistence — Supabase primary, local file fallback
 const WARNED_MEMBERS_FILE = path.join(__dirname, 'warned_members.json');
 let warnedMembers = new Set();
-try {
-    if (fs.existsSync(WARNED_MEMBERS_FILE)) {
-        const raw = fs.readFileSync(WARNED_MEMBERS_FILE, 'utf8');
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) {
-            warnedMembers = new Set(arr);
-            console.log(' [Warn] Loaded ' + warnedMembers.size + ' previously warned members');
+const loadWarnedMembers = async () => {
+    // Try Supabase first
+    if (supabase) {
+        try {
+            const { data } = await supabase.from('gatekeeper_sessions').select('discovered_groups').eq('phone', '_config_warned_members').maybeSingle();
+            if (data?.discovered_groups?.length) {
+                warnedMembers = new Set(data.discovered_groups);
+                console.log(' [Warn] Loaded ' + warnedMembers.size + ' previously warned members from Supabase');
+                return;
+            }
+        } catch (e) {
+            console.warn(' [Warn] Supabase load failed:', e.message);
         }
     }
-} catch (e) {
-    console.warn(' [Warn] Failed to load warned_members.json:', e.message);
-}
-const saveWarnedMembers = () => {
+    // Fallback to local file
     try {
-        fs.writeFileSync(WARNED_MEMBERS_FILE, JSON.stringify(Array.from(warnedMembers)), 'utf8');
+        if (fs.existsSync(WARNED_MEMBERS_FILE)) {
+            const raw = fs.readFileSync(WARNED_MEMBERS_FILE, 'utf8');
+            const arr = JSON.parse(raw);
+            if (Array.isArray(arr)) {
+                warnedMembers = new Set(arr);
+                console.log(' [Warn] Loaded ' + warnedMembers.size + ' previously warned members from local file');
+            }
+        }
+    } catch (e) {
+        console.warn(' [Warn] Failed to load warned_members.json:', e.message);
+    }
+};
+const saveWarnedMembers = () => {
+    const arr = Array.from(warnedMembers);
+    // Always save to local file
+    try {
+        fs.writeFileSync(WARNED_MEMBERS_FILE, JSON.stringify(arr), 'utf8');
     } catch (e) {
         console.warn(' [Warn] Failed to save warned_members.json:', e.message);
+    }
+    // Also save to Supabase
+    if (supabase) {
+        try {
+            supabase.from('gatekeeper_sessions').upsert({
+                phone: '_config_warned_members',
+                admin_name: 'config',
+                selected_groups: [],
+                discovered_groups: arr,
+                files: [],
+                updated_at: new Date().toISOString()
+            });
+        } catch (e) {
+            console.warn(' [Warn] Supabase save failed:', e.message);
+        }
     }
 };
 
@@ -976,26 +1009,41 @@ const sendNicheJoinRejection = async (participantJid, groupSubject, nicheCount, 
     try {
         const dmJid = dmJidFromParticipant(participantJid);
         if (!dmJid) { console.error(' [NicheGate] Cannot send DM — no JID'); return; }
-        const humanPause1 = 3000 + Math.floor(Math.random() * 27000);
+
+        // Human-like 7s delay before DM
+        const humanPause1 = 5000 + Math.floor(Math.random() * 4000);
         console.log(' [NicheGate] Waiting ' + Math.round(humanPause1 / 1000) + 's before sending DM to ' + dmJid);
         await new Promise(r => setTimeout(r, humanPause1));
+
         const TOP_ADMINS = CAMPUS_ADMIN_ROSTER.slice(0, 7);
-        const adminList = TOP_ADMINS.sort(() => Math.random() - 0.5).map(a => '• ' + a.admin_name).join('\n');
+        const adminList = TOP_ADMINS.sort(() => Math.random() - 0.5).map(a => '• ' + a.admin_name + ' (0' + a.phone.slice(3) + ')').join('\n');
         const msg = [
-            'Hi, you just requested to join *' + groupSubject + '* but our system shows you\'re already in *' + nicheCount + ' niche groups*.',
+            '⚠️ *Join Request Rejected*',
             '',
-            'TN Connect allows a maximum of *3 niche groups* per member. Your request has been declined.',
+            'Your request to join *' + groupSubject + '* has been declined.',
             '',
-            'Please contact a human admin for help:',
+            'You are currently in *' + nicheCount + ' niche groups*. TN Connect allows a maximum of *3*.',
+            '',
+            'If you wish to join this group, please contact one of the admins below to explain why you want to be in an additional group:',
+            '',
             adminList,
+            '',
+            'If an admin approves, they will add you themselves or you can re-request.',
             '',
             '_(Do not reply — this is automated)_'
         ].join('\n');
-        await client.sendText(dmJid, msg);
+
+        // Use sendAntiBanMessage for anti-ban protection
+        await sendAntiBanMessage(dmJid, msg);
         console.log(' [NicheGate] ✅ DM sent to ' + dmJid);
-        const humanPause2 = 3000 + Math.floor(Math.random() * 7000);
+
+        // Wait 3-7s before rejecting the request
+        const humanPause2 = 3000 + Math.floor(Math.random() * 4000);
         await new Promise(r => setTimeout(r, humanPause2));
-        await client.rejectGroupJoinRequest(groupJid, dmJid);
+
+        // Use the original participant JID from the join request (not dmJid)
+        const rawParticipant = typeof participantJid === 'string' ? participantJid : (participantJid.id || participantJid.jid || dmJid);
+        await client.rejectGroupJoinRequest(groupJid, rawParticipant);
         console.log(' [NicheGate] ❌ Rejected ' + dmJid + ' from ' + groupSubject);
     } catch (e) {
         console.error(' [NicheGate] Failed to reject ' + (participantJid || '?') + ':', e.message);
@@ -1031,7 +1079,7 @@ const processJoinRequest = async (groupJid, participantJid, action, groupSubject
             };
             await saveRegistryItem(registryKey, entry);
             joinIntroSentKeys.add(registryKey);
-            sendNicheJoinRejection(participantJid, groupSubject, nicheCount, groupJid);
+            await sendNicheJoinRejection(participantJid, groupSubject, nicheCount, groupJid);
             return;
         }
         if (nicheCount === -1) {
@@ -5735,6 +5783,7 @@ server.listen(PORT, async () => {
     await refreshDbAdminCache().catch(() => {});
     await loadBroadcastWhitelistFromSupabase();
     await loadActiveConvosFromSupabase();
+    await loadWarnedMembers();
 
     // Initialize anti-ban module
     antiban = new AntiBan({
