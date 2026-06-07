@@ -147,6 +147,16 @@ const GROUP_FLOWS_FILE = './group_flows.json';
 const REGISTERED_ADMINS_FILE = './registered_admins.json';
 const BROADCAST_CONFIG_FILE = './broadcast_config.json';
 const LOCKED_GROUPS_FILE = './locked_groups.json';
+const ANTI_LINK_FILE = './antilink_config.json';
+
+let antiLinkEnabled = true;
+const loadAntiLink = () => {
+    if (!fs.existsSync(ANTI_LINK_FILE)) return true;
+    try { return JSON.parse(fs.readFileSync(ANTI_LINK_FILE, 'utf-8')).enabled !== false; } catch { return true; }
+};
+const saveAntiLink = (val) => {
+    try { fs.writeFileSync(ANTI_LINK_FILE, JSON.stringify({ enabled: !!val }, null, 2)); } catch {}
+};
 
 // Baileys configuration
 const AUTH_FOLDER = process.env.AUTH_FOLDER || './auth_session_233536763993';
@@ -1725,15 +1735,14 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
     const lowerText = textInput.toLowerCase();
     const isStatusMention = !!(msg.message?.groupStatusMentionMessage);
     try { fs.appendFileSync('_trace.log', 'MOD status=' + (msg.status || '?') + ' jid=' + jid + ' sender=' + senderPhone + ' isAdmin=' + isAdmin + ' text="' + textInput.substring(0, 80) + '" msgKeys=[' + (msg.message ? Object.keys(msg.message).join(',') : '') + ']\n'); } catch (e) { }
-    const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/');
-    const containsWaChannelLink = lowerText.includes('whatsapp.com/channel/') || lowerText.includes('chat.whatsapp.com/');
+    const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/') || lowerText.includes('whatsapp.com/channel/') || lowerText.includes('chat.whatsapp.com/');
     
     let isLinkAllowed = false;
     let customLinkAlert = null;
     
     if (containsLink && !isAdmin) {
         // WhatsApp channel/group invites are ALWAYS restricted — never allowed
-        if (containsWaChannelLink) {
+        if (lowerText.includes('whatsapp.com/channel/') || lowerText.includes('chat.whatsapp.com/')) {
             isLinkAllowed = false;
             customLinkAlert = `⚠️ @${senderPhone} WhatsApp channel/group links not allowed — deleted`;
         } else {
@@ -1748,7 +1757,7 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
         }
     }
     
-    const activeContainsLink = containsLink && !isLinkAllowed;
+    const activeContainsLink = containsLink && !isLinkAllowed && antiLinkEnabled;
     
     const containsBadWord = BANNED_KEYWORDS.some(word => {
         if (word.includes(' ')) return lowerText.includes(word);
@@ -1761,7 +1770,7 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
     else if (isAdmin) { shouldAct = containsBadWord; }
     else { shouldAct = containsBadWord || activeContainsLink; }
     if (!shouldAct) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP shouldAct=false isAdmin=' + isAdmin + ' link=' + activeContainsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + '\n'); } catch (e) { } return false; }
-    try { fs.appendFileSync('_trace.log', 'MOD_ACT shouldAct=' + shouldAct + ' link=' + activeContainsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + '\n'); } catch (e) { }
+    try { fs.appendFileSync('_trace.log', 'MOD_ACT shouldAct=' + shouldAct + ' link=' + activeContainsLink + ' badword=' + containsBadWord + ' statusMention=' + isStatusMention + ' antiLink=' + antiLinkEnabled + '\n'); } catch (e) { }
     const humanDelay = 1000 + Math.floor(Math.random() * 2000);
     await delay(humanDelay);
     try {
@@ -3817,7 +3826,21 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         }
     }
     
-    // 4. Lock group {name}
+    // 4. Anti-link toggle
+    if (lower === 'anti link on' || lower === 'antilink on' || lower === 'anti link off' || lower === 'antilink off') {
+        const newVal = lower.endsWith('on');
+        if (newVal === antiLinkEnabled) {
+            await sendAntiBanMessage(jid, { text: `✅ Anti-link is already *${newVal ? 'ON' : 'OFF'}*. No change.` });
+            return true;
+        }
+        antiLinkEnabled = newVal;
+        saveAntiLink(antiLinkEnabled);
+        const emoji = antiLinkEnabled ? '✅' : '❌';
+        await sendAntiBanMessage(jid, { text: `${emoji} Anti-link has been turned *${antiLinkEnabled ? 'ON' : 'OFF'}*.\n${antiLinkEnabled ? 'Links in all groups will be deleted.' : 'Links will no longer be deleted by the bot.'}` });
+        return true;
+    }
+
+    // 5. Lock group {name}
     if (lower.startsWith('lock group ') || (lower.startsWith('lock ') && !lower.startsWith('lock all'))) {
         const name = cleanText.replace(/^(?:lock group|lock)\s+/i, '').trim();
         if (name && name.toLowerCase() !== 'all' && !name.toLowerCase().startsWith('all ')) {
@@ -5784,6 +5807,8 @@ server.listen(PORT, async () => {
     await loadBroadcastWhitelistFromSupabase();
     await loadActiveConvosFromSupabase();
     await loadWarnedMembers();
+    antiLinkEnabled = loadAntiLink();
+    console.log(` [AntiLink] antiLinkEnabled=${antiLinkEnabled}`);
 
     // Initialize anti-ban module
     antiban = new AntiBan({

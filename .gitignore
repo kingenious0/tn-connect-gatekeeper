@@ -32,3 +32,4 @@ bot_pid.txt
 locked_groups.json
 auth_info
 warned_members.json
+antilink_config.json
