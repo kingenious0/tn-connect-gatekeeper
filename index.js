@@ -836,6 +836,8 @@ const buildGatekeeperMessage = () => parseSpintax(GATEKEEPER_MESSAGE);
 const resolveLidToPhone = (lidJid) => {
     const lidDigits = String(lidJid || '').replace(/@lid.*$/i, '').replace(/\D/g, '');
     if (!lidDigits) return null;
+    const lidEntry = adminLidMap.get(lidDigits.endsWith('@lid') ? lidDigits : lidDigits + '@lid');
+    if (lidEntry && lidEntry.phone) return String(lidEntry.phone).replace(/\D/g, '');
     const filePath = path.join(AUTH_FOLDER, 'lid-mapping-' + lidDigits + '_reverse.json');
     try {
         if (fs.existsSync(filePath)) {
