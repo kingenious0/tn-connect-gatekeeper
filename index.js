@@ -3299,6 +3299,10 @@ const executeMorningBroadcast = async (activityName) => {
 };
 
 const checkTimetableAlerts = async () => {
+    // If paused, skip all timetable broadcasts
+    if (pausedUntil && Date.now() < pausedUntil) {
+        return;
+    }
     // GMT timezone (Ghana local time)
     const now = new Date();
     const day = now.getUTCDay();
