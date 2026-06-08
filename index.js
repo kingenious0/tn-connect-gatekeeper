@@ -148,14 +148,34 @@ const REGISTERED_ADMINS_FILE = './registered_admins.json';
 const BROADCAST_CONFIG_FILE = './broadcast_config.json';
 const LOCKED_GROUPS_FILE = './locked_groups.json';
 const ANTI_LINK_FILE = './antilink_config.json';
+const PAUSE_FILE = './pause_config.json';
 
 let antiLinkEnabled = true;
+let pausedUntil = null;
+
 const loadAntiLink = () => {
     if (!fs.existsSync(ANTI_LINK_FILE)) return true;
     try { return JSON.parse(fs.readFileSync(ANTI_LINK_FILE, 'utf-8')).enabled !== false; } catch { return true; }
 };
 const saveAntiLink = (val) => {
     try { fs.writeFileSync(ANTI_LINK_FILE, JSON.stringify({ enabled: !!val }, null, 2)); } catch {}
+};
+
+const loadPauseState = () => {
+    if (!fs.existsSync(PAUSE_FILE)) return null;
+    try {
+        const data = JSON.parse(fs.readFileSync(PAUSE_FILE, 'utf-8'));
+        if (data.until && Date.now() < data.until) return data.until;
+        // Expired — clear it
+        try { fs.unlinkSync(PAUSE_FILE); } catch {}
+        return null;
+    } catch { return null; }
+};
+const savePauseState = (untilTs) => {
+    try { fs.writeFileSync(PAUSE_FILE, JSON.stringify({ until: untilTs }, null, 2)); } catch {}
+};
+const clearPauseState = () => {
+    try { fs.unlinkSync(PAUSE_FILE); } catch {}
 };
 
 // Baileys configuration
@@ -1076,6 +1096,21 @@ const processJoinRequest = async (groupJid, participantJid, action, groupSubject
     const admin = getBotAdminContext();
     const groupSubject = groupSubjectHint || await getGroupSubject(groupJid);
 
+    // If paused, skip gatekeeper entirely
+    if (pausedUntil && Date.now() < pausedUntil) {
+        console.log(' [Join] ⏸️ Paused — auto-approving join for ' + dmJid + ' to "' + groupSubject + '"');
+        // Still register the entry so dashboard shows them
+        const entry = {
+            admin: admin.name, phone: admin.phone, groupJid, groupSubject,
+            rawParticipantJid: participantJid, participantJid: dmJid,
+            status: 'approved_paused', nicheCount: -1,
+            timestamp: new Date().toISOString()
+        };
+        await saveRegistryItem(registryKey, entry);
+        joinIntroSentKeys.add(registryKey);
+        return;
+    }
+
     // Niche Group Gatekeeper: if member already in 3+ niche groups, reject (3 is max, 4 triggers warn/removal)
     if (isNicheGroup(groupSubject)) {
         const nicheCount = await getNicheGroupCountForParticipant(participantJid);
@@ -1735,6 +1770,13 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
     const lowerText = textInput.toLowerCase();
     const isStatusMention = !!(msg.message?.groupStatusMentionMessage);
     try { fs.appendFileSync('_trace.log', 'MOD status=' + (msg.status || '?') + ' jid=' + jid + ' sender=' + senderPhone + ' isAdmin=' + isAdmin + ' text="' + textInput.substring(0, 80) + '" msgKeys=[' + (msg.message ? Object.keys(msg.message).join(',') : '') + ']\n'); } catch (e) { }
+
+    // If paused, skip ALL moderation
+    if (pausedUntil && Date.now() < pausedUntil) {
+        try { fs.appendFileSync('_trace.log', 'MOD_PAUSED until=' + pausedUntil + '\n'); } catch (e) {}
+        return false;
+    }
+
     const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/') || lowerText.includes('whatsapp.com/channel/') || lowerText.includes('chat.whatsapp.com/');
     
     let isLinkAllowed = false;
@@ -3840,7 +3882,32 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
 
-    // 5. Lock group {name}
+    // 5. Pause / resume all activities
+    const pauseWeekMatch = lower.match(/^pause\s+(?:all\s+)?(?:for\s+)?(?:this\s+)?(week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)?\s*(?:all)?\s*$/i);
+    const resumeMatch = lower.match(/^resume\s+(?:all\s+)?/i);
+    if (pauseWeekMatch) {
+        const dayName = pauseWeekMatch[1] ? pauseWeekMatch[1].toLowerCase() : 'sunday';
+        const dayMap = { monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sunday: 0, week: 0 };
+        const targetDay = dayMap[dayName] ?? 0;
+        const now = new Date();
+        const currentDay = now.getDay();
+        let daysUntil = targetDay - currentDay;
+        if (daysUntil <= 0) daysUntil += 7;
+        const untilTs = now.getTime() + daysUntil * 86400000;
+        pausedUntil = untilTs;
+        savePauseState(untilTs);
+        const untilDate = new Date(untilTs);
+        await sendAntiBanMessage(jid, { text: `⏸️ *All activities paused.*\nModeration, gatekeeper, and automated actions are suspended until *${untilDate.toUTCString()}* (end of ${dayName === 'week' ? 'Sunday' : dayName.charAt(0).toUpperCase() + dayName.slice(1)}).\n\nTo resume sooner, say *resume all*.` });
+        return true;
+    }
+    if (resumeMatch) {
+        pausedUntil = null;
+        clearPauseState();
+        await sendAntiBanMessage(jid, { text: `▶️ *Resumed all activities.*\nModeration, gatekeeper, and automated actions are now active again.` });
+        return true;
+    }
+
+    // 6. Lock group {name}
     if (lower.startsWith('lock group ') || (lower.startsWith('lock ') && !lower.startsWith('lock all'))) {
         const name = cleanText.replace(/^(?:lock group|lock)\s+/i, '').trim();
         if (name && name.toLowerCase() !== 'all' && !name.toLowerCase().startsWith('all ')) {
@@ -5808,7 +5875,8 @@ server.listen(PORT, async () => {
     await loadActiveConvosFromSupabase();
     await loadWarnedMembers();
     antiLinkEnabled = loadAntiLink();
-    console.log(` [AntiLink] antiLinkEnabled=${antiLinkEnabled}`);
+    pausedUntil = loadPauseState();
+    console.log(` [AntiLink] antiLinkEnabled=${antiLinkEnabled} pausedUntil=${pausedUntil}`);
 
     // Initialize anti-ban module
     antiban = new AntiBan({
