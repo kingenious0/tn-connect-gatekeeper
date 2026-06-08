@@ -1582,10 +1582,13 @@ async function sendAntiBanMessage(jid, content, retries = 3) {
         await delay(MIN_MESSAGE_INTERVAL_MS - sinceLast);
     }
     const textContent = (typeof content === 'string') ? content : (content.text || '');
+    addDebugLog(`[Send] Sending to ${jid.substring(0, 20)} (text len: ${textContent.length})`);
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
             lastMessageSendTime = Date.now();
-            return await client.sendText(jid, content.text || content, content.options || {});
+            const result = await client.sendText(jid, content.text || content, content.options || {});
+            addDebugLog(`[Send] Sent OK to ${jid.substring(0, 20)} attempt=${attempt}`);
+            return result;
         } catch (e) {
             const msg = (e.message || '').toLowerCase();
             const isRateLimit = msg.includes('rate') || msg.includes('429') || msg.includes('connection closed') || msg.includes('too fast');
@@ -2783,7 +2786,9 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
             jid: jid
         });
         const list = groups.map((g, i) => (i + 1) + '. ' + g.subject).join('\n');
+        addDebugLog(`[Broadcast] Wizard message to ${senderPhone}: groups=${groups.length}`);
         await sendAntiBanMessage(jid, { text: '📢 *Broadcast Wizard*\n\nSelect groups by replying with numbers (e.g., "1,3,5") or "all" for all groups.\nType *broadcast manage* to control which groups appear here. Type *cancel* to abort:\n\n' + list });
+        addDebugLog(`[Broadcast] Wizard message SENT to ${senderPhone}`);
         return true;
     }
     const state = adminBroadcastStates.get(senderPhone);
@@ -3885,14 +3890,17 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
     // 4. Anti-link toggle
     if (lower === 'anti link on' || lower === 'antilink on' || lower === 'anti link off' || lower === 'antilink off') {
         const newVal = lower.endsWith('on');
+        addDebugLog(`[AntiLink] Toggle from ${senderPhone}: ${lower} newVal=${newVal} current=${antiLinkEnabled}`);
         if (newVal === antiLinkEnabled) {
             await sendAntiBanMessage(jid, { text: `✅ Anti-link is already *${newVal ? 'ON' : 'OFF'}*. No change.` });
+            addDebugLog(`[AntiLink] No change reply SENT to ${senderPhone}`);
             return true;
         }
         antiLinkEnabled = newVal;
         saveAntiLink(antiLinkEnabled);
         const emoji = antiLinkEnabled ? '✅' : '❌';
         await sendAntiBanMessage(jid, { text: `${emoji} Anti-link has been turned *${antiLinkEnabled ? 'ON' : 'OFF'}*.\n${antiLinkEnabled ? 'Links in all groups will be deleted.' : 'Links will no longer be deleted by the bot.'}` });
+        addDebugLog(`[AntiLink] Toggle reply SENT to ${senderPhone}: now ${antiLinkEnabled}`);
         return true;
     }
 
@@ -5229,6 +5237,16 @@ app.post('/debug/testmod', async (req, res) => {
     if (isAdmin) wouldAct = containsBadWord;
     else wouldAct = containsBadWord || containsLink;
     res.json({ text, containsLink, containsBadWord, isAdmin, wouldAct, wouldDeleteLink: !isAdmin && containsLink, wouldDeleteBadWord: containsBadWord });
+});
+app.post('/debug/send', async (req, res) => {
+    const { jid, text } = req.body || {};
+    if (!jid || !text) return res.status(400).json({ error: 'jid and text required' });
+    try {
+        await sendAntiBanMessage(jid, { text });
+        res.json({ success: true, jid });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
 });
 app.get('/api/sessions', async (req, res) => {
     try {
