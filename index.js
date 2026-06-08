@@ -4557,10 +4557,14 @@ async function processIncomingMessage(msg) {
     try { fs.appendFileSync('_trace.log', 'RECV jid=' + jid + ' isGroup=' + isGroup + ' fromMe=' + msg.key.fromMe + '\n'); } catch (e) { }
     let adminProfile = await lookupBroadcastAdmin(senderPhone, sender);
     let isAdmin = !!adminProfile;
-    // Fallback for first message from LID users: match by pushName against admin roster
-    if (!isAdmin && sender.endsWith('@lid') && pushName) {
-        // Reverse search to prefer newer entries (handles duplicate names e.g. Kingenious)
-        const nameMatch = [...CAMPUS_ADMIN_ROSTER].reverse().find(a => a.admin_name.toLowerCase() === pushName.toLowerCase());
+    // For LID senders: check pushName against admin roster to correct wrong Supabase/registration phone
+    if (sender.endsWith('@lid') && pushName) {
+        const pn = pushName.toLowerCase();
+        const nameMatch = [...CAMPUS_ADMIN_ROSTER].reverse().find(a =>
+            a.admin_name.toLowerCase() === pn ||
+            pn.startsWith(a.admin_name.toLowerCase()) ||
+            a.admin_name.toLowerCase().startsWith(pn)
+        );
         if (nameMatch) {
             adminProfile = { phone: nameMatch.phone, name: nameMatch.admin_name };
             isAdmin = true;
@@ -4573,7 +4577,19 @@ async function processIncomingMessage(msg) {
     }
     // Learn LID→phone mapping for future messages from LID users so resolveLidToPhone works next time
     if (isAdmin && adminProfile && adminProfile.phone && sender.endsWith('@lid') && !adminLidMap.has(sender)) {
-        adminLidMap.set(sender, { phone: adminProfile.phone, name: adminProfile.name || '' });
+        let learnPhone = adminProfile.phone;
+        const pn = pushName ? pushName.toLowerCase() : '';
+        const inRoster = CAMPUS_ADMIN_ROSTER.some(a => a.phone === learnPhone);
+        if (!inRoster) {
+            const fallback = [...CAMPUS_ADMIN_ROSTER].reverse().find(a =>
+                a.admin_name.toLowerCase() === pn ||
+                pn.startsWith(a.admin_name.toLowerCase()) ||
+                a.admin_name.toLowerCase().startsWith(pn)
+            );
+            if (fallback) learnPhone = fallback.phone;
+            else return; // Skip learning if we can't verify the correct phone
+        }
+        adminLidMap.set(sender, { phone: learnPhone, name: adminProfile.name || '' });
     }
     console.log(' [Msg] From ' + senderPhone + ' isAdmin=' + isAdmin + ' isGroup=' + isGroup);
     if (isGroup) {
