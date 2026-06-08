@@ -1576,34 +1576,44 @@ const refreshDiscoveredGroups = async (phone) => {
 // 📱 SENDING FUNCTIONS
 // ==========================================
 
+const resolveJidForSend = (jid) => {
+    if (!jid || !jid.includes('@lid')) return jid;
+    const phone = resolveLidToPhone(jid);
+    if (phone) return phone + '@s.whatsapp.net';
+    return jid;
+};
+
 async function sendAntiBanMessage(jid, content, retries = 3) {
+    const sendJid = resolveJidForSend(jid);
     const sinceLast = Date.now() - lastMessageSendTime;
     if (sinceLast < MIN_MESSAGE_INTERVAL_MS) {
         await delay(MIN_MESSAGE_INTERVAL_MS - sinceLast);
     }
     const textContent = (typeof content === 'string') ? content : (content.text || '');
-    addDebugLog(`[Send] Sending to ${jid.substring(0, 20)} (text len: ${textContent.length})`);
+    addDebugLog(`[Send] Sending to ${sendJid.substring(0, 25)} (original: ${jid.substring(0, 20)}) len=${textContent.length}`);
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
             lastMessageSendTime = Date.now();
-            const result = await client.sendText(jid, content.text || content, content.options || {});
-            addDebugLog(`[Send] Sent OK to ${jid.substring(0, 20)} attempt=${attempt}`);
+            const result = await client.sendText(sendJid, content.text || content, content.options || {});
+            addDebugLog(`[Send] Sent OK to ${sendJid.substring(0, 25)} attempt=${attempt}`);
             return result;
         } catch (e) {
-            const msg = (e.message || '').toLowerCase();
+            const errMsg = e.message || '';
+            const msg = errMsg.toLowerCase();
             const isRateLimit = msg.includes('rate') || msg.includes('429') || msg.includes('connection closed') || msg.includes('too fast');
+            console.warn(` [Send] Attempt ${attempt + 1}/${retries} failed: ${errMsg.substring(0, 100)}`);
             if (isRateLimit && attempt < retries - 1) {
                 const backoff = (attempt + 1) * 8000;
-                console.warn(' [Send] Rate limited, backing off ' + backoff + 'ms (attempt ' + (attempt + 1) + '/' + retries + ')');
+                console.warn(' [Send] Rate limited, backing off ' + backoff + 'ms');
                 await delay(backoff);
                 continue;
             }
             if (attempt === retries - 1) {
                 lastMessageSendTime = Date.now();
                 try {
-                    return await client.sendText(jid, content.text || content, content.options || {});
+                    return await client.sendText(sendJid, content.text || content, content.options || {});
                 } catch (f) {
-                    console.error(' [Send] Final attempt failed:', f.message.substring(0, 100));
+                    console.error(' [Send] Final attempt failed:', (f.message || '').substring(0, 100));
                     return null;
                 }
             }
