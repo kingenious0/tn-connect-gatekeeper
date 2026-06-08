@@ -901,6 +901,16 @@ const getGroupSubject = async (groupJid) => {
         groupSubjectCache.set(groupJid, discovered.subject);
         return discovered.subject;
     }
+    // Live fetch from WhatsApp
+    try {
+        const gMeta = await client.fetchGroupMetadata(groupJid);
+        if (gMeta && gMeta.subject) {
+            groupSubjectCache.set(groupJid, gMeta.subject);
+            return gMeta.subject;
+        }
+    } catch (e) {
+        console.error(' [GroupSubject] Live fetch failed for ' + groupJid + ':', e.message);
+    }
     return 'Unknown Group';
 };
 
@@ -5172,21 +5182,10 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). No specific names, 
         const handledReply = await handleAdminReplyAssistant(jid, senderPhone, msg, adminProfile?.name || 'Admin');
         if (handledReply) return;
     }
-    // 🚫 Non-admin DM catch-all — only register handled above; everything else gets admin contacts
+    // 🚫 Non-admin DM — completely silent except register (handled above)
     if (!isAdmin && dmText) {
-        // Clear any stale niche finder state
         if (nicheFinderStates.has(senderPhone)) nicheFinderStates.delete(senderPhone);
-        try { fs.appendFileSync('_trace.log', 'NONADMIN_DM from ' + senderPhone + ': "' + dmText.substring(0, 80) + '"\n'); } catch (e) {}
-        try {
-            const adminContacts = CAMPUS_ADMIN_ROSTER.slice(0, 7)
-                .sort(() => Math.random() - 0.5)
-                .map(a => '• ' + a.admin_name + ' (0' + a.phone.slice(3) + ')')
-                .join('\n');
-            await sendAntiBanMessage(jid, { text: '⚠️ This is an automated system.\n\nPlease contact any of these admins for assistance:\n' + adminContacts + '\n\n_(Do not reply — this message is automated)_' });
-            try { fs.appendFileSync('_trace.log', 'NONADMIN_DM admin contacts sent to ' + senderPhone + '\n'); } catch (e) {}
-        } catch (e) {
-            try { fs.appendFileSync('_trace.log', 'NONADMIN_DM reply failed: ' + e.message + '\n'); } catch (e2) {}
-        }
+        try { fs.appendFileSync('_trace.log', 'NONADMIN_DM_IGNORED from ' + senderPhone + ': "' + dmText.substring(0, 80) + '"\n'); } catch (e) {}
         return;
     }
     if (isAdmin && !bizHubRequest && !pendingRequest) {

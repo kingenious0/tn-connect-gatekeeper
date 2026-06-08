@@ -269,6 +269,15 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
         return this.sock.groupRequestParticipantsList(groupJid);
     }
 
+    async fetchGroupMetadata(groupJid) {
+        try {
+            const meta = await this.sock.groupMetadata(groupJid);
+            return meta;
+        } catch (e) {
+            return null;
+        }
+    }
+
     async fetchProfilePicture(number) {
         const id = number.endsWith('@s.whatsapp.net') ? number : number + '@s.whatsapp.net';
         try {
