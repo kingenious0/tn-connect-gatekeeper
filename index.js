@@ -1524,6 +1524,13 @@ const populateLidMap = async () => {
                     adminLidMap.set(p.id, { phone, name: p.name || '' });
                     count++;
                 }
+                if (p.id && !p.id.endsWith('@lid') && p.phoneNumber) {
+                    const phone = (p.phoneNumber || '').split(':')[0].replace(/[^0-9]/g, '');
+                    if (phone) {
+                        adminLidMap.set(p.id, { phone, name: p.name || '' });
+                        count++;
+                    }
+                }
             }
         }
         if (count > 0) console.log(' [LidMap] Mapped ' + count + ' Lid IDs to phone numbers');
@@ -1645,8 +1652,13 @@ const lookupBroadcastAdmin = async (senderPhone, rawJid) => {
             if (lidMatch) { rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === lidMatch.phone); if (rosterMatch) break; }
         }
         if (!rosterMatch) {
+            const knownAdminsInMap = [];
             for (const [, entry] of adminLidMap) {
-                if (CAMPUS_ADMIN_ROSTER.find(a => a.phone === entry.phone)) { rosterMatch = CAMPUS_ADMIN_ROSTER.find(a => a.phone === entry.phone); break; }
+                const m = CAMPUS_ADMIN_ROSTER.find(a => a.phone === entry.phone);
+                if (m) knownAdminsInMap.push(m);
+            }
+            if (knownAdminsInMap.length === 1) {
+                rosterMatch = knownAdminsInMap[0];
             }
         }
     }
@@ -4541,10 +4553,28 @@ async function processIncomingMessage(msg) {
 
     const isGroup = jid.endsWith('@g.us');
     const sender = isGroup ? (msg.key.participant || jid) : jid;
-    const senderPhone = senderPhoneFromJid(sender);
+    let senderPhone = senderPhoneFromJid(sender);
     try { fs.appendFileSync('_trace.log', 'RECV jid=' + jid + ' isGroup=' + isGroup + ' fromMe=' + msg.key.fromMe + '\n'); } catch (e) { }
-    const adminProfile = await lookupBroadcastAdmin(senderPhone, sender);
+    let adminProfile = await lookupBroadcastAdmin(senderPhone, sender);
     let isAdmin = !!adminProfile;
+    // Fallback for first message from LID users: match by pushName against admin roster
+    if (!isAdmin && sender.endsWith('@lid') && pushName) {
+        // Reverse search to prefer newer entries (handles duplicate names e.g. Kingenious)
+        const nameMatch = [...CAMPUS_ADMIN_ROSTER].reverse().find(a => a.admin_name.toLowerCase() === pushName.toLowerCase());
+        if (nameMatch) {
+            adminProfile = { phone: nameMatch.phone, name: nameMatch.admin_name };
+            isAdmin = true;
+            senderPhone = nameMatch.phone;
+        }
+    }
+    // If admin found with a phone number that differs from raw LID digits, use the real phone as senderPhone
+    if (isAdmin && adminProfile && adminProfile.phone && adminProfile.phone !== senderPhone) {
+        senderPhone = adminProfile.phone;
+    }
+    // Learn LID→phone mapping for future messages from LID users so resolveLidToPhone works next time
+    if (isAdmin && adminProfile && adminProfile.phone && sender.endsWith('@lid') && !adminLidMap.has(sender)) {
+        adminLidMap.set(sender, { phone: adminProfile.phone, name: adminProfile.name || '' });
+    }
     console.log(' [Msg] From ' + senderPhone + ' isAdmin=' + isAdmin + ' isGroup=' + isGroup);
     if (isGroup) {
         lastGroupActivityTime.set(jid, Date.now());

@@ -202,7 +202,7 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
             name: g.subject || 'Unknown Group',
             participants: (g.participants || []).map(p => ({
                 id: p.id,
-                phoneNumber: (p.phoneNumber || p.id || '').split(':')[0].replace(/[^0-9]/g, '') || '',
+                phoneNumber: (p.id && p.id.endsWith('@lid')) ? (p.phoneNumber || '') : (p.phoneNumber || p.id || '').split(':')[0].replace(/[^0-9]/g, '') || '',
                 name: p.name || '',
                 admin: p.admin || null,
             })),
