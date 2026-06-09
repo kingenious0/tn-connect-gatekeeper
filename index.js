@@ -4552,7 +4552,10 @@ async function processIncomingMessage(msg) {
     }
 
     const isGroup = jid.endsWith('@g.us');
-    const sender = isGroup ? (msg.key.participant || jid) : jid;
+    if (isGroup && !msg.key.participant) {
+        return; // Ignore group system messages or updates where participant is undefined
+    }
+    const sender = isGroup ? msg.key.participant : jid;
     let senderPhone = senderPhoneFromJid(sender);
     try { fs.appendFileSync('_trace.log', 'RECV jid=' + jid + ' isGroup=' + isGroup + ' fromMe=' + msg.key.fromMe + '\n'); } catch (e) { }
     let adminProfile = await lookupBroadcastAdmin(senderPhone, sender);
