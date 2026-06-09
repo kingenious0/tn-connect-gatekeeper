@@ -1586,9 +1586,7 @@ const refreshDiscoveredGroups = async (phone) => {
 // ==========================================
 
 const resolveJidForSend = (jid) => {
-    if (!jid || !jid.includes('@lid')) return jid;
-    const phone = resolveLidToPhone(jid);
-    if (phone) return phone + '@s.whatsapp.net';
+    // Keep LID JID as-is when sending back, because replying to the active LID JID ensures delivery in the active DM thread.
     return jid;
 };
 
