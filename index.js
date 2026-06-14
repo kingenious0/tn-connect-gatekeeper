@@ -1013,17 +1013,41 @@ const getVerificationState = (userPhone) => {
     return pendingVerifications.get(userPhone);
 };
 
-const getNicheGroupCountForParticipant = async (participantJid) => {
+const getParticipantIdentifiers = (p) => {
+    const ids = new Set();
+    if (!p) return ids;
+    const rawId = typeof p === 'object' ? (p.id || p.jid || '') : String(p || '');
+    const digits = rawId.split(':')[0].replace(/[^0-9]/g, '');
+    if (digits) ids.add(digits);
+    if (rawId.endsWith('@lid')) {
+        const resolvedPhone = resolveLidToPhone(rawId);
+        if (resolvedPhone) ids.add(resolvedPhone.replace(/[^0-9]/g, ''));
+        const lidEntry = adminLidMap.get(rawId);
+        if (lidEntry && lidEntry.phone) ids.add(String(lidEntry.phone).replace(/[^0-9]/g, ''));
+    }
+    if (typeof p === 'object' && p.phoneNumber) {
+        const phoneDigits = String(p.phoneNumber).replace(/[^0-9]/g, '');
+        if (phoneDigits) ids.add(phoneDigits);
+    }
+    return ids;
+};
+
+const getNicheGroupsForParticipant = async (participantJid) => {
+    const nicheGroups = new Set();
     try {
         const raw = await client.fetchGroups(true);
         const groups = raw?.groups || raw?.data || raw?.results || (Array.isArray(raw) ? raw : Object.values(raw || {}));
-        const phone = resolveParticipantPhone(participantJid);
-        if (!phone) return 0;
-        let count = 0;
+        const targetIds = getParticipantIdentifiers(participantJid);
+        if (targetIds.size === 0) return nicheGroups;
+        
+        // Skip checking if user is an admin
         const allAdminPhones = new Set();
         for (const a of CAMPUS_ADMIN_ROSTER) allAdminPhones.add(a.phone);
         for (const [p] of registeredAdmins) allAdminPhones.add(p);
-        if (allAdminPhones.has(phone)) return 0;
+        
+        const isAdmin = [...targetIds].some(id => allAdminPhones.has(id));
+        if (isAdmin) return nicheGroups;
+
         for (const g of groups) {
             const gJid = g.jid || g.id;
             let isBotAdmin = botAdminGroupCache.get(gJid) === true;
@@ -1034,17 +1058,24 @@ const getNicheGroupCountForParticipant = async (participantJid) => {
             }
             if (!isBotAdmin) continue;
             if (!isNicheGroup(g.subject || g.name || '')) continue;
+            
             const found = (g.participants || []).some(p => {
-                const pPhone = p.phoneNumber || (p.id || '').split(':')[0].replace(/[^0-9]/g, '');
-                return pPhone === phone;
+                const pIds = getParticipantIdentifiers(p);
+                return [...targetIds].some(id => pIds.has(id));
             });
-            if (found) count++;
+            if (found) {
+                nicheGroups.add(gJid);
+            }
         }
-        return count;
     } catch (e) {
-        console.error(' [NicheGate] Failed to check niche count for ' + (participantJid || '?' ) + ':', e.message);
-        return -1;
+        console.error(' [NicheGate] Failed to check niche groups for ' + (participantJid || '?' ) + ':', e.message);
     }
+    return nicheGroups;
+};
+
+const getNicheGroupCountForParticipant = async (participantJid) => {
+    const groups = await getNicheGroupsForParticipant(participantJid);
+    return groups.size;
 };
 
 const sendNicheJoinRejection = async (participantJid, groupSubject, nicheCount, groupJid) => {
@@ -1092,6 +1123,18 @@ const sendNicheJoinRejection = async (participantJid, groupSubject, nicheCount, 
     }
 };
 
+let joinRequestQueue = Promise.resolve();
+
+const queueProcessJoinRequest = (groupJid, participantJid, action, groupSubjectHint) => {
+    joinRequestQueue = joinRequestQueue.then(async () => {
+        try {
+            await processJoinRequest(groupJid, participantJid, action, groupSubjectHint);
+        } catch (err) {
+            console.error(' [Join Queue] Error processing request:', err);
+        }
+    });
+};
+
 const processJoinRequest = async (groupJid, participantJid, action, groupSubjectHint) => {
     if (!participantJid || !groupJid) return;
     if (action && action !== 'created') return;
@@ -1123,24 +1166,47 @@ const processJoinRequest = async (groupJid, participantJid, action, groupSubject
         return;
     }
 
-    // Niche Group Gatekeeper: if member already in 3+ niche groups, reject (3 is max, 4 triggers warn/removal)
+    // Niche Group Gatekeeper: if member already in 3+ niche groups (or has pending approvals), reject
     if (isNicheGroup(groupSubject)) {
-        const nicheCount = await getNicheGroupCountForParticipant(participantJid);
-        if (nicheCount >= 3) {
-            console.log(' [Join] ⛔ ' + dmJid + ' already in ' + nicheCount + ' niche groups — rejecting join to "' + groupSubject + '"');
+        const liveNicheGroups = await getNicheGroupsForParticipant(participantJid);
+        
+        // Add pending/approved requests from registry to prevent batch exploit
+        const registry = loadRegistry();
+        const targetIds = getParticipantIdentifiers(participantJid);
+        
+        for (const [key, entry] of Object.entries(registry)) {
+            if (!entry) continue;
+            if (!isNicheGroup(entry.groupSubject || '')) continue;
+            
+            // Only count active requests (approved, in-flight, or pending auto-approval)
+            if (!['approved', 'pending_approval', 'verification_complete', 'approved_paused'].includes(entry.status)) continue;
+            
+            const entryIds = new Set([
+                ...getParticipantIdentifiers(entry.rawParticipantJid),
+                ...getParticipantIdentifiers(entry.participantJid),
+                key.split('_')[1]
+            ].filter(Boolean));
+            
+            const isMatch = [...targetIds].some(id => entryIds.has(id));
+            if (isMatch) {
+                liveNicheGroups.add(entry.groupJid);
+            }
+        }
+        
+        const totalNicheCount = liveNicheGroups.size;
+        
+        if (totalNicheCount >= 3) {
+            console.log(' [Join] ⛔ ' + dmJid + ' already has/approaching limit of ' + totalNicheCount + ' niche groups — rejecting join to "' + groupSubject + '"');
             const entry = {
                 admin: admin.name, phone: admin.phone, groupJid, groupSubject,
                 rawParticipantJid: participantJid, participantJid: dmJid,
-                status: 'rejected_niche_limit', nicheCount,
+                status: 'rejected_niche_limit', nicheCount: totalNicheCount,
                 timestamp: new Date().toISOString()
             };
             await saveRegistryItem(registryKey, entry);
             joinIntroSentKeys.add(registryKey);
-            await sendNicheJoinRejection(participantJid, groupSubject, nicheCount, groupJid);
+            await sendNicheJoinRejection(participantJid, groupSubject, totalNicheCount, groupJid);
             return;
-        }
-        if (nicheCount === -1) {
-            console.warn(' [Join] ⚠️ Could not check niche count for ' + dmJid + ' — proceeding with auto-approve');
         }
     }
 
@@ -1294,7 +1360,7 @@ const scanPendingJoinRequests = async () => {
                 for (const req of list) {
                     const participantJid = req.jid || req.id;
                     if (participantJid) {
-                        await processJoinRequest(groupJid, participantJid, 'created', g.subject || '');
+                        queueProcessJoinRequest(groupJid, participantJid, 'created', g.subject || '');
                     }
                 }
             }
@@ -3087,7 +3153,7 @@ function wireBaileysEvents() {
         const { id: groupJid, participant: participantJid, action } = update;
         if (action === 'created' && groupJid && participantJid) {
             console.log(` [Events] Join request created in group ${groupJid} from ${participantJid}`);
-            await processJoinRequest(groupJid, participantJid, 'created', '');
+            queueProcessJoinRequest(groupJid, participantJid, 'created', '');
         }
     };
 
