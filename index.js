@@ -1118,6 +1118,12 @@ const sendNicheJoinRejection = async (participantJid, groupSubject, nicheCount, 
         const rawParticipant = typeof participantJid === 'string' ? participantJid : (participantJid.id || participantJid.jid || dmJid);
         await client.rejectGroupJoinRequest(groupJid, rawParticipant);
         console.log(' [NicheGate] ❌ Rejected ' + dmJid + ' from ' + groupSubject);
+        await sendAdminAlert([
+            '❌ *[AUTO-REJECTED — NICHE LIMIT]*', '',
+            '📱 *Member:* ' + dmJid.replace('@s.whatsapp.net', ''),
+            '🌐 *Group:* ' + groupSubject,
+            '📊 *Current Niche Count:* ' + nicheCount + '/3'
+        ].join('\n'));
     } catch (e) {
         console.error(' [NicheGate] Failed to reject ' + (participantJid || '?') + ':', e.message);
     }
