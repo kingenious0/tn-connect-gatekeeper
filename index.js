@@ -1884,7 +1884,8 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
         return false;
     }
 
-    const containsLink = lowerText.includes('http://') || lowerText.includes('https://') || lowerText.includes('wa.me/') || lowerText.includes('whatsapp.com/channel/') || lowerText.includes('chat.whatsapp.com/');
+    const linkRegex = /(https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9.-]+\.(com|net|org|edu|gov|co|gh|ng|link|me|xyz|io|app|dev|to|ly|gl|so|site|online|web|info|mobi|biz|cc|tv|chat|channel)\b[^\s]*)/gi;
+    const containsLink = linkRegex.test(lowerText) || lowerText.includes('wa.me/');
     
     let isLinkAllowed = false;
     let customLinkAlert = null;
@@ -3298,9 +3299,13 @@ const checkMarketDayWindow = () => {
         { day: 0, startTime: "13:00", endTime: "13:30", name: "Market Days for the General Market Group (Usually Closed)" }
     ];
     
-    for (const s of marketSchedules) {
-        if (s.day !== day) continue;
-        
+    const matchingSchedules = marketSchedules.filter(s => s.day === day);
+    if (matchingSchedules.length === 0) {
+        return { active: false, when: 'different_day' };
+    }
+    
+    // Check if any schedule is currently active
+    for (const s of matchingSchedules) {
         const [startHour, startMin] = s.startTime.split(':').map(Number);
         const [endHour, endMin] = s.endTime.split(':').map(Number);
         const startTimeMs = (startHour * 60 + startMin) * 60000;
@@ -3309,17 +3314,36 @@ const checkMarketDayWindow = () => {
         if (currentTimeMs >= startTimeMs && currentTimeMs < endTimeMs) {
             return { active: true, startTime: s.startTime, endTime: s.endTime };
         }
-        
+    }
+    
+    // Sort schedules by start time to report the correct status (before/after/between)
+    const sorted = [...matchingSchedules].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    
+    // If current time is before the first schedule:
+    const [firstStartHour, firstStartMin] = sorted[0].startTime.split(':').map(Number);
+    const firstStartTimeMs = (firstStartHour * 60 + firstStartMin) * 60000;
+    if (currentTimeMs < firstStartTimeMs) {
+        return { active: false, when: 'before', startTime: sorted[0].startTime, endTime: sorted[0].endTime };
+    }
+    
+    // If current time is after the last schedule:
+    const lastSchedule = sorted[sorted.length - 1];
+    const [lastEndHour, lastEndMin] = lastSchedule.endTime.split(':').map(Number);
+    const lastEndTimeMs = (lastEndHour * 60 + lastEndMin) * 60000;
+    if (currentTimeMs >= lastEndTimeMs) {
+        return { active: false, when: 'after', startTime: lastSchedule.startTime, endTime: lastSchedule.endTime };
+    }
+    
+    // If in between schedules: find the next upcoming one
+    for (const s of sorted) {
+        const [startHour, startMin] = s.startTime.split(':').map(Number);
+        const startTimeMs = (startHour * 60 + startMin) * 60000;
         if (currentTimeMs < startTimeMs) {
             return { active: false, when: 'before', startTime: s.startTime, endTime: s.endTime };
         }
-        
-        if (currentTimeMs >= endTimeMs) {
-            return { active: false, when: 'after', startTime: s.startTime, endTime: s.endTime };
-        }
     }
     
-    return { active: false, when: 'different_day' };
+    return { active: false, when: 'after', startTime: sorted[sorted.length - 1].startTime, endTime: sorted[sorted.length - 1].endTime };
 };
 
 const execute5MinBroadcast = async (activityName, isTest = false) => {
@@ -3698,14 +3722,27 @@ const handleGroupModerationExtractText = (msg) => {
     const rawContent = msg.message;
     if (!rawContent) return '';
     const m = unwrapMessage(rawContent);
-    if (m.conversation) return m.conversation;
-    if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
-    try {
-        const ct = Object.keys(m).find(k => k !== 'messageContextInfo');
-        if (ct && m[ct]?.text) return m[ct].text;
-        if (ct && m[ct]?.caption) return m[ct].caption;
-    } catch (e) { }
-    return '';
+    if (!m) return '';
+
+    const extractAllStrings = (obj) => {
+        let strings = [];
+        if (!obj) return strings;
+        if (typeof obj === 'string') {
+            strings.push(obj);
+        } else if (Array.isArray(obj)) {
+            for (const item of obj) {
+                strings.push(...extractAllStrings(item));
+            }
+        } else if (typeof obj === 'object') {
+            for (const key of Object.keys(obj)) {
+                if (key === 'jpegThumbnail' || key === 'contextInfo' || key === 'messageContextInfo') continue;
+                strings.push(...extractAllStrings(obj[key]));
+            }
+        }
+        return strings;
+    };
+
+    return extractAllStrings(m).join(' ');
 };
 
 const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminProfile, originalMsg) => {
