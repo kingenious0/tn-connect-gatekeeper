@@ -152,6 +152,7 @@ const PAUSE_FILE = './pause_config.json';
 
 let antiLinkEnabled = true;
 let pausedUntil = null;
+const groupJoinBuffers = new Map(); // groupJid -> { timer: NodeJS.Timeout, participants: String[] }
 
 const loadAntiLink = () => {
     if (!fs.existsSync(ANTI_LINK_FILE)) return true;
@@ -3151,6 +3152,82 @@ function wireBaileysEvents() {
                         try { await refreshDiscoveredGroups(activeSessionPhone); } catch (e) {}
                     })();
                 }
+            }
+        }
+
+        // Welcome mechanism for non-niche (general market) groups
+        if (action === 'add' && groupJid && participants?.length) {
+            let subject = null;
+            const cachedG = cachedGroups.find(g => g.jid === groupJid);
+            if (cachedG) {
+                subject = cachedG.subject;
+            } else {
+                try {
+                    const meta = await client.fetchGroupMetadata(groupJid);
+                    if (meta) subject = meta.subject;
+                } catch (e) {}
+            }
+
+            const leaderJid = findLeaderGroupJid();
+            if (subject && !isNicheGroup(subject) && groupJid !== leaderJid) {
+                let buffer = groupJoinBuffers.get(groupJid);
+                if (!buffer) {
+                    buffer = { timer: null, participants: [] };
+                    groupJoinBuffers.set(groupJid, buffer);
+                }
+
+                for (const p of participants) {
+                    if (p && !buffer.participants.includes(p)) {
+                        buffer.participants.push(p);
+                    }
+                }
+
+                if (buffer.timer) clearTimeout(buffer.timer);
+
+                buffer.timer = setTimeout(async () => {
+                    const membersToWelcome = [...buffer.participants];
+                    groupJoinBuffers.delete(groupJid);
+
+                    if (!membersToWelcome.length) return;
+
+                    const adminNumbers = [
+                        '233597626090', '233207924793', '233264579213', '233543091276',
+                        '233559965347', '233538719819', '233593950770', '233539931196',
+                        '233246546818', '233256921483', '233531515417'
+                    ];
+                    const adminJids = adminNumbers.map(num => num + '@s.whatsapp.net');
+                    const adminTags = adminNumbers.map(num => `@${num}`).join(', ');
+
+                    const welcomeTags = membersToWelcome.map(p => `@${p.split(':')[0].replace(/[^0-9]/g, '')}`).join(' ');
+                    const newMemberJids = membersToWelcome.map(p => p.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net');
+
+                    const welcomeMsg = `👋 *Welcome to the group!* ${welcomeTags}\n\n` +
+                        `These are the list of niche groups we have... so when you are texting admin kindly let them know the ones you wish to join... *remember maximum is 3*\n\n` +
+                        `1️⃣ *Corporate Events & Protocol:* MCs, Ushers, Coordinators.\n` +
+                        `2️⃣ *Marketing & Publicity:* Social Media Managers, Influencers, Marketers.\n` +
+                        `3️⃣ *Healthcare, Wellness & Safety:* Nurses, Midwives, Security, First Aid.\n` +
+                        `4️⃣ *Technical & IT Support:* Engineers (All types), IT, Tech heads.\n` +
+                        `5️⃣ *Media Production:* Video Editors, Photographers, Designers.\n` +
+                        `6️⃣ *Professional Grooming:* Makeup Artists, Dreadlocks/Hair, Fashion.\n` +
+                        `7️⃣ *Enterprise & Leadership:* Business Owners (Hotels, Malls, Eateries).\n` +
+                        `8️⃣ *Voice & Audio:* VO Artists, DJs, Sound Engineers.\n` +
+                        `9️⃣ *Field Sales & Activations:* Sales Agents, Promoters, Data Collectors.\n` +
+                        `🔟 *Performance & Talent:* Dancers, Actors, Models.\n\n` +
+                        `New Members here, you are all welcome 🤗\n` +
+                        `Kindly make sure you are part of at least 3 niche groups...\n` +
+                        `Please contact the admins below, send your field of interest/study for them to know the particular niche groups you fit in...\n\n` +
+                        `*Contact any of the admins below* 👇🏽\n\n` +
+                        `${adminTags}`;
+
+                    const allMentions = [...newMemberJids, ...adminJids];
+
+                    try {
+                        await sendAntiBanMessage(groupJid, { text: welcomeMsg, options: { mentions: allMentions } });
+                        console.log(` [Welcome] Sent welcome message to ${groupJid} for ${membersToWelcome.length} new members.`);
+                    } catch (e) {
+                        console.error(` [Welcome] Failed to send welcome to ${groupJid}:`, e.message);
+                    }
+                }, 15000);
             }
         }
     };
