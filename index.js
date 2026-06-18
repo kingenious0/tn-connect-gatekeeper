@@ -3811,8 +3811,9 @@ const handleGroupModerationExtractText = (msg) => {
                 strings.push(...extractAllStrings(item));
             }
         } else if (typeof obj === 'object') {
+            const excludedKeys = new Set(['jpegThumbnail', 'contextInfo', 'messageContextInfo', 'url', 'directPath', 'mimetype', 'mediaKey', 'fileSha256', 'fileEncSha256', 'mediaKeyTimestamp']);
             for (const key of Object.keys(obj)) {
-                if (key === 'jpegThumbnail' || key === 'contextInfo' || key === 'messageContextInfo') continue;
+                if (excludedKeys.has(key)) continue;
                 strings.push(...extractAllStrings(obj[key]));
             }
         }
