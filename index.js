@@ -889,6 +889,21 @@ const dmJidFromParticipant = (participantJid) => {
     return normalized + '@s.whatsapp.net';
 };
 
+const resolveMemberDisplayPhone = (participantJid, fallbackJid) => {
+    const rawId = typeof participantJid === 'object' ? (participantJid.id || participantJid.jid || '') : String(participantJid || '');
+    if (rawId && (rawId.endsWith('@lid') || rawId.includes('lid'))) {
+        const resolved = resolveLidToPhone(rawId);
+        if (resolved) return resolved;
+    }
+    const fallbackStr = typeof fallbackJid === 'object' ? (fallbackJid.id || fallbackJid.jid || '') : String(fallbackJid || '');
+    if (fallbackStr && (fallbackStr.endsWith('@lid') || fallbackStr.includes('lid'))) {
+        const resolved = resolveLidToPhone(fallbackStr);
+        if (resolved) return resolved;
+    }
+    const target = fallbackStr || rawId;
+    return target.split(':')[0].replace(/@s\.whatsapp\.net/gi, '').replace(/@lid/gi, '').replace(/\D/g, '');
+};
+
 const getBotAdminContext = () => {
     const phone = activeSessionPhone || '';
     const meta = loadSessionMeta()[phone] || {};
@@ -1121,7 +1136,7 @@ const sendNicheJoinRejection = async (participantJid, groupSubject, nicheCount, 
         console.log(' [NicheGate] ❌ Rejected ' + dmJid + ' from ' + groupSubject);
         await sendAdminAlert([
             '❌ *[AUTO-REJECTED — NICHE LIMIT]*', '',
-            '📱 *Member:* ' + dmJid.replace('@s.whatsapp.net', ''),
+            '📱 *Member:* ' + resolveMemberDisplayPhone(participantJid, dmJid),
             '🌐 *Group:* ' + groupSubject,
             '📊 *Current Niche Count:* ' + nicheCount + '/3'
         ].join('\n'));
@@ -1242,7 +1257,7 @@ const processJoinRequest = async (groupJid, participantJid, action, groupSubject
             }
             await sendAdminAlert([
                 '✅ *[AUTO-APPROVED]*', '',
-                '📱 *Member:* ' + dmJid.replace('@s.whatsapp.net', ''),
+                '📱 *Member:* ' + resolveMemberDisplayPhone(participantJid, dmJid),
                 '🌐 *Group:* ' + groupSubject
             ].join('\n'));
         } catch (e) {
@@ -3698,7 +3713,7 @@ function schedulePeriodicTasks() {
                 pendingApprovals.delete(key);
                 await sendAdminAlert([
                     '✅ *[AUTO-APPROVED — RETRY]*', '',
-                    '📱 *Member:* ' + q.jid.replace('@s.whatsapp.net', ''),
+                    '📱 *Member:* ' + resolveMemberDisplayPhone(q.rawJid, q.jid),
                     '🌐 *Group:* ' + (q.groupSubject || q.groupJid)
                 ].join('\n'));
             } catch (e) {
