@@ -3198,8 +3198,14 @@ function wireBaileysEvents() {
                     const adminJids = adminNumbers.map(num => num + '@s.whatsapp.net');
                     const adminTags = adminNumbers.map(num => `@${num}`).join(', ');
 
-                    const welcomeTags = membersToWelcome.map(p => `@${p.split(':')[0].replace(/[^0-9]/g, '')}`).join(' ');
-                    const newMemberJids = membersToWelcome.map(p => p.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net');
+                    const welcomeTags = membersToWelcome.map(p => {
+                        const str = typeof p === 'string' ? p : (p?.id || String(p || ''));
+                        return `@${str.split(':')[0].replace(/[^0-9]/g, '')}`;
+                    }).join(' ');
+                    const newMemberJids = membersToWelcome.map(p => {
+                        const str = typeof p === 'string' ? p : (p?.id || String(p || ''));
+                        return str.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+                    });
 
                     const welcomeMsg = `👋 *Welcome to the group!* ${welcomeTags}\n\n` +
                         `These are the list of niche groups we have... so when you are texting admin kindly let them know the ones you wish to join... *remember maximum is 3*\n\n` +
