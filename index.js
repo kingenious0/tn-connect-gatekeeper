@@ -3203,7 +3203,7 @@ function wireBaileysEvents() {
                     const membersToWelcome = [...buffer.participants];
                     groupJoinBuffers.delete(groupJid);
 
-                    if (!membersToWelcome.length) return;
+                    if (membersToWelcome.length <= 2) return;
 
                     const adminNumbers = [
                         '233597626090', '233207924793', '233264579213', '233543091276',
