@@ -1,6 +1,6 @@
 {
   "name": "tn-connect-gatekeeper",
-  "version": "1.6.2",
+  "version": "1.6.7",
   "description": "WhatsApp automation gatekeeper for TN CONNECT GROUP",
   "main": "index.js",
   "scripts": {

@@ -3348,6 +3348,11 @@ function wireBaileysEvents() {
                 refreshGroupCache();
                 loadBroadcastWhitelistFromSupabase();
                 schedulePeriodicTasks();
+                
+                if (adminAlertsGroupJid) {
+                    const launchMessage = `🔔 *Gatekeeper v1.6.7 is now live!* 🚀\n\n*What's New:*\n• *Database Admin Demotion*: Demote database admins using \`demote <phone>\` (in DM) or \`demote admin <phone>\`.\n• *Accurate Logs*: Logs now display friendly group names instead of raw IDs.\n• *Smart Warnings*: Media deletion alerts now tag users with a 15s per-user cooldown.`;
+                    await sendAntiBanMessage(adminAlertsGroupJid, { text: launchMessage }).catch(e => console.error(' [Launch] Failed to send launch message:', e.message));
+                }
             }
         } else if (error) {
             console.warn(' [Baileys] Disconnected: ' + (error.message || 'unknown') + ' | Reconnect: ' + shouldReconnect);
@@ -6311,7 +6316,7 @@ process.on('SIGINT', () => cleanShutdown('SIGINT'));
 
 const server = http.createServer(app);
 server.listen(PORT, async () => {
-    console.log(' [Server] Gatekeeper v1.6.2 (Baileys) is live on port ' + PORT);
+    console.log(' [Server] Gatekeeper v1.6.7 (Baileys) is live on port ' + PORT);
     
     await acquireLock();
     await ensureRegistryLoaded();
