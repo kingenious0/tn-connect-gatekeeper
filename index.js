@@ -383,7 +383,7 @@ const BROADCAST_ADMIN_ROLES = new Set(['admin', 'admin_node']);
 
 const CAMPUS_ADMIN_ROSTER = [
     { phone: '233264579213', admin_name: 'Yhaar Bhaby' },
-    { phone: '233207924793', admin_name: 'You mean to tell me' },
+    { phone: '233207924793', admin_name: 'Lydia' },
     { phone: '233246546818', admin_name: 'TiLIe Nadis' },
     { phone: '233256921483', admin_name: 'Easydata' },
     { phone: '233559965347', admin_name: 'AKEedwin' },
@@ -397,7 +397,14 @@ const CAMPUS_ADMIN_ROSTER = [
     { phone: '233540509751', admin_name: 'Air Star' },
     { phone: '233208282949', admin_name: 'Mr. George' },
     { phone: '233538719819', admin_name: 'Mr.Gyan' },
-    { phone: '233595802277', admin_name: 'PROPHETIC BUSINESS' }
+    { phone: '233595802277', admin_name: 'PROPHETIC BUSINESS' },
+    { phone: '233533200593', admin_name: 'Minimie' },
+    { phone: '233595160749', admin_name: 'Scott' },
+    { phone: '233531515417', admin_name: 'Yhar Baby' },
+    { phone: '233539931196', admin_name: 'Twita' },
+    { phone: "233552945333", admin_name: "Darlington" },
+    { phone: '233509696397', admin_name: 'kobbyluxe' },
+    { phone: '233509013649', admin_name: 'Rocky Gina' }
 ];
 
 const adminLidMap = new Map();
