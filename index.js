@@ -4581,7 +4581,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
     }
 
     // ==========================================================
-    // 6.6.5 Database Admin Demotion Command (v1.6.4)
+    // 6.6.6 Database Admin Demotion Command (v1.6.6)
     // ==========================================================
     const dbDemoteRegex = /^(?:demote\s+admin|demote)\s+(\d{9,15})$/i;
     const dbDemoteMatch = cleanText.match(dbDemoteRegex);
