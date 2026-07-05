@@ -4581,6 +4581,47 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
     }
 
     // ==========================================================
+    // 6.6.5 Database Admin Demotion Command (v1.6.4)
+    // ==========================================================
+    const dbDemoteRegex = /^(?:demote\s+admin|demote)\s+(\d{9,15})$/i;
+    const dbDemoteMatch = cleanText.match(dbDemoteRegex);
+    if (dbDemoteMatch && (cleanText.toLowerCase().startsWith('demote admin') || !jid.endsWith('@g.us'))) {
+        const targetPhone = dbDemoteMatch[1].replace(/[^0-9]/g, '');
+        const localData = loadRegisteredAdmins();
+        const exists = registeredAdmins.has(targetPhone) || localData[targetPhone] || (await (async () => {
+            if (supabase) {
+                try {
+                    const { data } = await supabase.from('gatekeeper_sessions').select('phone').eq('phone', targetPhone).maybeSingle();
+                    return !!data;
+                } catch (e) {}
+            }
+            return false;
+        })());
+        
+        if (!exists) {
+            await sendAntiBanMessage(jid, { text: `❌ User *+${targetPhone}* was not found in the dynamic broadcast roster.` });
+            return true;
+        }
+        
+        registeredAdmins.delete(targetPhone);
+        if (localData[targetPhone]) {
+            delete localData[targetPhone];
+            saveRegisteredAdmins(localData);
+        }
+        
+        if (supabase) {
+            try {
+                await supabase.from('gatekeeper_sessions').delete().eq('phone', targetPhone);
+            } catch (e) {
+                console.warn(' [Roster] Supabase roster delete failed:', e.message);
+            }
+        }
+        
+        await sendAntiBanMessage(jid, { text: `✅ *Roster Update Successful*\n\nUser *+${targetPhone}* has been successfully demoted and removed from the Broadcast Admin roster in the database.` });
+        return true;
+    }
+
+    // ==========================================================
     // 6.7 Promote / Demote Whatsapp Group Admin Commands (v1.6.3)
     // ==========================================================
     const promoteDemoteRegex = /^(promote|demote)\s+(.+?)(?:\s+(in\s+)?(all\s+groups|all|this\s+group|this))?$/i;
