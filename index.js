@@ -3398,18 +3398,36 @@ function wireBaileysEvents() {
             if (call.status !== 'offer') return;
 
             const callerJid  = call.from || call.chatId || '';
-            const callerPhone = callerJid.split(':')[0].replace(/[^0-9]/g, '');
             const callType   = call.isVideo ? '📹 Video' : '📞 Voice';
             const callId     = call.id || 'unknown';
             const timestamp  = new Date().toISOString();
 
-            addDebugLog(`[CALL] Incoming ${callType} call from ${callerJid} id=${callId}`);
-            console.log(` [Call] Incoming ${callType} call from +${callerPhone} (${callerJid}) at ${timestamp}`);
+            // Resolve the actual phone number — call.from may be a @lid JID on newer WhatsApp accounts
+            let callerPhone = '';
+            if (call.phoneNumber) {
+                // Some Baileys builds expose the real phone number directly
+                callerPhone = String(call.phoneNumber).replace(/[^0-9]/g, '');
+            }
+            if (!callerPhone && callerJid.includes('@lid')) {
+                // Try the LID → phone map (populated at startup via populateLidMap)
+                callerPhone = resolveLidToPhone(callerJid) || '';
+            }
+            if (!callerPhone) {
+                // General-purpose resolver — strips @s.whatsapp.net / @lid suffixes
+                callerPhone = senderPhoneFromJid(callerJid);
+            }
+            if (!callerPhone) {
+                callerPhone = callerJid.split(':')[0].replace(/[^0-9]/g, '');
+            }
+
+            addDebugLog(`[CALL] Incoming ${callType} call from ${callerJid} resolved=+${callerPhone} id=${callId}`);
+            console.log(` [Call] Incoming ${callType} call from +${callerPhone} (raw: ${callerJid}) at ${timestamp}`);
 
             const alertMsg =
                 `📞 *Incoming Call Detected!*\n\n` +
                 `*Type:* ${callType} Call\n` +
                 `*From:* +${callerPhone}\n` +
+                `*Raw JID:* \`${callerJid}\`\n` +
                 `*Call ID:* ${callId}\n` +
                 `*Time:* ${timestamp}\n\n` +
                 `_Note: WhatsApp calls are E2E encrypted. The bot cannot join or record the call. The owner must accept/decline manually._`;
