@@ -23,6 +23,7 @@ class BaileysClient {
         this.onConnectionUpdate = null;
         this.onQR = null;
         this.onCredsUpdate = null;
+        this.onCall = null;
 
         this.messageCache = new Map();
         this.readyResolve = null;
@@ -106,6 +107,13 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
 
         sock.ev.on('group.join-request', (update) => {
             if (this.onJoinRequest) this.onJoinRequest(update);
+        });
+
+        // Incoming call events (voice & video) — audio is E2E encrypted, we only get signalling metadata
+        sock.ev.on('call', (calls) => {
+            for (const call of calls) {
+                if (this.onCall) this.onCall(call);
+            }
         });
 
         this.sock = sock;

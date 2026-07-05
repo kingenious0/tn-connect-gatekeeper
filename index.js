@@ -1930,7 +1930,54 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
         const re = new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
         return re.test(lowerText);
     });
-    if (!activeContainsLink && !containsBadWord && !isStatusMention) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP no link+no badword\n'); } catch (e) { } return false; }
+    if (!activeContainsLink && !containsBadWord && !isStatusMention) { try { fs.appendFileSync('_trace.log', 'MOD_SKIP no link+no badword\n'); } catch (e) { }
+        // ──────────────────────────────────────────────────────────────────────────
+        // 🖼️ STRICT ANTI-FLYER / ANTI-IMAGE GUARD (v1.6.3)
+        // Outside market windows, non-admins may NOT post images, videos, or docs.
+        // ──────────────────────────────────────────────────────────────────────────
+        if (!isAdmin) {
+            const rawContent = msg.message ? unwrapMessage(msg.message) : null;
+            const hasMedia = !!(
+                rawContent?.imageMessage ||
+                rawContent?.videoMessage ||
+                rawContent?.stickerMessage ||
+                (rawContent?.documentMessage)
+            );
+            if (hasMedia) {
+                const marketStatus = checkMarketDayWindow();
+                if (!marketStatus.active) {
+                    // Build a human-friendly "next market" hint
+                    let hint = '';
+                    if (marketStatus.when === 'before') {
+                        hint = `The next Market session begins at *${marketStatus.startTime} GMT*.`;
+                    } else {
+                        hint = `The Market session ended at *${marketStatus.endTime} GMT*. Check the timetable for the next one.`;
+                    }
+                    const humanDelay = 800 + Math.floor(Math.random() * 1500);
+                    await delay(humanDelay);
+                    try {
+                        await client.sock.sendMessage(jid, { delete: msg.key });
+                        try { fs.appendFileSync('_trace.log', 'ANTI_FLYER_DELETE_OK\n'); } catch (_) {}
+                    } catch (de) {
+                        try { fs.appendFileSync('_trace.log', 'ANTI_FLYER_DELETE_FAIL err=' + de.message.substring(0, 100) + '\n'); } catch (_) {}
+                    }
+                    const warnText = `🚫 @${senderPhone} Flyers, images & media are only allowed during active *Market Sessions*. ${hint}`;
+                    const now = Date.now();
+                    const lastWarnTime = groupWarningCooldowns.get(jid) || 0;
+                    if (now - lastWarnTime > 30000) {
+                        const mentionsList = [sender];
+                        if (senderPhone) mentionsList.push(senderPhone + '@s.whatsapp.net');
+                        await sendAntiBanMessage(jid, { text: warnText, options: { mentions: mentionsList } });
+                        groupWarningCooldowns.set(jid, now);
+                    }
+                    console.log(` [AntiFlyer] Removed out-of-market media from +${senderPhone} in ${jid}`);
+                    return true;
+                }
+            }
+        }
+        // ──────────────────────────────────────────────────────────────────────────
+        return false;
+    }
     let shouldAct = false;
     if (isStatusMention) { shouldAct = true; }
     else if (isAdmin) { shouldAct = containsBadWord; }
@@ -3336,6 +3383,45 @@ function wireBaileysEvents() {
                 console.log(' [QR] New QR code saved to public/qrcode.png');
             } catch (e) { /* ignore */ }
             console.log(' [QR] Scan the QR code with your WhatsApp (Linked Devices)');
+        }
+    };
+
+    // ==========================================
+    // 📞 INCOMING CALL DETECTION & ALERT (v1.6.3)
+    // ==========================================
+    // WhatsApp calls are E2E encrypted — we cannot intercept or record audio.
+    // But Baileys emits call signalling metadata (offer/ringing/etc.) which we
+    // use to log the event and send an admin alert with caller details.
+    client.onCall = async (call) => {
+        try {
+            // 'offer' = a new incoming call just arrived
+            if (call.status !== 'offer') return;
+
+            const callerJid  = call.from || call.chatId || '';
+            const callerPhone = callerJid.split(':')[0].replace(/[^0-9]/g, '');
+            const callType   = call.isVideo ? '📹 Video' : '📞 Voice';
+            const callId     = call.id || 'unknown';
+            const timestamp  = new Date().toISOString();
+
+            addDebugLog(`[CALL] Incoming ${callType} call from ${callerJid} id=${callId}`);
+            console.log(` [Call] Incoming ${callType} call from +${callerPhone} (${callerJid}) at ${timestamp}`);
+
+            const alertMsg =
+                `📞 *Incoming Call Detected!*\n\n` +
+                `*Type:* ${callType} Call\n` +
+                `*From:* +${callerPhone}\n` +
+                `*Call ID:* ${callId}\n` +
+                `*Time:* ${timestamp}\n\n` +
+                `_Note: WhatsApp calls are E2E encrypted. The bot cannot join or record the call. The owner must accept/decline manually._`;
+
+            // Send to Admin Alerts group if available, else DM the owner
+            const alertTarget = adminAlertsGroupJid || (activeSessionPhone ? activeSessionPhone + '@s.whatsapp.net' : null);
+            if (alertTarget) {
+                await sendAntiBanMessage(alertTarget, { text: alertMsg });
+            }
+        } catch (e) {
+            addDebugLog(`[ERROR] onCall handler: ${e.message}`);
+            console.error(' [Call] Error in call handler:', e.message);
         }
     };
 }
