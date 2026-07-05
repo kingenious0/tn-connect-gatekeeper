@@ -1962,14 +1962,17 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
                     }
                     const warnText = `🚫 @${senderPhone} Flyers, images & media are only allowed during active *Market Sessions*. ${hint}`;
                     const now = Date.now();
-                    const lastWarnTime = groupWarningCooldowns.get(jid) || 0;
-                    if (now - lastWarnTime > 30000) {
+                    const cooldownKey = `media:${jid}:${senderPhone}`;
+                    const lastWarnTime = groupWarningCooldowns.get(cooldownKey) || 0;
+                    if (now - lastWarnTime > 15000) {
                         const mentionsList = [sender];
                         if (senderPhone) mentionsList.push(senderPhone + '@s.whatsapp.net');
                         await sendAntiBanMessage(jid, { text: warnText, options: { mentions: mentionsList } });
-                        groupWarningCooldowns.set(jid, now);
+                        groupWarningCooldowns.set(cooldownKey, now);
                     }
-                    console.log(` [AntiFlyer] Removed out-of-market media from +${senderPhone} in ${jid}`);
+                    const groupObj = cachedGroups.find(g => g.jid === jid);
+                    const groupName = groupObj ? groupObj.subject : jid;
+                    console.log(` [AntiFlyer] Removed out-of-market media from +${senderPhone} in ${groupName}`);
                     return true;
                 }
             }
@@ -2015,10 +2018,14 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
             try { fs.appendFileSync('_trace.log', 'MOD_ALERT_SENT\n'); } catch (e) { }
         } else {
             try { fs.appendFileSync('_trace.log', 'MOD_ALERT_SUPPRESSED_COOLDOWN\n'); } catch (e) { }
-            console.log(` [Moderation] Public warning suppressed for ${jid} due to 30s cooldown.`);
+            const groupObj = cachedGroups.find(g => g.jid === jid);
+            const groupName = groupObj ? groupObj.subject : jid;
+            console.log(` [Moderation] Public warning suppressed for ${groupName} due to 30s cooldown.`);
         }
         
-        console.log(' [Moderation] Removed message from +' + senderPhone + ' in ' + jid);
+        const groupObj = cachedGroups.find(g => g.jid === jid);
+        const groupName = groupObj ? groupObj.subject : jid;
+        console.log(' [Moderation] Removed message from +' + senderPhone + ' in ' + groupName);
     } catch (e) {
         try { fs.appendFileSync('_trace.log', 'MOD_FAILED err=' + e.message.substring(0, 150) + '\n'); } catch (e2) { }
         console.error(' [Moderation] Failed:', e.message);
