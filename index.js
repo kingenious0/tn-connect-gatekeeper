@@ -1946,7 +1946,6 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
             const hasMedia = !!(
                 rawContent?.imageMessage ||
                 rawContent?.videoMessage ||
-                rawContent?.stickerMessage ||
                 (rawContent?.documentMessage)
             );
             if (hasMedia) {
