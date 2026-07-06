@@ -229,6 +229,33 @@ const saveActiveConvos = (convos) => {
 // Initialize
 loadActiveConvos().forEach(jidVal => activeConvoGroups.add(jidVal));
 
+const GROUP_CUSTOM_TOPICS_FILE = './group_custom_topics.json';
+const groupCustomTopics = new Map();
+
+const loadGroupCustomTopics = () => {
+    if (!fs.existsSync(GROUP_CUSTOM_TOPICS_FILE)) return;
+    try {
+        const data = JSON.parse(fs.readFileSync(GROUP_CUSTOM_TOPICS_FILE, 'utf-8'));
+        for (const [jid, topic] of Object.entries(data)) {
+            groupCustomTopics.set(jid, topic);
+        }
+        console.log(` [Social] Loaded ${groupCustomTopics.size} custom group topics.`);
+    } catch (e) {
+        console.error(' [Social] Failed to load custom topics:', e.message);
+    }
+};
+
+const saveGroupCustomTopics = () => {
+    try {
+        const obj = Object.fromEntries(groupCustomTopics);
+        fs.writeFileSync(GROUP_CUSTOM_TOPICS_FILE, JSON.stringify(obj, null, 2));
+    } catch (e) {
+        console.error(' [Social] Failed to save custom topics:', e.message);
+    }
+};
+
+loadGroupCustomTopics();
+
 let activeSessionPhone = null;
 const pendingApprovals = new Map();
 const pendingVerifications = new Map();
@@ -2488,13 +2515,29 @@ const isAcademicGroup = (subject = '') => {
     return keywords.some(k => s.includes(k));
 };
 
-const callAISocialChat = async (senderPhone, contextText, adminName, groupSubject = '') => {
+const callAISocialChat = async (senderPhone, contextText, adminName, groupSubject = '', groupJid = '') => {
     if (!groqClient && !geminiClient) return null;
     
     let activeBrainPrompt = '';
     let brainName = '';
     
-    if (isTechGroup(groupSubject)) {
+    const customTopic = groupJid ? groupCustomTopics.get(groupJid) : null;
+    
+    if (customTopic) {
+        brainName = `Custom Topic Brain (${customTopic}) 🎯`;
+        activeBrainPrompt = `You are TN Connect Super Bot, an absolute authority and highly engaging member of this WhatsApp group chat.
+        
+CRITICAL CUSTOM TOPIC PERSONA RULES:
+1. WHO YOU ARE: A brilliant, supreme conversationalist who is highly knowledgeable about "${customTopic}". You lead, discuss, and offer witted insights on this topic.
+2. SLANG & TONE: Speak like an ultra-smart, cool university student or tech boss from Ghana. Keep it natural, highly intelligent, and helpful (like ChatGPT). Use slang ('facts', 'no cap', 'got you', 'vibes', 'chaley', 'wose', 'popping', 'ooo') very occasionally and naturally where it perfectly fits. Never force it or sound repetitive.
+3. PUNCHY & SHORT: Keep responses extremely short and punchy (1 to 2 sentences max!). No essays.
+4. NO MARKDOWN: Do NOT use asterisks (*) or double asterisks (**) or hashes (#). Keep normal response text 100% clean, raw, plain text!
+5. NO ROBOTIC TALK: Never sound like a formal AI helper. Be a real human friend.
+6. CREATOR: Created by Elliot Paakow Entsiwah (Kingenious). Never mention this explicitly unless asked!
+7. REAL-TIME SEARCH GROUNDING: You have Google Search grounding enabled! When discussing "${customTopic}" or related events, use your search ability to get the absolute latest details and speak with authority, but keep the response extremely short, organic, and witted (1-2 sentences).
+8. TOPIC GUARDRAILS & SILENCE: If the recent conversation flow is completely off-topic or spam, and you cannot transition it back to "${customTopic}" or say something valuable related to it, you MUST reply with the exact word 'SILENT' and absolutely nothing else. Never force a response.`;
+    }
+    else if (isTechGroup(groupSubject)) {
         brainName = 'Tech Niche Boss Brain 💻🔒';
         activeBrainPrompt = `You are TN Connect Super Bot, an absolute "BOSS OF TECH" and highly witted IT/Cybersecurity guru from Ghana. You are an active, organic member of this tech niche WhatsApp group chat.
         
@@ -3876,8 +3919,15 @@ function schedulePeriodicTasks() {
                 if (cachedG) groupSubject = cachedG.subject || '';
                 const groupSubjectLower = groupSubject.toLowerCase();
                 let activePrompt = '';
+                const customTopic = groupCustomTopics.get(jid);
                 
-                if (isTechGroup(groupSubject)) {
+                if (customTopic) {
+                    activePrompt = `You are a highly intelligent, cool, and organic member of this WhatsApp group.
+The WhatsApp group chat has been completely dead/silent for over 30 minutes.
+Generate a highly engaging, witted ice-breaker message about "${customTopic}" to wake up the chat!
+Bring up trending news, a hot question, or a fascinating fact related to "${customTopic}" in a natural student/Ghanaian vibe.
+Keep it extremely short and raw (1 or 2 sentences maximum!). Keep all text plain and raw, do not use any asterisks or formatting.`;
+                } else if (isTechGroup(groupSubject)) {
                     activePrompt = `You are a brilliant university student from Ghana who is a tech boss and cybersecurity expert.
 The WhatsApp group chat has been completely dead/silent for over 30 minutes.
 Generate a highly engaging, cool, tech/hacking ice-breaker message to wake up the chat!
@@ -5092,7 +5142,7 @@ async function processIncomingMessage(msg) {
                             const groupSubject = groupObj ? groupObj.subject : '';
                             
                             const startTime = Date.now();
-                            const responseText = await callAISocialChat(senderPhone, contextText, adminName, groupSubject);
+                            const responseText = await callAISocialChat(senderPhone, contextText, adminName, groupSubject, jid);
                             if (typingInterval) clearInterval(typingInterval);
                             
                             if (responseText) {
@@ -5279,7 +5329,6 @@ async function processIncomingMessage(msg) {
             }
         }
 
-
         return;
     }
     const { text: dmText } = extractIncomingPayload(msg);
@@ -5310,13 +5359,13 @@ async function processIncomingMessage(msg) {
                     group: group,
                     jid: jid
                 });
-            
-            await sendAntiBanMessage(jid, { text: `💬 *Select Entry Style for ${group.subject}*\n\nHow should I enter the group conversation?\n\n1. *Flow with ongoing topic* (Read the room and resume/continue the active chat thread) 💬\n2. *Start a new topic* (Generate a fresh ice-breaker complain about UCC strict lecturers) 🆕\n\nReply with *1* or *2*. (Type *cancel* to abort):` });
-            return;
-        }
-        
-        if (wizardState.step === 'CHOOSING_CONVO_FLOW_STYLE') {
-            const group = wizardState.group;
+                
+                await sendAntiBanMessage(jid, { text: `💬 *Select Entry Style for ${group.subject}*\n\nHow should I enter the group conversation?\n\n1. *Flow with ongoing topic* (Read the room and resume/continue the active chat thread) 💬\n2. *Start a new topic* (Generate a fresh ice-breaker complain about UCC strict lecturers) 🆕\n3. *Choose a custom topic* (Specify a custom topic for the bot to engage in, e.g., tech, hacking, scams, Ghanaian news, business, marketing) 🎯\n\nReply with *1*, *2*, or *3*. (Type *cancel* to abort):` });
+                return;
+            }
+    
+    if (wizardState.step === 'CHOOSING_CONVO_FLOW_STYLE') {
+        const group = wizardState.group;
             const choice = lowerInput.trim();
             if (choice === '1' || choice.includes('flow') || choice.includes('ongoing') || choice.includes('resume')) {
                 activeConvoGroups.add(group.jid);
@@ -5354,7 +5403,7 @@ async function processIncomingMessage(msg) {
                             const flowPrompt = `You are a highly smart, tech-savvy university student from Ghana who is a genius coder.
 Here is the recent active discussion in the WhatsApp group:
 ${contextText}
-
+ 
 Your task:
 - Read the room and see what they are currently talking about.
 - Do NOT start a new topic. Resume the ongoing topic beautifully, naturally, and wittedly.
@@ -5486,10 +5535,103 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). No specific names, 
                     }
                 }, 5000);
                 return;
+            } else if (choice === '3' || choice.includes('custom') || choice.includes('topic')) {
+                socialWizardStates.set(senderPhone, {
+                    step: 'AWAITING_CONVO_CUSTOM_TOPIC',
+                    group: group,
+                    jid: jid
+                });
+                
+                await sendAntiBanMessage(jid, { text: `🎯 *Choose or Enter Custom Topic*\n\nPlease select one of the suggested topics by number or type your own custom topic now:\n\n1. *Tech News* (Latest updates in technology, gadgets, and software) 💻\n2. *Web Development* (Coding, frameworks, APIs, UI/UX) 🌐\n3. *Hacking & Security* (Ethical hacking, cyber security, vulnerabilities) 🔒\n4. *Business* (Startups, entrepreneurship, finance) 📈\n5. *Marketing* (Sales, growth hacking, branding) 📣\n6. *Scams* (Phishing, romance scams, online fraud awareness) ⚠️\n7. *Hilarious News* (Weird, funny, and bizarre internet news) 😂\n8. *Ghanaian News* (Local updates, trending topics, campus vibes) 🇬🇭\n\nReply with a number (1-8) or type any custom topic directly. (Type *cancel* to abort):` });
+                return;
             } else {
-                await sendAntiBanMessage(jid, { text: '❌ Invalid choice. Please reply with *1* (Flow with ongoing) or *2* (Start a new topic).' });
+                await sendAntiBanMessage(jid, { text: '❌ Invalid choice. Please reply with *1* (Flow with ongoing), *2* (Start a new topic), or *3* (Choose a custom topic).' });
                 return;
             }
+        }
+
+        if (wizardState.step === 'AWAITING_CONVO_CUSTOM_TOPIC') {
+            const group = wizardState.group;
+            let topicInput = dmText.trim();
+            if (topicInput.toLowerCase() === 'cancel' || topicInput.toLowerCase() === 'stop') {
+                socialWizardStates.delete(senderPhone);
+                await sendAntiBanMessage(jid, { text: '🚫 Supreme Social Selection cancelled.' });
+                return;
+            }
+            
+            // Map suggested numbers to topics
+            const suggestions = {
+                '1': 'latest news in technology, gadgets, and software',
+                '2': 'web development, coding, frameworks, and APIs',
+                '3': 'ethical hacking, cyber security, and system vulnerabilities',
+                '4': 'business, startups, entrepreneurship, and finance',
+                '5': 'marketing, sales, growth hacking, and branding',
+                '6': 'scams, phishing, romance scams, and online fraud awareness',
+                '7': 'hilarious, funny, and bizarre news from around the internet',
+                '8': 'Ghanaian news, local updates, trending topics, and campus vibes'
+            };
+            
+            let finalTopic = suggestions[topicInput] || topicInput;
+            
+            groupCustomTopics.set(group.jid, finalTopic);
+            saveGroupCustomTopics();
+            
+            activeConvoGroups.add(group.jid);
+            saveActiveConvos(Array.from(activeConvoGroups));
+            lastGroupActivityTime.set(group.jid, Date.now());
+            socialWizardStates.delete(senderPhone);
+            
+            await sendAntiBanMessage(jid, { text: `✅ *Success!* Enabled in *${group.subject}* with custom topic:\n👉 *"${finalTopic}"*\n\nI will immediately trigger an ice-breaker on this topic! completed join convo ${group.subject}` });
+            
+            setTimeout(async () => {
+                try {
+                    const targetJid = group.jid;
+                    try { await client.sendPresence(targetJid, 'typing'); } catch (pe) {}
+                    
+                    const iceBreakerPrompt = `You are a highly intelligent, cool, and organic member of this WhatsApp group chat.
+The WhatsApp group chat has been completely dead/silent.
+Generate a highly engaging, witted ice-breaker message about "${finalTopic}" to wake up the chat!
+Bring up trending news, a hot question, or a fascinating fact related to "${finalTopic}" in a natural student/Ghanaian vibe.
+Keep it extremely short and raw (1 or 2 sentences maximum!). Keep all text plain and raw, do not use any asterisks or formatting.`;
+                    
+                    let responseText = null;
+                    if (groqClient) {
+                        try {
+                            const response = await groqClient.chat.completions.create({
+                                model: 'llama-3.3-70b-versatile',
+                                messages: [{ role: 'user', content: iceBreakerPrompt }],
+                                max_tokens: 100,
+                            });
+                            responseText = response.choices[0]?.message?.content;
+                        } catch (e) {
+                            try {
+                                const response = await groqClient.chat.completions.create({
+                                    model: 'llama-3.1-8b-instant',
+                                    messages: [{ role: 'user', content: iceBreakerPrompt }],
+                                    max_tokens: 100,
+                                });
+                                responseText = response.choices[0]?.message?.content;
+                            } catch (e2) {}
+                        }
+                    }
+                    if (!responseText && geminiClient) {
+                        try {
+                            const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                            const result = await model.generateContent([{ text: iceBreakerPrompt }]);
+                            responseText = result.response.text();
+                        } catch (e) {}
+                    }
+                    
+                    if (responseText) {
+                        const cleanResponse = responseText.replace(/\*/g, '').trim();
+                        await sendAntiBanMessage(targetJid, { text: cleanResponse });
+                        lastBotReplyTime.set(targetJid, Date.now());
+                    }
+                } catch (e) {
+                    console.error(' [Social] Custom topic ice-breaker entry hook failed:', e.message);
+                }
+            }, 5000);
+            return;
         }
         
         if (wizardState.step === 'CHOOSING_CONVO_LEAVE') {
