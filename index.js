@@ -190,8 +190,14 @@ let antiban = null;
 
 // Global variables
 const ACTIVE_CONVOS_FILE = './active_convos.json';
+const DEACTIVATED_ALERTS_FILE = './deactivated_alerts.json';
+const DEACTIVATED_COMMANDS_FILE = './deactivated_commands.json';
+
 const activeConvoGroups = new Set();
 const socialWizardStates = new Map();
+
+const deactivatedAlerts = new Set();
+const deactivatedCommands = new Set();
 
 const loadActiveConvos = () => {
     if (!fs.existsSync(ACTIVE_CONVOS_FILE)) return [];
@@ -227,8 +233,78 @@ const saveActiveConvos = (convos) => {
     }
 };
 
+const loadDeactivatedAlerts = () => {
+    if (!fs.existsSync(DEACTIVATED_ALERTS_FILE)) return [];
+    try {
+        const data = JSON.parse(fs.readFileSync(DEACTIVATED_ALERTS_FILE, 'utf-8'));
+        return Array.isArray(data) ? data : [];
+    } catch {
+        return [];
+    }
+};
+
+const saveDeactivatedAlerts = (alerts) => {
+    try {
+        fs.writeFileSync(DEACTIVATED_ALERTS_FILE, JSON.stringify(alerts, null, 2));
+    } catch (e) {
+        console.error(' [Alerts] Failed to save deactivated alerts:', e.message);
+    }
+    if (supabase) {
+        try {
+            supabase.from('gatekeeper_sessions').upsert({
+                phone: '_config_deactivated_alerts',
+                admin_name: 'config',
+                selected_groups: [],
+                discovered_groups: alerts,
+                files: [],
+                updated_at: new Date().toISOString()
+            }).then(() => {
+                console.log(` [Alerts] Synchronized deactivated alerts list to Supabase.`);
+            }).catch(se => {
+                console.warn(' [Alerts] Failed to sync deactivated alerts list to Supabase:', se.message);
+            });
+        } catch (_) {}
+    }
+};
+
+const loadDeactivatedCommands = () => {
+    if (!fs.existsSync(DEACTIVATED_COMMANDS_FILE)) return [];
+    try {
+        const data = JSON.parse(fs.readFileSync(DEACTIVATED_COMMANDS_FILE, 'utf-8'));
+        return Array.isArray(data) ? data : [];
+    } catch {
+        return [];
+    }
+};
+
+const saveDeactivatedCommands = (commands) => {
+    try {
+        fs.writeFileSync(DEACTIVATED_COMMANDS_FILE, JSON.stringify(commands, null, 2));
+    } catch (e) {
+        console.error(' [Commands] Failed to save deactivated commands:', e.message);
+    }
+    if (supabase) {
+        try {
+            supabase.from('gatekeeper_sessions').upsert({
+                phone: '_config_deactivated_commands',
+                admin_name: 'config',
+                selected_groups: [],
+                discovered_groups: commands,
+                files: [],
+                updated_at: new Date().toISOString()
+            }).then(() => {
+                console.log(` [Commands] Synchronized deactivated commands list to Supabase.`);
+            }).catch(se => {
+                console.warn(' [Commands] Failed to sync deactivated commands list to Supabase:', se.message);
+            });
+        } catch (_) {}
+    }
+};
+
 // Initialize
 loadActiveConvos().forEach(jidVal => activeConvoGroups.add(jidVal));
+loadDeactivatedAlerts().forEach(val => deactivatedAlerts.add(val));
+loadDeactivatedCommands().forEach(val => deactivatedCommands.add(val));
 
 const GROUP_CUSTOM_TOPICS_FILE = './group_custom_topics.json';
 const groupCustomTopics = new Map();
@@ -2752,6 +2828,38 @@ const loadActiveConvosFromSupabase = async () => {
     }
 };
 
+const loadDeactivatedAlertsFromSupabase = async () => {
+    if (!supabase) return;
+    try {
+        const { data } = await supabase.from('gatekeeper_sessions').select('discovered_groups').eq('phone', '_config_deactivated_alerts').maybeSingle();
+        if (data?.discovered_groups && Array.isArray(data.discovered_groups)) {
+            deactivatedAlerts.clear();
+            data.discovered_groups.forEach(val => {
+                if (val) deactivatedAlerts.add(val);
+            });
+            console.log(' [Alerts] Restored ' + deactivatedAlerts.size + ' deactivated alerts from Supabase.');
+        }
+    } catch (e) {
+        console.warn(' [Alerts] Failed to restore deactivated alerts from Supabase:', e.message);
+    }
+};
+
+const loadDeactivatedCommandsFromSupabase = async () => {
+    if (!supabase) return;
+    try {
+        const { data } = await supabase.from('gatekeeper_sessions').select('discovered_groups').eq('phone', '_config_deactivated_commands').maybeSingle();
+        if (data?.discovered_groups && Array.isArray(data.discovered_groups)) {
+            deactivatedCommands.clear();
+            data.discovered_groups.forEach(val => {
+                if (val) deactivatedCommands.add(val);
+            });
+            console.log(' [Commands] Restored ' + deactivatedCommands.size + ' deactivated commands from Supabase.');
+        }
+    } catch (e) {
+        console.warn(' [Commands] Failed to restore deactivated commands from Supabase:', e.message);
+    }
+};
+
 const restoreSessionMetaFromSupabase = async () => {
     if (!supabase) return;
     try {
@@ -2804,14 +2912,26 @@ const isGroupLockIntent = (lowerText) => {
 
 const handleGroupLockDM = async (jid, senderPhone, textInput, adminProfile) => {
     const lower = (textInput || '').trim().toLowerCase();
+    const firstWord = lower.split(/\s+/)[0];
+    const isLock = firstWord === 'lock' || firstWord === 'locks';
+    const state = groupLockStates.get(senderPhone);
+    const action = state ? state.action : (isLock ? 'lock' : 'unlock');
+    
+    if (deactivatedCommands.has(action)) {
+        if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
+            groupLockStates.delete(senderPhone);
+            await sendAntiBanMessage(jid, { text: `🚫 ${action === 'lock' ? 'Lock' : 'Unlock'} cancelled.` });
+            return true;
+        }
+        await sendAntiBanMessage(jid, { text: `❌ *Command Disabled:* The "${action}" command has been deactivated by administrators.` });
+        return true;
+    }
+
     if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
         groupLockStates.delete(senderPhone);
         await sendAntiBanMessage(jid, { text: '🚫 Lock/unlock cancelled.' });
         return true;
     }
-    const firstWord = lower.split(/\s+/)[0];
-    const isLock = firstWord === 'lock' || firstWord === 'locks';
-    const state = groupLockStates.get(senderPhone);
     if (state && state.jid && state.jid !== jid) {
         return false;
     }
@@ -2886,6 +3006,17 @@ const handleGroupLockDM = async (jid, senderPhone, textInput, adminProfile) => {
 
 const handleAdminAddUserDM = async (jid, senderPhone, textInput, adminProfile) => {
     const lower = (textInput || '').trim().toLowerCase();
+    
+    if (deactivatedCommands.has('add user')) {
+        adminAddUserStates.delete(senderPhone);
+        if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
+            await sendAntiBanMessage(jid, { text: '🚫 Add user cancelled.' });
+            return true;
+        }
+        await sendAntiBanMessage(jid, { text: '❌ *Command Disabled:* The "add user" command has been deactivated by administrators.' });
+        return true;
+    }
+
     if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
         adminAddUserStates.delete(senderPhone);
         await sendAntiBanMessage(jid, { text: '🚫 Add user cancelled.' });
@@ -2982,11 +3113,23 @@ const handleAdminAddUserDM = async (jid, senderPhone, textInput, adminProfile) =
 
 const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile, rawSender, originalMsg) => {
     const activeState = adminBroadcastStates.get(senderPhone);
+    const lower = (textInput || '').trim().toLowerCase();
+    
+    if (deactivatedCommands.has('broadcast')) {
+        if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
+            adminBroadcastStates.delete(senderPhone);
+            adminRegistrationStates.delete(senderPhone);
+            await sendAntiBanMessage(jid, { text: '🚫 Broadcast cancelled.' });
+            return true;
+        }
+        await sendAntiBanMessage(jid, { text: '❌ *Command Disabled:* The "broadcast" command has been deactivated by administrators.' });
+        return true;
+    }
+
     if (activeState && activeState.jid && activeState.jid !== jid) {
         return false;
     }
     console.log(' [Broadcast] ' + (jid.endsWith('@g.us') ? 'Group' : 'DM') + ' from ' + senderPhone + ': "' + (textInput || '').substring(0, 60) + '" state=' + (activeState ? activeState.step : 'none'));
-    const lower = (textInput || '').trim().toLowerCase();
     if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
         adminBroadcastStates.delete(senderPhone);
         adminRegistrationStates.delete(senderPhone);
@@ -3811,6 +3954,11 @@ const checkTimetableAlerts = async () => {
     for (const item of WEEKLY_TIMETABLE) {
         if (item.day !== day) continue;
         
+        // Skip if this timetable alert type is deactivated
+        if (deactivatedAlerts.has(item.type)) {
+            continue;
+        }
+        
         const [sHour, sMin] = item.time.split(':').map(Number);
         
         if (item.type === 'all_day_morning') {
@@ -4081,6 +4229,163 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
     if (!cleanText) return false;
     
     const lower = cleanText.toLowerCase();
+    
+    // ==========================================================
+    // Activation / Deactivation of Alerts and Commands
+    // ==========================================================
+    const alertAliases = {
+        'niche calls': 'niche_calls',
+        'niche_calls': 'niche_calls',
+        'niche call': 'niche_calls',
+        'nichemarket': 'niche_market',
+        'niche market': 'niche_market',
+        'niche_market': 'niche_market',
+        'generalmarket': 'general_market',
+        'general market': 'general_market',
+        'general_market': 'general_market',
+        'morning': 'all_day_morning',
+        'morning reminders': 'all_day_morning',
+        'morning reminder': 'all_day_morning',
+        'all_day_morning': 'all_day_morning',
+        'all day morning': 'all_day_morning'
+    };
+
+    const alertDetails = {
+        'niche_calls': 'WhatsApp Calls within chosen Niche Groups 📞',
+        'niche_market': 'Niche Market session alerts 🏪',
+        'general_market': 'General Market session alerts 🏪',
+        'all_day_morning': 'Morning reminders 📅'
+    };
+
+    const validCommandsList = [
+        'lock', 'unlock', 'broadcast', 'leave', 'promote', 'demote', 
+        'filter', 'convo', 'join convo', 'leave convo', 'antilink', 
+        'pause', 'resume', 'add user', 'add admin', 'remove admin'
+    ];
+
+    const toggleAlertRegex = /^(deactivate|disable|activate|enable)\s+alerts?\s+(.+)$/i;
+    const toggleAlertMatch = lower.match(toggleAlertRegex);
+    if (toggleAlertMatch) {
+        const action = toggleAlertMatch[1].toLowerCase();
+        const isDeactivate = action === 'deactivate' || action === 'disable';
+        const rawAlert = toggleAlertMatch[2].trim().toLowerCase();
+        const alertType = alertAliases[rawAlert];
+
+        if (!alertType) {
+            await sendAntiBanMessage(jid, { text: `❌ Unknown alert type: *"${rawAlert}"*.\n\n*Valid Alert Types:*\n• niche_calls\n• niche_market\n• general_market\n• all_day_morning` });
+            return true;
+        }
+
+        if (isDeactivate) {
+            deactivatedAlerts.add(alertType);
+        } else {
+            deactivatedAlerts.delete(alertType);
+        }
+        saveDeactivatedAlerts(Array.from(deactivatedAlerts));
+
+        const emoji = isDeactivate ? '❌' : '✅';
+        const stateWord = isDeactivate ? 'DEACTIVATED (muted)' : 'ACTIVATED (active)';
+        await sendAntiBanMessage(jid, { text: `${emoji} Alert type *${alertType}* has been successfully *${stateWord}*.\nDescription: ${alertDetails[alertType]}` });
+        return true;
+    }
+
+    const toggleCmdRegex = /^(deactivate|disable|activate|enable)\s+commands?\s+(.+)$/i;
+    const toggleCmdMatch = lower.match(toggleCmdRegex);
+    if (toggleCmdMatch) {
+        const action = toggleCmdMatch[1].toLowerCase();
+        const isDeactivate = action === 'deactivate' || action === 'disable';
+        const cmdName = toggleCmdMatch[2].trim().toLowerCase();
+
+        if (!validCommandsList.includes(cmdName)) {
+            await sendAntiBanMessage(jid, { text: `❌ Unknown command: *"${cmdName}"*.\n\n*Valid Commands:*\n${validCommandsList.map(c => `• ${c}`).join('\n')}` });
+            return true;
+        }
+
+        // Prevent disabling control commands
+        if (cmdName.includes('deactivate') || cmdName.includes('disable') || cmdName.includes('enable') || cmdName.includes('activate')) {
+            await sendAntiBanMessage(jid, { text: `❌ For security reasons, you cannot deactivate control commands.` });
+            return true;
+        }
+
+        if (isDeactivate) {
+            deactivatedCommands.add(cmdName);
+        } else {
+            deactivatedCommands.delete(cmdName);
+        }
+        saveDeactivatedCommands(Array.from(deactivatedCommands));
+
+        const emoji = isDeactivate ? '❌' : '✅';
+        const stateWord = isDeactivate ? 'DEACTIVATED (disabled)' : 'ACTIVATED (enabled)';
+        await sendAntiBanMessage(jid, { text: `${emoji} Command *${cmdName}* has been successfully *${stateWord}*.` });
+        return true;
+    }
+
+    if (lower === 'alert status' || lower === 'alert statuses' || lower === 'list alerts') {
+        const rows = Object.entries(alertDetails).map(([key, desc]) => {
+            const isDeactivated = deactivatedAlerts.has(key);
+            const statusEmoji = isDeactivated ? '❌ DEACTIVATED' : '✅ ACTIVE';
+            return `• *${key}*: ${statusEmoji}\n  _${desc}_`;
+        });
+        await sendAntiBanMessage(jid, { text: `🔔 *TN Connect Timetable Alert Config*\n\n${rows.join('\n\n')}` });
+        return true;
+    }
+
+    if (lower === 'command status' || lower === 'command statuses' || lower === 'list commands' || lower === 'deactivated commands') {
+        const rows = validCommandsList.map(cmd => {
+            const isDeactivated = deactivatedCommands.has(cmd);
+            const statusEmoji = isDeactivated ? '❌ DEACTIVATED' : '✅ ACTIVE';
+            return `• *${cmd}*: ${statusEmoji}`;
+        });
+        await sendAntiBanMessage(jid, { text: `🛠️ *TN Connect Command Config*\n\n${rows.join('\n')}` });
+        return true;
+    }
+    
+    // Command guard check: classify the incoming command and check if it's deactivated
+    let detectedCmd = null;
+    if (lower.startsWith('lock')) {
+        detectedCmd = 'lock';
+    } else if (lower.startsWith('unlock')) {
+        detectedCmd = 'unlock';
+    } else if (lower.startsWith('broadcast') || lower.startsWith('announce to') || lower.startsWith('send broadcast')) {
+        detectedCmd = 'broadcast';
+    } else if (lower.startsWith('leave') || lower.startsWith('exit')) {
+        detectedCmd = 'leave';
+    } else if (lower.startsWith('promote')) {
+        detectedCmd = 'promote';
+    } else if (lower.startsWith('demote')) {
+        detectedCmd = 'demote';
+    } else if (lower === 'filter') {
+        detectedCmd = 'filter';
+    } else if (lower.startsWith('join convo') || lower.startsWith('join conversation')) {
+        detectedCmd = 'join convo';
+    } else if (lower.startsWith('leave convo') || lower.startsWith('leave conversation')) {
+        detectedCmd = 'leave convo';
+    } else if (lower.startsWith('anti link') || lower.startsWith('antilink')) {
+        detectedCmd = 'antilink';
+    } else if (lower.startsWith('pause')) {
+        detectedCmd = 'pause';
+    } else if (lower.startsWith('resume')) {
+        detectedCmd = 'resume';
+    } else if (lower === 'add user' || lower === 'add member' || lower === 'add contact' || lower === 'add participant') {
+        detectedCmd = 'add user';
+    } else if (lower.startsWith('add admin') || lower.startsWith('register admin') || lower.startsWith('add to roster')) {
+        detectedCmd = 'add admin';
+    } else if (lower.startsWith('remove admin') || lower.startsWith('delete admin') || lower.startsWith('remove from roster')) {
+        detectedCmd = 'remove admin';
+    } else if (lower === 'timetable' || lower === 'schedule' || lower === 'weekly timetable' || lower === 'weekly schedule') {
+        detectedCmd = 'timetable';
+    } else if (lower === 'group statuses' || lower === 'group status' || lower === 'check locks' || lower === 'lock status' || lower === 'locks') {
+        detectedCmd = 'locks';
+    } else if (lower === 'list groups' || lower === 'show groups' || lower === 'groups list' || lower === 'groups') {
+        detectedCmd = 'groups';
+    }
+
+    if (detectedCmd) {
+        if (deactivatedCommands.has(detectedCmd) || (detectedCmd === 'join convo' && deactivatedCommands.has('convo')) || (detectedCmd === 'leave convo' && deactivatedCommands.has('convo'))) {
+            await sendAntiBanMessage(jid, { text: `❌ *Command Disabled:* The command "${detectedCmd}" has been deactivated by administrators.` });
+            return true;
+        }
+    }
     
     // 1. Lock/Unlock all groups except specific ones
     const exceptRegex = /^(lock|unlock)\s+all\s+(?:the\s+)?groups?\s+except\s+(.+)$/i;
@@ -4972,6 +5277,19 @@ const isMessageAddressingBot = (msg, payload) => {
     if (!payload || !payload.text) return false;
     const cleanText = payload.text.trim().toLowerCase();
     
+    const contextInfo = msg.message?.extendedTextMessage?.contextInfo || {};
+    const mentions = contextInfo.mentionedJid || [];
+    
+    // Ignore mass mentions / tag-all features to prevent bot from chiming in unwantedly.
+    // If the bot is mentioned/tagged alongside other participants (mentions.length > 1), ignore it.
+    if (cleanText.includes('@all') || 
+        cleanText.includes('@everyone') || 
+        cleanText.includes('@tagall') || 
+        cleanText.includes('@members') || 
+        mentions.length > 1) {
+        return false;
+    }
+    
     // 1. Check if it starts with bot name / prefix (e.g. "bot...", "super bot...", "gatekeeper...") with optional greeting prefixes
     if (/^(?:(?:hey|hi|hello|yo|please|dear|eh|eii|charley|chaley)\s+)?(?:bot|super\s*bot|gatekeeper|assistant)\b/i.test(cleanText)) return true;
     
@@ -4983,7 +5301,7 @@ const isMessageAddressingBot = (msg, payload) => {
     if (/@(tn\s*connect|super\s*bot|gatekeeper|assistant)\b/i.test(cleanText)) return true;
     
     // 4. Check if it's a quote reply to the bot's own message
-    const quotedParticipant = msg.message?.extendedTextMessage?.contextInfo?.participant || '';
+    const quotedParticipant = contextInfo.participant || '';
     if (quotedParticipant) {
         const quotedPhone = senderPhoneFromJid(quotedParticipant);
         if (botPhone && quotedPhone === botPhone) return true;
@@ -4994,8 +5312,6 @@ const isMessageAddressingBot = (msg, payload) => {
     const myLid = client.sock?.user?.lid;
     const cleanMyJid = myJid ? myJid.split(':')[0].replace(/[^0-9]/g, '') : '';
     const cleanMyLid = myLid ? myLid.split(':')[0].replace(/[^0-9]/g, '') : '';
-    const contextInfo = msg.message?.extendedTextMessage?.contextInfo || {};
-    const mentions = contextInfo.mentionedJid || [];
     const isBotTagged = mentions.some(m => m.includes(cleanMyJid) || (cleanMyLid && m.includes(cleanMyLid)));
     if (isBotTagged) return true;
     
@@ -5358,10 +5674,22 @@ async function processIncomingMessage(msg) {
     // Supreme Social Convo selection response
     if (dmText && socialWizardStates.has(senderPhone)) {
         const wizardState = socialWizardStates.get(senderPhone);
+        const lowerInput = dmText.trim().toLowerCase();
+        
+        const action = wizardState.step.includes('JOIN') ? 'join convo' : 'leave convo';
+        if (deactivatedCommands.has(action) || deactivatedCommands.has('convo')) {
+            socialWizardStates.delete(senderPhone);
+            if (lowerInput === 'cancel' || lowerInput === 'stop') {
+                await sendAntiBanMessage(jid, { text: '🚫 Supreme Social Selection cancelled.' });
+                return;
+            }
+            await sendAntiBanMessage(jid, { text: `❌ *Command Disabled:* The "${action}" command has been deactivated by administrators.` });
+            return;
+        }
+
         if (wizardState.jid && wizardState.jid !== jid) {
             // Ignore - let it fall through naturally!
         } else {
-            const lowerInput = dmText.trim().toLowerCase();
             
             if (lowerInput === 'cancel' || lowerInput === 'stop') {
                 socialWizardStates.delete(senderPhone);
@@ -6490,6 +6818,8 @@ server.listen(PORT, async () => {
     await refreshDbAdminCache().catch(() => {});
     await loadBroadcastWhitelistFromSupabase();
     await loadActiveConvosFromSupabase();
+    await loadDeactivatedAlertsFromSupabase();
+    await loadDeactivatedCommandsFromSupabase();
     await loadWarnedMembers();
     antiLinkEnabled = loadAntiLink();
     pausedUntil = loadPauseState();
