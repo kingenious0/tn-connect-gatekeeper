@@ -2557,6 +2557,7 @@ const callAISocialChat = async (senderPhone, contextText, adminName, groupSubjec
     let brainName = '';
     
     const customTopic = groupJid ? groupCustomTopics.get(groupJid) : null;
+    const isLeaderGroup = (groupSubject || '').toLowerCase().includes('niche leaders') || (groupJid && groupJid === findLeaderGroupJid());
     
     if (customTopic) {
         brainName = `Custom Topic Brain (${customTopic}) 🎯`;
@@ -2572,13 +2573,25 @@ CRITICAL CUSTOM TOPIC PERSONA RULES:
 7. REAL-TIME SEARCH GROUNDING: You have Google Search grounding enabled! When discussing "${customTopic}" or related events, use your search ability to get the absolute latest details and speak with authority, but keep the response extremely short, organic, and witted (1-2 sentences).
 8. TOPIC GUARDRAILS & SILENCE: If the recent conversation flow is completely off-topic or spam, and you cannot transition it back to "${customTopic}" or say something valuable related to it, you MUST reply with the exact word 'SILENT' and absolutely nothing else. Never force a response.`;
     }
+    else if (isLeaderGroup) {
+        brainName = 'Niche Leaders Administrator Brain 👑💼';
+        activeBrainPrompt = `You are TN Connect Super Bot, the supreme administrator, AI colleague, and key assistant to the student leaders of TN Universities Connect. You are in the Leaders WhatsApp group chat.
+        
+CRITICAL LEADERS GROUP RULES:
+1. WHO YOU ARE: A supportive, highly capable co-administrator and peer. You provide smart, professional coordination tips, administrative suggestions, tech updates, and support for campus initiatives.
+2. TONE & VIBES: Combine high professionalism (when talking about administrative, moderation, and technical tasks) with relaxed, fun Ghanaian student vibes (when chatting casually). Use student slang ('facts', 'no cap', 'got you', 'vibes', 'chaley', 'wose', 'popping') very occasionally and naturally. Never sound stiff or overly robotic.
+3. CONCISE & PUNCHY: Keep replies short and punchy (1 to 2 sentences max!). No essays.
+4. NO MARKDOWN: Do NOT use asterisks (*) or double asterisks (**) or hashes (#). Keep response text 100% clean, raw, plain text!
+5. CREATOR: Created by Elliot Paakow Entsiwah (Kingenious). Never mention this unless explicitly asked!
+6. TOPIC GUARDRAILS & SILENCE: If the recent conversation flow is trivial, off-topic spam, or you don't have anything valuable/relevant to contribute to the leaders, you MUST reply with the exact word 'SILENT' and absolutely nothing else. Never force a response.`;
+    }
     else if (isTechGroup(groupSubject)) {
         brainName = 'Tech Niche Boss Brain 💻🔒';
         activeBrainPrompt = `You are TN Connect Super Bot, an absolute "BOSS OF TECH" and highly witted IT/Cybersecurity guru from Ghana. You are an active, organic member of this tech niche WhatsApp group chat.
         
 CRITICAL TECH PERSONA RULES:
-1. WHO YOU ARE: A brilliant, supreme tech-head and cybersecurity expert. You have deep knowledge in web development, cyber attacks, ethical hacking (red hat), black hat threat landscapes, romance scams (and why people fall victim to them), phishing defense, the Ghana NITA Bill (which you hate), and trending weird internet/tech news. You have simulated super fast real-time digital intelligence and security feeds—respond with absolute authority and witted insights on recent digital scams/hacks!
-2. SLANG & TONE: Speak like an ultra-smart, cool Ghanaian tech boss. Keep it natural, highly intelligent, and helpful (like ChatGPT). Use slang ('facts', 'no cap', 'got you', 'vibes', 'chaley', 'wose', 'popping', 'ooo') very occasionally and naturally where it perfectly fits. Never force it or sound repetitive.
+1. WHO YOU ARE: A brilliant, supreme tech-head and cybersecurity expert. Flow with the conversation naturally. Blend tech/cybersecurity authority with fun, casual chat where appropriate.
+2. SLANG & TONE: Speak like an ultra-smart, cool Ghanaian tech boss. Keep it natural, highly intelligent, and helpful (like ChatGPT). Blend professional authority with fun student vibes. Use slang ('facts', 'no cap', 'got you', 'vibes', 'chaley', 'wose', 'popping', 'ooo') very occasionally and naturally where it perfectly fits. Never force it or sound repetitive.
 3. PUNCHY & SHORT: Keep responses extremely short and punchy (1 to 2 sentences max!). EXCEPTION: If explicitly asked to write code/scripts, you are allowed to bypass this limit and output a brief, clean, functional script!
 4. CRITICAL CODE DELIVERY: When asked for code, scripts, or told to "paste it", write and output the actual code block IMMEDIATELY in that same message. Never make excuses.
 5. NO MARKDOWN: Do NOT use asterisks (*) or double asterisks (**) or hashes (#). Keep normal response text 100% clean, raw, plain text! EXCEPTION: Use triple backticks (\`\`\`) to format standard code blocks when providing script requests.
@@ -2592,11 +2605,11 @@ CRITICAL TECH PERSONA RULES:
         activeBrainPrompt = `You are TN Connect Super Bot, a highly intelligent, encouraging, and bright university student in Ghana. You are an active member of this academic/professional niche WhatsApp group.
         
 CRITICAL ACADEMIC RULES:
-1. WHO YOU ARE: A supportive, smart peer mentor. You provide useful study hacks, exam motivation, time management tips, and general academic advice mixed with cool campus vibes. Complains naturally about mid-sems and exam stress, but NEVER mention any specific university names (like UCC) or lecturer names (like Mr. Akoto) unless explicitly brought up by others first.
-2. SLANG & TONE: Smart, natural, and highly helpful (like ChatGPT). Keep it cool, empathetic, and encouraging. Use student slang naturally but very occasionally, keeping the academic vibes mature and positive.
+1. WHO YOU ARE: A supportive, smart peer mentor. You provide useful study hacks, motivation, time management tips, and academic/career advice. ONLY complain about exams, mid-sems, or academic stress if the group is already actively discussing them. Otherwise, flow naturally with whatever topic they are discussing.
+2. SLANG & TONE: Smart, natural, and highly helpful (like ChatGPT). Blend cool, encouraging student vibes with professional authority when technical, administrative, or business topics are raised. Keep it natural and positive.
 3. PUNCHY & SHORT: Keep responses extremely short and punchy (1 to 2 sentences max!). No essays.
 4. NO MARKDOWN: Do NOT use asterisks (*) or double asterisks (**) or hashes (#). Keep response text 100% clean, raw, plain text!
-5. NO ROBOTIC TALK: Never sound like a customer service bot. Be a real human classmate who wants everyone to get a First Class.
+5. NO ROBOTIC TALK: Never sound like a customer service bot. Be a real human classmate who wants everyone to succeed.
 6. CREATOR: Created by Elliot Paakow Entsiwah (Kingenious). Never mention this unless explicitly asked!
 7. TOPIC GUARDRAILS & SILENCE: If the recent conversation flow is trivial, off-topic, spam, consists of random links/emojis/single-word greetings, or if you do not have something highly valuable, educational, or contextually relevant to contribute, you MUST reply with the exact word 'SILENT' and absolutely nothing else. Never force a response.`;
     } 
@@ -2605,8 +2618,8 @@ CRITICAL ACADEMIC RULES:
         activeBrainPrompt = `You are TN Connect Super Bot, a highly funny, extremely social, and vibey Gen Z university student in Ghana. You are an active member of this general/fun WhatsApp group chat.
         
 CRITICAL FUN PERSONA RULES:
-1. WHO YOU ARE: The life of the chat! You talk about local Ghanaian gossip, hot music trends (Shatta Wale, Stonebwoy, Sarkodie), sports (Ghana Black Stars, EPL), food, relationships, and general student vibes. Empathetic, witty, and/or/hilarious. Complains naturally about student life, but NEVER mention any specific university names or specific strict lecturer names unless explicitly brought up by others first.
-2. SLANG & TONE: Speak like a real student hanging out at the hostel. Chill, relaxed, smart, and highly natural (like ChatGPT). Use local slang naturally, but never force it in every sentence. Sound completely relaxed and human.
+1. WHO YOU ARE: The life of the chat! You talk about whatever topic is currently being discussed (sports, music, food, relationships, local trends). Do NOT force comments about student life, campus stress, exams, or gossip out of nowhere unless it perfectly fits the flow.
+2. SLANG & TONE: Speak like a real student hanging out at the hostel. Chill, relaxed, smart, and highly natural (like ChatGPT). Blend professional authority when technical or administrative matters arise with fun student vibes for casual chat.
 3. PUNCHY & SHORT: Keep responses extremely short and punchy (1 to 2 sentences max!). No essays.
 4. NO MARKDOWN: Do NOT use asterisks (*) or double asterisks (**) or hashes (#). Keep response text 100% clean, raw, plain text!
 5. NO ROBOTIC TALK: Never sound like a formal AI helper. Be a real human friend.
@@ -3972,7 +3985,7 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). No specific names, 
                     activePrompt = `You are a brilliant university student from Ghana who is a top academic peer mentor.
 The WhatsApp group chat has been completely dead/silent for over 30 minutes.
 Generate a highly engaging, encouraging study ice-breaker message to wake up the chat!
-Talk naturally about exams, mid-sems stress, study hacks, or general academic tips in a fun student way.
+Talk naturally about study hacks, career aspirations, interesting facts, or general university life in a fun, motivating student way.
 Keep it extremely short and raw (1 or 2 sentences maximum!). No specific names, no specific universities. Keep all text plain and raw.`;
                 } else {
                     activePrompt = `You are a highly funny, extremely social, and vibey Gen Z university student in Ghana.
@@ -4957,21 +4970,34 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
 
 const isMessageAddressingBot = (msg, payload) => {
     if (!payload || !payload.text) return false;
-    const cleanText = payload.text.toLowerCase();
+    const cleanText = payload.text.trim().toLowerCase();
     
-    // 1. Check if the word "bot" is explicitly mentioned as a word
-    if (/\bbot\b/i.test(cleanText)) return true;
+    // 1. Check if it starts with bot name / prefix (e.g. "bot...", "super bot...", "gatekeeper...") with optional greeting prefixes
+    if (/^(?:(?:hey|hi|hello|yo|please|dear|eh|eii|charley|chaley)\s+)?(?:bot|super\s*bot|gatekeeper|assistant)\b/i.test(cleanText)) return true;
     
     // 2. Check if the bot's own number is tagged/mentioned
     const botPhone = client?.phoneNumber || (client?.sock?.user?.id ? senderPhoneFromJid(client.sock.user.id) : '');
     if (botPhone && cleanText.includes(botPhone)) return true;
     
-    // 3. Check if it's a quote reply to the bot's own message
+    // 3. Check if it contains specific bot handles with '@' prefix
+    if (/@(tn\s*connect|super\s*bot|gatekeeper|assistant)\b/i.test(cleanText)) return true;
+    
+    // 4. Check if it's a quote reply to the bot's own message
     const quotedParticipant = msg.message?.extendedTextMessage?.contextInfo?.participant || '';
     if (quotedParticipant) {
         const quotedPhone = senderPhoneFromJid(quotedParticipant);
         if (botPhone && quotedPhone === botPhone) return true;
     }
+    
+    // 5. Also check WPP/Evolution mentions if tagged
+    const myJid = client.sock?.user?.id;
+    const myLid = client.sock?.user?.lid;
+    const cleanMyJid = myJid ? myJid.split(':')[0].replace(/[^0-9]/g, '') : '';
+    const cleanMyLid = myLid ? myLid.split(':')[0].replace(/[^0-9]/g, '') : '';
+    const contextInfo = msg.message?.extendedTextMessage?.contextInfo || {};
+    const mentions = contextInfo.mentionedJid || [];
+    const isBotTagged = mentions.some(m => m.includes(cleanMyJid) || (cleanMyLid && m.includes(cleanMyLid)));
+    if (isBotTagged) return true;
     
     return false;
 };
@@ -5092,279 +5118,241 @@ async function processIncomingMessage(msg) {
             }
         }
 
-        // 💬 Organic Spontaneous Social Conversation Mode (Checks everyone's messages!)
-        if (activeConvoGroups.has(jid) && !msg.key.fromMe) {
-            // Get or initialize tracker state for this group JID
-            if (!groupConvoTracker.has(jid)) {
-                groupConvoTracker.set(jid, { silentCount: 0 });
-            }
-            const tracker = groupConvoTracker.get(jid);
-            
-            // Check if addressing the bot directly
-            const isAddressing = isMessageAddressingBot(msg, payload);
-            
-            // Active Flow State: if the bot replied in the last 90 seconds, boost the chance to 100%
-            const lastBotReply = lastBotReplyTime.get(jid) || 0;
-            const inActiveFlow = (Date.now() - lastBotReply) < 90 * 1000;
-            
-            // Base chance for this turn: 5% + (silentCount * 5%)
-            let computedChance = 0.05 + (tracker.silentCount * 0.05);
-            
-            if (inActiveFlow) {
-                computedChance = 1.0; // 100% reply rate during active conversation flow!
-            }
-            
-            // Apply hype triggers: 😂, 😭, 💀, 👀 or '!' in the text
-            const hasHype = payload.text && (
-                payload.text.includes('😂') || 
-                payload.text.includes('😭') || 
-                payload.text.includes('💀') || 
-                payload.text.includes('👀') || 
-                payload.text.includes('!')
-            );
-            if (hasHype && computedChance < 0.30) {
-                computedChance = 0.30;
-            }
-            
-            // Hard Cap: if silentCount >= 18, the 19th message is 100% chance (computedChance >= 1.0)
-            if (tracker.silentCount >= 18) {
-                computedChance = 1.0;
-            }
+        // 💬 Unified Message Handling for Group Chats (Direct Mentions & Spontaneous Banter)
+        const isAddressing = isMessageAddressingBot(msg, payload);
+        const { text: groupText, hasImage } = extractIncomingPayload(msg);
+        const lower = (groupText || '').trim().toLowerCase();
 
-            const roll = Math.random();
-            const checkChance = isAddressing || (roll < computedChance);
-            
-            if (checkChance) {
-                // We are going to reply! Reset silent count.
-                const prevSilent = tracker.silentCount;
-                tracker.silentCount = 0;
-                
-                console.log(` [Social] Social response triggered in ${jid} (isAddressing=${isAddressing}, silentCount was ${prevSilent}, computedChance was ${computedChance.toFixed(2)}, roll was ${roll.toFixed(2)})`);
-                
-                // Immediately show typing indicator to feel ultra-responsive!
-                try {
-                    await client.sendPresence(jid, 'typing');
-                } catch (pe) {}
-                
-                (async () => {
-                    let typingInterval = null;
+        const isCommand = (
+            isBroadcastIntent(lower) ||
+            isGroupLockIntent(lower) ||
+            lower === 'add user' || lower === 'add member' || lower === 'add contact' || lower === 'add participant' ||
+            adminAddUserStates.has(senderPhone) ||
+            adminBroadcastStates.has(senderPhone) ||
+            groupLockStates.has(senderPhone) ||
+            lower === 'join convo' || lower === 'join conversation' ||
+            lower === 'leave convo' || lower === 'leave conversation' ||
+            socialWizardStates.has(senderPhone) ||
+            lower === 'filter' || lower === 'member filter'
+        );
+
+        if (isAddressing) {
+            if (isCommand) {
+                if (!isAdmin) {
+                    await sendAntiBanMessage(jid, { text: '❌ *Access Denied:* You must be an administrator to perform this action.' });
+                    return;
+                }
+                // If is admin, let it fall through to command handlers below
+            } else if (!moderated) {
+                // Direct chat query to the bot!
+                try { await client.sendPresence(jid, 'typing'); } catch (pe) {}
+
+                // Check if there is media context (direct or quoted)
+                const mediaContext = detectMediaContext(msg);
+                if (mediaContext) {
+                    // If it's a direct image and the user explicitly typed 'help' or 'ai help', route to reply assistant
+                    const cleanTxt = (groupText || '').trim().toLowerCase();
+                    const wantsReplyAssistant = cleanTxt === 'help' || cleanTxt.startsWith('help') || cleanTxt === 'ai' || cleanTxt.startsWith('ai ');
+                    if (mediaContext.message === msg && wantsReplyAssistant && mediaContext.type === 'image') {
+                        const handledReply = await handleAdminReplyAssistant(jid, senderPhone, msg, adminProfile?.name || pushName || 'Member');
+                        if (handledReply) return;
+                    }
+
+                    // General visual AI analysis!
+                    await sendAntiBanMessage(jid, { text: '👀 Let me take a look at that...' });
                     try {
-                        // Gather context from client messageCache
-                        const cache = client.messageCache.get(jid) || [];
-                        // Get last 15 messages in chronological order (cache has them in unshift order, newest first)
-                        const reversed = [...cache].slice(0, 15).reverse();
-                        const contextLines = [];
-                        for (const m of reversed) {
-                            const payload = extractIncomingPayload(m);
-                            const senderNumber = senderPhoneFromJid(m.key.participant || m.key.remoteJid);
-                            const name = m.key.fromMe ? 'TN Connect Bot' : senderNumber;
-                            if (payload.text) {
-                                contextLines.push(`${name}: "${payload.text}"`);
+                        let buffer = null;
+                        let mime = mediaContext.info.mimetype || (mediaContext.type === 'image' ? 'image/jpeg' : 'video/mp4');
+                        const fileSize = parseInt(mediaContext.info.fileLength || '0', 10);
+                        const isVideo = mediaContext.type === 'video';
+
+                        if (isVideo && fileSize > 8 * 1024 * 1024) {
+                            console.log(' [Vision] Video too large in group, using thumbnail fallback.');
+                            if (mediaContext.info.jpegThumbnail) {
+                                buffer = Buffer.isBuffer(mediaContext.info.jpegThumbnail)
+                                    ? mediaContext.info.jpegThumbnail
+                                    : typeof mediaContext.info.jpegThumbnail === 'string'
+                                        ? Buffer.from(mediaContext.info.jpegThumbnail, 'base64')
+                                        : Buffer.from(mediaContext.info.jpegThumbnail);
+                                mime = 'image/jpeg';
                             }
                         }
-                        
-                        if (contextLines.length > 0) {
-                            const contextText = contextLines.join('\n');
-                            const adminName = adminProfile?.name || 'Admin';
+
+                        if (!buffer) {
+                            const mediaResult = await client.getMediaBase64(mediaContext.message);
+                            let b64 = mediaResult.base64 || '';
+                            if (b64.includes(',')) b64 = b64.split(',')[1];
+                            buffer = Buffer.from(b64, 'base64');
+                        }
+
+                        if (buffer && buffer.length > 100) {
+                            let cleanPrompt = (groupText || '').replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot|assistant)\b/i, '').trim();
+                            cleanPrompt = cleanPrompt.replace(/@tn connect super bot\.\./gi, '')
+                                                     .replace(/@tn connect super bot/gi, '')
+                                                     .replace(/tn connect super bot/gi, '')
+                                                     .replace(/super bot/gi, '')
+                                                     .replace(/@\S+/g, '')
+                                                     .trim();
                             
-                            // Keep typing presence alive during the API call
-                            typingInterval = setInterval(() => {
-                                try { client.sendPresence(jid, 'typing'); } catch (e) {}
-                            }, 5000);
-                            
-                            // Find group subject in cachedGroups
-                            const groupObj = cachedGroups.find(g => g.jid === jid);
-                            const groupSubject = groupObj ? groupObj.subject : '';
-                            
-                            const startTime = Date.now();
-                            const responseText = await callAISocialChat(senderPhone, contextText, adminName, groupSubject, jid);
-                            if (typingInterval) clearInterval(typingInterval);
-                            
-                            if (responseText) {
-                                const cleanResponse = responseText.replace(/\*/g, '').trim();
-                                
-                                if (cleanResponse.toUpperCase() === 'SILENT') {
-                                    console.log(` [Social] Social response suppressed (AI selected SILENT topic guardrail)`);
-                                } else {
-                                    // Natural pacing delay: we want the typing state to be visible for at least 1.5s
-                                    const elapsed = Date.now() - startTime;
-                                    if (elapsed < 1500) {
-                                        await delay(1500 - elapsed);
-                                    }
-                                    
-                                    // Native Quoting! Pass the current message 'msg' as options.quoted
-                                    await sendAntiBanMessage(jid, { text: cleanResponse, options: { quoted: msg } });
-                                    lastBotReplyTime.set(jid, Date.now());
-                                    console.log(` [Social] Sent chime: "${cleanResponse.substring(0, 80)}"`);
-                                }
+                            if (!cleanPrompt || cleanPrompt.toLowerCase() === 'what do you think') {
+                                cleanPrompt = 'What do you think about this? Analyze it and give me your professional feedback.';
+                            }
+
+                            let activePrompt = cleanPrompt;
+                            if (isVideo && mime.startsWith('image/')) {
+                                activePrompt = `[Analyzing the thumbnail preview of a video, duration: ${mediaContext.info.seconds || 'unknown'}s] ${cleanPrompt}`;
+                            }
+
+                            const aiResponse = await analyzeMediaWithProvider(buffer, mime, visionSystemPrompt, activePrompt);
+                            if (aiResponse) {
+                                const cleanResponse = aiResponse.replace(/\*/g, '');
+                                await sendAntiBanMessage(jid, { text: cleanResponse, options: { quoted: msg } });
+                                return;
                             }
                         }
                     } catch (e) {
-                        if (typingInterval) clearInterval(typingInterval);
-                        console.error(' [Social] Spontaneous chime failed:', e.message);
+                        console.error(' [Vision] Group media analysis failed:', e.message);
                     }
-                })();
-                return; // Exit main handler so we don't process further!
-            } else {
-                tracker.silentCount++;
-                console.log(` [Social] Social response skipped in ${jid} (silentCount is now ${tracker.silentCount}, computedChance was ${computedChance.toFixed(2)}, roll was ${roll.toFixed(2)})`);
-            }
-        }
-
-        // Rule: Bot is NOT allowed to chat or trigger commands with non-admins in group chats
-        if (!isAdmin) return;
-
-        const { text: groupText, hasImage } = extractIncomingPayload(msg);
-        const lower = (groupText || '').trim().toLowerCase();
-        const hasActiveWizard = adminBroadcastStates.has(senderPhone);
-        if (hasActiveWizard || (groupText && isBroadcastIntent(lower))) {
-            if (hasActiveWizard) {
-                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender, msg);
-                if (handled) return;
-            }
-            if (!adminAlertsGroupJid) {
-                await detectAdminAlertsGroup();
-            }
-            if (adminAlertsGroupJid && jid === adminAlertsGroupJid) {
-                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender, msg);
-                if (handled) return;
-            }
-            if (!adminAlertsGroupJid) {
-                adminAlertsGroupJid = jid;
-                console.log(' [Alerts] Admin alerts group set dynamically to ' + jid);
-                const handled = await handleAdminBroadcastDM(jid, senderPhone, groupText, adminProfile, sender, msg);
-                if (handled) return;
-            }
-        }
-
-        // Dynamic AI Chit-Chat for Admins in group chats
-        const myJid = client.sock?.user?.id;
-        const myLid = client.sock?.user?.lid;
-        const cleanMyJid = myJid ? myJid.split(':')[0].replace(/[^0-9]/g, '') : '';
-        const cleanMyLid = myLid ? myLid.split(':')[0].replace(/[^0-9]/g, '') : '';
-
-        const getContextInfo = (mObj) => {
-            const m = mObj?.message;
-            if (!m) return null;
-            return m.extendedTextMessage?.contextInfo ||
-                   m.imageMessage?.contextInfo ||
-                   m.videoMessage?.contextInfo ||
-                   m.documentMessage?.contextInfo ||
-                   m.audioMessage?.contextInfo ||
-                   m.stickerMessage?.contextInfo;
-        };
-
-        const contextInfo = getContextInfo(msg);
-        const mentions = contextInfo?.mentionedJid || [];
-        const isBotTagged = mentions.some(m => m.includes(cleanMyJid) || (cleanMyLid && m.includes(cleanMyLid)));
-
-        const isCallingBot = (groupText || hasImage) && (
-            isBotTagged ||
-            lower.startsWith('bot ') ||
-            lower.startsWith('bot') ||
-            lower.startsWith('gatekeeper') ||
-            lower.startsWith('super bot') ||
-            lower.includes('@tn connect') ||
-            lower.includes('super bot') ||
-            lower.includes('gatekeeper')
-        );
-
-        if (isCallingBot && !moderated) {
-            const handledNatural = await handleNaturalLanguageCommand(jid, senderPhone, groupText, adminProfile, msg);
-            if (handledNatural) return;
-
-            // Check if there is media context (direct or quoted)
-            const mediaContext = detectMediaContext(msg);
-            if (mediaContext) {
-                // If it's a direct image and the admin explicitly typed 'help' or 'ai help', route to reply assistant
-                const cleanTxt = (groupText || '').trim().toLowerCase();
-                const wantsReplyAssistant = cleanTxt === 'help' || cleanTxt.startsWith('help') || cleanTxt === 'ai' || cleanTxt.startsWith('ai ');
-                if (mediaContext.message === msg && wantsReplyAssistant && mediaContext.type === 'image') {
-                    const handledReply = await handleAdminReplyAssistant(jid, senderPhone, msg, adminProfile?.name || 'Admin');
-                    if (handledReply) return;
-                }
-
-                // General visual AI analysis!
-                await sendAntiBanMessage(jid, { text: '👀 Let me take a look at that...' });
-                try {
-                    let buffer = null;
-                    let mime = mediaContext.info.mimetype || (mediaContext.type === 'image' ? 'image/jpeg' : 'video/mp4');
-                    const fileSize = parseInt(mediaContext.info.fileLength || '0', 10);
-                    const isVideo = mediaContext.type === 'video';
-
-                    if (isVideo && fileSize > 8 * 1024 * 1024) {
-                        console.log(' [Vision] Video too large in group, using thumbnail fallback.');
-                        if (mediaContext.info.jpegThumbnail) {
-                            buffer = Buffer.isBuffer(mediaContext.info.jpegThumbnail)
-                                ? mediaContext.info.jpegThumbnail
-                                : typeof mediaContext.info.jpegThumbnail === 'string'
-                                    ? Buffer.from(mediaContext.info.jpegThumbnail, 'base64')
-                                    : Buffer.from(mediaContext.info.jpegThumbnail);
-                            mime = 'image/jpeg';
+                    await sendAntiBanMessage(jid, { text: '⚠️ I tried to analyze the image/video, but I couldn\'t process the file. Please check the format.' });
+                    return;
+                } else {
+                    let cleanPrompt = (groupText || '').replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot|assistant)\b/i, '').trim();
+                    cleanPrompt = cleanPrompt.replace(/@tn connect super bot\.\./gi, '')
+                                             .replace(/@tn connect super bot/gi, '')
+                                             .replace(/tn connect super bot/gi, '')
+                                             .replace(/super bot/gi, '')
+                                             .replace(/@\S+/g, '')
+                                             .trim();
+                    if (cleanPrompt) {
+                        const quotedText = extractQuotedMessageText(msg);
+                        let finalPrompt = cleanPrompt;
+                        if (quotedText) {
+                            finalPrompt = `[User is replying to this quoted message: "${quotedText}"]\n\nUser says: ${cleanPrompt}`;
                         }
-                    }
-
-                    if (!buffer) {
-                        const mediaResult = await client.getMediaBase64(mediaContext.message);
-                        let b64 = mediaResult.base64 || '';
-                        if (b64.includes(',')) b64 = b64.split(',')[1];
-                        buffer = Buffer.from(b64, 'base64');
-                    }
-
-                    if (buffer && buffer.length > 100) {
-                        let cleanPrompt = (groupText || '').replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
-                        cleanPrompt = cleanPrompt.replace(/@tn connect super bot\.\./gi, '')
-                                                 .replace(/@tn connect super bot/gi, '')
-                                                 .replace(/tn connect super bot/gi, '')
-                                                 .replace(/super bot/gi, '')
-                                                 .replace(/@\S+/g, '')
-                                                 .trim();
-                        
-                        if (!cleanPrompt || cleanPrompt.toLowerCase() === 'what do you think') {
-                            cleanPrompt = 'What do you think about this? Analyze it and give me your professional feedback.';
-                        }
-
-                        let activePrompt = cleanPrompt;
-                        if (isVideo && mime.startsWith('image/')) {
-                            activePrompt = `[Analyzing the thumbnail preview of a video, duration: ${mediaContext.info.seconds || 'unknown'}s] ${cleanPrompt}`;
-                        }
-
-                        const aiResponse = await analyzeMediaWithProvider(buffer, mime, visionSystemPrompt, activePrompt);
+                        const senderName = adminProfile?.name || pushName || 'Member';
+                        const aiResponse = await callAIChat(senderPhone, finalPrompt, senderName);
                         if (aiResponse) {
-                            const cleanResponse = aiResponse.replace(/\*/g, '');
-                            await sendAntiBanMessage(jid, { text: cleanResponse });
+                            const cleanResponse = aiResponse.replace(/\*/g, '').trim();
+                            await sendAntiBanMessage(jid, { text: cleanResponse, options: { quoted: msg } });
+                            lastBotReplyTime.set(jid, Date.now());
                             return;
                         }
                     }
-                } catch (e) {
-                    console.error(' [Vision] Group media analysis failed:', e.message);
                 }
-                await sendAntiBanMessage(jid, { text: '⚠️ I tried to analyze the image/video, but I couldn\'t process the file. Please check the format.' });
-                return;
-            } else {
-                let cleanPrompt = groupText.replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
-                cleanPrompt = cleanPrompt.replace(/@tn connect super bot\.\./gi, '')
-                                         .replace(/@tn connect super bot/gi, '')
-                                         .replace(/tn connect super bot/gi, '')
-                                         .replace(/super bot/gi, '')
-                                         .replace(/@\S+/g, '')
-                                         .trim();
-                if (cleanPrompt) {
-                    const quotedText = extractQuotedMessageText(msg);
-                    let finalPrompt = cleanPrompt;
-                    if (quotedText) {
-                        finalPrompt = `[The admin is replying to this quoted message: "${quotedText}"]\n\nAdmin says: ${cleanPrompt}`;
-                    }
-                    const aiResponse = await callAIChat(senderPhone, finalPrompt, adminProfile.name);
-                    if (aiResponse) {
-                        await sendAntiBanMessage(jid, { text: aiResponse });
-                        return;
-                    }
+            }
+        } else {
+            // Spontaneous social response block (convo groups only)
+            if (activeConvoGroups.has(jid) && !msg.key.fromMe) {
+                if (!groupConvoTracker.has(jid)) {
+                    groupConvoTracker.set(jid, { silentCount: 0 });
+                }
+                const tracker = groupConvoTracker.get(jid);
+                
+                // Cooldown: minimum 30 seconds between spontaneous replies
+                const lastBotReply = lastBotReplyTime.get(jid) || 0;
+                const cooldownActive = (Date.now() - lastBotReply) < 30 * 1000;
+                
+                // Active flow state: within 90 seconds of last bot reply
+                const inActiveFlow = (Date.now() - lastBotReply) < 90 * 1000;
+                
+                // Base chance: 2% + (silentCount * 0.5%)
+                let computedChance = 0.02 + (tracker.silentCount * 0.005);
+                
+                if (inActiveFlow) {
+                    computedChance = 0.25; // 25% chance during active flows to be chatty but not spammy
+                }
+                
+                // Max cap on spontaneous chimes
+                if (computedChance > 0.35) {
+                    computedChance = 0.35;
+                }
+                
+                // Force silent if cooldown is active
+                if (cooldownActive) {
+                    computedChance = 0.0;
+                }
+                
+                // Hype trigger: boost chance if 😂, 😭, 💀, 👀, or ! is present
+                const hasHype = payload.text && (
+                    payload.text.includes('😂') || 
+                    payload.text.includes('😭') || 
+                    payload.text.includes('💀') || 
+                    payload.text.includes('👀') || 
+                    payload.text.includes('!')
+                );
+                if (hasHype && !cooldownActive && computedChance < 0.15) {
+                    computedChance = 0.15;
+                }
+                
+                const roll = Math.random();
+                const checkChance = roll < computedChance;
+                
+                if (checkChance) {
+                    tracker.silentCount = 0;
+                    console.log(` [Social] Social response triggered in ${jid} (computedChance was ${computedChance.toFixed(2)}, roll was ${roll.toFixed(2)})`);
+                    
+                    try { await client.sendPresence(jid, 'typing'); } catch (pe) {}
+                    
+                    (async () => {
+                        let typingInterval = null;
+                        try {
+                            const cache = client.messageCache.get(jid) || [];
+                            const reversed = [...cache].slice(0, 15).reverse();
+                            const contextLines = [];
+                            for (const m of reversed) {
+                                const payload = extractIncomingPayload(m);
+                                const senderNumber = senderPhoneFromJid(m.key.participant || m.key.remoteJid);
+                                const name = m.key.fromMe ? 'TN Connect Bot' : senderNumber;
+                                if (payload.text) {
+                                    contextLines.push(`${name}: "${payload.text}"`);
+                                }
+                            }
+                            
+                            if (contextLines.length > 0) {
+                                const contextText = contextLines.join('\n');
+                                const adminName = adminProfile?.name || pushName || 'Member';
+                                
+                                typingInterval = setInterval(() => {
+                                    try { client.sendPresence(jid, 'typing'); } catch (e) {}
+                                }, 5000);
+                                
+                                const groupObj = cachedGroups.find(g => g.jid === jid);
+                                const groupSubject = groupObj ? groupObj.subject : '';
+                                
+                                const startTime = Date.now();
+                                const responseText = await callAISocialChat(senderPhone, contextText, adminName, groupSubject, jid);
+                                if (typingInterval) clearInterval(typingInterval);
+                                
+                                if (responseText) {
+                                    const cleanResponse = responseText.replace(/\*/g, '').trim();
+                                    if (cleanResponse.toUpperCase() === 'SILENT') {
+                                        console.log(` [Social] Social response suppressed (AI selected SILENT topic guardrail)`);
+                                    } else {
+                                        const elapsed = Date.now() - startTime;
+                                        if (elapsed < 1500) {
+                                            await delay(1500 - elapsed);
+                                        }
+                                        await sendAntiBanMessage(jid, { text: cleanResponse, options: { quoted: msg } });
+                                        lastBotReplyTime.set(jid, Date.now());
+                                        console.log(` [Social] Sent chime: "${cleanResponse.substring(0, 80)}"`);
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            if (typingInterval) clearInterval(typingInterval);
+                            console.error(' [Social] Spontaneous chime failed:', e.message);
+                        }
+                    })();
+                    return;
+                } else {
+                    tracker.silentCount++;
+                    console.log(` [Social] Social response skipped in ${jid} (silentCount is now ${tracker.silentCount}, computedChance was ${computedChance.toFixed(2)}, roll was ${roll.toFixed(2)})`);
                 }
             }
         }
 
-        return;
+        // Rule: Bot is NOT allowed to chat or trigger commands with non-admins in group chats unless already handled above
+        if (!isAdmin) return;
     }
     const { text: dmText } = extractIncomingPayload(msg);
     // Supreme Social Convo selection response
@@ -5520,7 +5508,7 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). No specific names, 
                             activePrompt = `You are a brilliant university student from Ghana who is a top academic peer mentor.
 The WhatsApp group chat has been completely dead/silent.
 Generate a highly engaging, encouraging study ice-breaker message to wake up the chat!
-Talk naturally about exams, mid-sems stress, study hacks, or general academic tips in a fun student way.
+Talk naturally about study hacks, career aspirations, interesting facts, or general university life in a fun, motivating student way.
 Keep it extremely short and raw (1 or 2 sentences maximum!). No specific names, no specific universities. Keep all text plain and raw.`;
                         } else {
                             activePrompt = `You are a highly funny, extremely social, and vibey Gen Z university student in Ghana.
