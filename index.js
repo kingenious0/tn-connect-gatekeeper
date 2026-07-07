@@ -5667,8 +5667,9 @@ async function processIncomingMessage(msg) {
             }
         }
 
-        // Rule: Bot is NOT allowed to chat or trigger commands with non-admins in group chats unless already handled above
-        if (!isAdmin) return;
+        // Rule: For group messages, only let it fall through to command handlers if an admin explicitly addressed the bot with a command.
+        // In all other cases (e.g. general discussion, non-admins, or non-commands), we return immediately.
+        if (!isAdmin || !isAddressing || !isCommand) return;
     }
     const { text: dmText } = extractIncomingPayload(msg);
     // Supreme Social Convo selection response
@@ -6110,7 +6111,7 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). Keep all text plain
     if (pendingRequest) await handleGatekeeperDM(jid, msg, pendingRequest);
     if (pendingRequest) return;
     // 🤖 AI Reply Assistant — admin sends screenshot
-    if (isAdmin) {
+    if (isAdmin && !isGroup) {
         const handledReply = await handleAdminReplyAssistant(jid, senderPhone, msg, adminProfile?.name || 'Admin');
         if (handledReply) return;
     }
@@ -6120,7 +6121,7 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). Keep all text plain
         try { fs.appendFileSync('_trace.log', 'NONADMIN_DM_IGNORED from ' + senderPhone + ': "' + dmText.substring(0, 80) + '"\n'); } catch (e) {}
         return;
     }
-    if (isAdmin && !bizHubRequest && !pendingRequest) {
+    if (isAdmin && !isGroup && !bizHubRequest && !pendingRequest) {
         try { fs.appendFileSync('_trace.log', 'ADMIN_CATCHALL trying reply to ' + senderPhone + '\n'); } catch (e) {}
         try {
             await sendAntiBanMessage(jid, { text: '👋 Hi ' + (adminProfile?.name || 'Admin') + '! I\'m the TN Gatekeeper bot.\n\nAvailable commands:\n• *broadcast* — Send a message to all monitored groups\n• *lock/unlock* — Lock/unlock groups (admin-only messaging)\n• *help* + *screenshot* — I\'ll suggest a professional reply\n• *register* — Register as an admin' });
