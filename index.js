@@ -153,6 +153,7 @@ const PAUSE_FILE = './pause_config.json';
 let antiLinkEnabled = true;
 let pausedUntil = null;
 const groupJoinBuffers = new Map(); // groupJid -> { timer: NodeJS.Timeout, participants: String[] }
+const groupMediaWarningBuffers = new Map(); // groupJid -> { timer: NodeJS.Timeout, senderPhones: Set<string>, senders: Set<string>, hint: string }
 
 const loadAntiLink = () => {
     if (!fs.existsSync(ANTI_LINK_FILE)) return true;
@@ -1993,15 +1994,49 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
                     } catch (de) {
                         try { fs.appendFileSync('_trace.log', 'ANTI_FLYER_DELETE_FAIL err=' + de.message.substring(0, 100) + '\n'); } catch (_) {}
                     }
-                    const warnText = `🚫 @${senderPhone} Flyers, images & media are only allowed during active *Market Sessions*. ${hint}`;
-                    const now = Date.now();
-                    const cooldownKey = `media:${jid}:${senderPhone}`;
-                    const lastWarnTime = groupWarningCooldowns.get(cooldownKey) || 0;
-                    if (now - lastWarnTime > 15000) {
-                        const mentionsList = [sender];
-                        if (senderPhone) mentionsList.push(senderPhone + '@s.whatsapp.net');
-                        await sendAntiBanMessage(jid, { text: warnText, options: { mentions: mentionsList } });
-                        groupWarningCooldowns.set(cooldownKey, now);
+                    // Consolidated media warning batching (v1.6.8)
+                    let warningBuffer = groupMediaWarningBuffers.get(jid);
+                    if (!warningBuffer) {
+                        warningBuffer = {
+                            timer: null,
+                            senderPhones: new Set(),
+                            senders: new Set(),
+                            hint: hint
+                        };
+                        groupMediaWarningBuffers.set(jid, warningBuffer);
+                    }
+                    if (senderPhone) warningBuffer.senderPhones.add(senderPhone);
+                    warningBuffer.senders.add(sender);
+                    warningBuffer.hint = hint; // keep the latest hint
+
+                    if (!warningBuffer.timer) {
+                        warningBuffer.timer = setTimeout(async () => {
+                            try {
+                                const currentBuffer = groupMediaWarningBuffers.get(jid);
+                                if (!currentBuffer) return;
+                                groupMediaWarningBuffers.delete(jid);
+
+                                const phonesArray = Array.from(currentBuffer.senderPhones);
+                                const sendersArray = Array.from(currentBuffer.senders);
+
+                                if (phonesArray.length === 0) return;
+
+                                const mentionsTags = phonesArray.map(p => `@${p}`).join(' ');
+                                const warnText = `🚫 ${mentionsTags} Flyers, images & media are only allowed during active *Market Sessions*. ${currentBuffer.hint}`;
+
+                                const mentionsList = [...sendersArray];
+                                for (const phone of phonesArray) {
+                                    const jidString = phone + '@s.whatsapp.net';
+                                    if (!mentionsList.includes(jidString)) {
+                                        mentionsList.push(jidString);
+                                    }
+                                }
+
+                                await sendAntiBanMessage(jid, { text: warnText, options: { mentions: mentionsList } });
+                            } catch (err) {
+                                console.error(' [AntiFlyer] Error sending consolidated warning:', err.message);
+                            }
+                        }, 15000); // 15 seconds buffering window
                     }
                     const groupObj = cachedGroups.find(g => g.jid === jid);
                     const groupName = groupObj ? groupObj.subject : jid;
