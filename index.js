@@ -1881,6 +1881,71 @@ const lookupBroadcastAdmin = async (senderPhone, rawJid) => {
     return null;
 };
 
+const getAllAdmins = async () => {
+    const admins = [];
+    // hardcoded roster
+    for (const a of CAMPUS_ADMIN_ROSTER) {
+        admins.push({ phone: a.phone, name: a.admin_name, source: 'roster' });
+    }
+    // locally registered
+    for (const [phone, entry] of registeredAdmins) {
+        if (!admins.find(a => a.phone === phone)) {
+            admins.push({ phone, name: entry.name, source: 'local' });
+        }
+    }
+    // supabase
+    if (supabase) {
+        try {
+            const { data } = await supabase.from('gatekeeper_sessions')
+                .select('phone, admin_name, role').in('role', ['admin', 'admin_node']);
+            if (data) {
+                for (const d of data) {
+                    if (!admins.find(a => a.phone === d.phone)) {
+                        admins.push({ phone: d.phone, name: d.admin_name, source: 'supabase' });
+                    }
+                }
+            }
+        } catch (e) {
+            console.error(' [GetAllAdmins] Supabase fetch failed:', e.message);
+        }
+    }
+    return admins;
+};
+
+const findAdminByName = (name, admins) => {
+    const cleanSearch = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+    if (!cleanSearch) return null;
+    
+    const normalizedAdmins = admins.map(a => ({
+        original: a,
+        name: a.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim()
+    }));
+    
+    // 1. Exact match
+    let matched = normalizedAdmins.find(a => a.name === cleanSearch);
+    if (matched) return matched.original;
+    
+    // 2. Query is substring of admin name (e.g., search "maud k" matches "maud k.")
+    matched = normalizedAdmins.find(a => a.name.includes(cleanSearch));
+    if (matched) return matched.original;
+    
+    // 3. Admin name is substring of query (e.g., search "emmanuel king" matches "king")
+    matched = normalizedAdmins.find(a => cleanSearch.includes(a.name));
+    if (matched) return matched.original;
+    
+    // 4. Fuzzy word match (words of length > 2)
+    const searchWords = cleanSearch.split(/\s+/).filter(w => w.length > 2);
+    for (const a of normalizedAdmins) {
+        for (const word of searchWords) {
+            if (a.name.includes(word)) {
+                return a.original;
+            }
+        }
+    }
+    
+    return null;
+};
+
 const refreshGroupCache = async () => {
     try {
         const groups = await client.fetchGroups();
@@ -2543,6 +2608,9 @@ const callAIChat = async (senderPhone, userText, adminName) => {
     const history = adminChatHistories.get(senderPhone);
     if (history.length > 10) history.shift();
 
+    const admins = await getAllAdmins();
+    const adminRosterStr = admins.map(a => `- ${a.name} (+${a.phone})`).join('\n');
+
     const systemPrompt = `You are "Tessa", an ultra-smart, helpful, and friendly AI administrator assistant for TN Universities Connect.
 You are an expert in all fields of the world (including technology, business, cybersecurity, operations, marketing, and copywriting).
 Your personality is highly intelligent, expert, tech-savvy, helpful, and friendly.
@@ -2560,6 +2628,11 @@ CRITICAL HUMAN & FORMATTING RULES:
 - Do NOT use markdown bold/italic tags (like "**" or "*") in your response. Keep the text layout completely clean with standard characters and normal spacing. Do not output any asterisks!
 - Use emojis naturally to keep it friendly and engaging, but do NOT spam them in every single sentence. Use them where it makes sense.
 - Keep your responses relatively concise (usually 1-3 paragraphs) and professional.
+
+ADMINISTRATIVE ROSTER INFORMATION:
+You know the following administrators and their contact numbers. If the user asks for details about any admin, or mentions them, use this list:
+${adminRosterStr}
+
 An admin named "${adminName}" is talking to you.`;
 
     history.push({ role: 'user', content: userText });
@@ -2706,7 +2779,9 @@ CRITICAL FUN PERSONA RULES:
     }
     
     console.log(` [Social] Dynamic brain selected: "${brainName}" for group: "${groupSubject}"`);
-    const systemPrompt = activeBrainPrompt;
+    const admins = await getAllAdmins();
+    const adminRosterStr = admins.map(a => `- ${a.name} (+${a.phone})`).join('\n');
+    const systemPrompt = activeBrainPrompt + `\n\nADMINISTRATIVE ROSTER INFORMATION:\nYou are aware of the following administrators and their contact numbers:\n${adminRosterStr}`;
 
     const userText = `Here is the recent conversation flow in the group:
 ${contextText}
@@ -2921,6 +2996,8 @@ const cleanBotPrefix = (text) => {
                  .replace(/tessa/gi, '')
                  .replace(/@\S+/g, '')
                  .trim();
+    // Strip leading punctuation
+    clean = clean.replace(/^[,\s.:;?!]+/, '').trim();
     return clean;
 };
 
@@ -4271,6 +4348,9 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                          .replace(/@\S+/g, '')
                          .trim();
                          
+    // Strip leading punctuation
+    cleanText = cleanText.replace(/^[,\s.:;?!]+/, '').trim();
+
     if (!cleanText) return false;
     
     const lower = cleanText.toLowerCase();
@@ -4314,7 +4394,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
     const validCommandsList = [
         'lock', 'unlock', 'broadcast', 'leave', 'promote', 'demote', 
         'filter', 'convo', 'join convo', 'leave convo', 'antilink', 
-        'pause', 'resume', 'add user', 'add admin', 'remove admin'
+        'pause', 'resume', 'add user', 'add admin', 'remove admin',
+        'admins', 'tell', 'send message to'
     ];
 
     const toggleAlertRegex = /^(deactivate|disable|activate|enable)\s+alerts?\s+(.+)$/i;
@@ -4781,6 +4862,78 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         }
     }
     
+    // Command: List admins
+    if (lower === 'list admins' || lower === 'list all admins' || lower === 'admins' || lower === 'show admins' || lower === 'admin list') {
+        const admins = await getAllAdmins();
+        if (!admins.length) {
+            await sendAntiBanMessage(jid, { text: '❌ No broadcast administrators registered.' });
+            return true;
+        }
+        
+        const rosterAdmins = admins.filter(a => a.source === 'roster');
+        const dbAdmins = admins.filter(a => a.source === 'supabase');
+        const localAdmins = admins.filter(a => a.source === 'local');
+        
+        let response = '👥 *Tessa Broadcast Administrators Roster* 👥\n\n';
+        
+        let counter = 1;
+        if (rosterAdmins.length > 0) {
+            response += '📌 *Hardcoded Roster Admins:*\n';
+            for (const a of rosterAdmins) {
+                response += `${counter++}. *${a.name}* (+${a.phone})\n`;
+            }
+            response += '\n';
+        }
+        
+        if (dbAdmins.length > 0) {
+            response += '🗄️ *Database Dynamic Admins:*\n';
+            for (const a of dbAdmins) {
+                response += `${counter++}. *${a.name}* (+${a.phone})\n`;
+            }
+            response += '\n';
+        }
+        
+        if (localAdmins.length > 0) {
+            response += '📲 *Temporarily Registered (Local):*\n';
+            for (const a of localAdmins) {
+                response += `${counter++}. *${a.name}* (+${a.phone})\n`;
+            }
+        }
+        
+        await sendAntiBanMessage(jid, { text: response.trim() });
+        return true;
+    }
+
+    // Command: Send message to an admin by name
+    const tellRegex = /^(?:send\s+a\s+message\s+to|send\s+message\s+to|tell|message)\s+([a-zA-Z0-9\s._\-\(\)]+?)\s+(?:telling\s+\S+\s+that|telling\s+\S+|that|to\s+tell\s+\S+\s+that|to\s+tell\s+\S+|to\s+tell|to\s+say|saying|to)\s+([\s\S]+)$/i;
+    const tellMatch = cleanText.match(tellRegex);
+    if (tellMatch) {
+        const targetName = tellMatch[1].trim();
+        const msgText = tellMatch[2].trim();
+        
+        const admins = await getAllAdmins();
+        const resolvedAdmin = findAdminByName(targetName, admins);
+        
+        if (!resolvedAdmin) {
+            await sendAntiBanMessage(jid, { text: `❌ Could not find an admin matching the name *"${targetName}"*.\n\nType *list admins* to see all active admin names.` });
+            return true;
+        }
+        
+        const targetJid = `${resolvedAdmin.phone}@s.whatsapp.net`;
+        const senderName = adminProfile?.name || 'Admin';
+        const senderDisplay = `+${senderPhone}`;
+        
+        const formattedMsg = `📩 *Message from ${senderName} (${senderDisplay}):*\n\n${msgText}\n\n— Sent via Tessa Bot`;
+        
+        try {
+            await sendAntiBanMessage(targetJid, { text: formattedMsg });
+            await sendAntiBanMessage(jid, { text: `✅ Message sent to *${resolvedAdmin.name}* (+${resolvedAdmin.phone}):\n\n"${msgText}"` });
+        } catch (e) {
+            await sendAntiBanMessage(jid, { text: `❌ Failed to send message to *${resolvedAdmin.name}*: ${e.message}` });
+        }
+        return true;
+    }
+
     // 4. Anti-link toggle
     if (lower === 'anti link on' || lower === 'antilink on' || lower === 'anti link off' || lower === 'antilink off') {
         const newVal = lower.endsWith('on');
@@ -6505,32 +6658,12 @@ app.all('/api/admins/seed-campus', async (req, res) => {
 });
 
 app.get('/api/admins/list', async (req, res) => {
-    const admins = [];
-    // hardcoded roster
-    for (const a of CAMPUS_ADMIN_ROSTER) {
-        admins.push({ phone: a.phone, name: a.admin_name, source: 'roster' });
+    try {
+        const admins = await getAllAdmins();
+        res.json(admins);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
-    // locally registered
-    for (const [phone, entry] of registeredAdmins) {
-        if (!admins.find(a => a.phone === phone)) {
-            admins.push({ phone, name: entry.name, source: 'local' });
-        }
-    }
-    // supabase
-    if (supabase) {
-        try {
-            const { data } = await supabase.from('gatekeeper_sessions')
-                .select('phone, admin_name, role').in('role', ['admin', 'admin_node']);
-            if (data) {
-                for (const d of data) {
-                    if (!admins.find(a => a.phone === d.phone)) {
-                        admins.push({ phone: d.phone, name: d.admin_name, source: 'supabase' });
-                    }
-                }
-            }
-        } catch (e) { }
-    }
-    res.json(admins);
 });
 
 app.post('/api/sessions/:phone/disconnect', async (req, res) => {
