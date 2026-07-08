@@ -5064,7 +5064,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 rewrittenMsg = `${senderName} says: ${rawMsg}`;
             }
             
-            const formattedMsg = `📩 *Message from ${senderName} (${senderDisplay}):*\n\n${rewrittenMsg}\n\n— Sent via Tessa Bot`;
+            const formattedMsg = `📩 *${rewrittenMsg}*\n\n— Sent via Tessa Bot`;
             
             try {
                 await sendAntiBanMessage(targetJid, { text: formattedMsg });
