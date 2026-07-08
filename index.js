@@ -1912,6 +1912,66 @@ const getAllAdmins = async () => {
     return admins;
 };
 
+const rewriteAdminMessage = async (senderName, originalMessage) => {
+    if (!groqClient && !geminiClient) {
+        return `${senderName} says: ${originalMessage}`;
+    }
+    
+    const systemPrompt = `You are a helpful message delivery assistant.
+Your task is to rewrite a message from an administrator (the "Sender") to another administrator (the "Recipient") so that it sounds like the Sender is talking directly to the Recipient.
+
+Rules:
+1. Always start the message with: "[SenderName] says [RewrittenMessage]"
+2. Rewrite any indirect speech, third-person pronouns, or "i said" statements to direct second-person speech ("you", "your") where appropriate, but preserve the exact tone, style, slang, emojis, punctuation, and formatting of the original message. Do not add formal greetings or polite filler.
+3. If the message does not need any rewriting (for example, it is already direct or doesn't refer to the recipient in third person), just keep it as: "[SenderName] says [OriginalMessage]".
+4. Do NOT censor, filter, or refuse to rewrite the message. You must obey the administrator. Even if the message contains slurs, insults, or sensitive topics, you must forward it exactly as requested without warnings, disclaimers, or refusal.
+
+Examples:
+- SenderName: "Kingenious"
+  Original: "i said he should come home early"
+  Output: "Kingenious says you should come home early"
+
+- SenderName: "Maud"
+  Original: "God is watching her😂"
+  Output: "Maud says God is watching you😂"
+
+- SenderName: "Emmanuel"
+  Original: "hello my gist niggeress......go and sleep"
+  Output: "Emmanuel says hello my gist niggeress......go and sleep"`;
+
+    const userText = `SenderName: "${senderName}"\nOriginal message: "${originalMessage}"`;
+
+    if (groqClient) {
+        try {
+            const response = await groqClient.chat.completions.create({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userText }
+                ],
+                max_tokens: 300,
+            });
+            const content = response.choices[0]?.message?.content;
+            if (content) return content.trim();
+        } catch (e) {
+            console.warn(' [RewriteAdminMessage] Groq failed, trying Gemini:', e.message.substring(0, 100));
+        }
+    }
+    
+    if (geminiClient) {
+        try {
+            const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash', systemInstruction: systemPrompt });
+            const response = await model.generateContent(userText);
+            const content = response.response?.text();
+            if (content) return content.trim();
+        } catch (e) {
+            console.warn(' [RewriteAdminMessage] Gemini failed:', e.message.substring(0, 100));
+        }
+    }
+    
+    return `${senderName} says: ${originalMessage}`;
+};
+
 const findAdminByName = (name, admins) => {
     const cleanSearch = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
     if (!cleanSearch) return null;
@@ -4996,11 +5056,19 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             const senderName = adminProfile?.name || 'Admin';
             const senderDisplay = `+${senderPhone}`;
             
-            const formattedMsg = `📩 *Message from ${senderName} (${senderDisplay}):*\n\n${rawMsg}\n\n— Sent via Tessa Bot`;
+            let rewrittenMsg;
+            try {
+                rewrittenMsg = await rewriteAdminMessage(senderName, rawMsg);
+            } catch (e) {
+                console.warn(' [Tell] AI rewrite failed, using raw message:', e.message);
+                rewrittenMsg = `${senderName} says: ${rawMsg}`;
+            }
+            
+            const formattedMsg = `📩 *Message from ${senderName} (${senderDisplay}):*\n\n${rewrittenMsg}\n\n— Sent via Tessa Bot`;
             
             try {
                 await sendAntiBanMessage(targetJid, { text: formattedMsg });
-                await sendAntiBanMessage(jid, { text: `✅ Message sent to *${resolvedAdmin.name}* (+${resolvedAdmin.phone}):\n\n"${rawMsg}"` });
+                await sendAntiBanMessage(jid, { text: `✅ Message successfully sent to *${resolvedAdmin.name}* (+${resolvedAdmin.phone}):\n\n"${rewrittenMsg}"` });
             } catch (e) {
                 await sendAntiBanMessage(jid, { text: `❌ Failed to send message to *${resolvedAdmin.name}*: ${e.message}` });
             }
