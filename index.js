@@ -2308,7 +2308,7 @@ const handleNicheFinder = async (jid, senderPhone, textInput) => {
 // ==========================================
 // 👁️ MULTIMODAL MEDIA VISION (CRAZZY WIDE HD EYES)
 // ==========================================
-const visionSystemPrompt = `You are TN Connect Super Bot, an elite cybersecurity expert, tech guru, business mentor, and team assistant.
+const visionSystemPrompt = `You are Tessa, an elite cybersecurity expert, tech guru, business mentor, and team assistant.
 An admin has tagged/mentioned you to analyze this image/video and respond.
 Provide a highly engaging, professional, but concise response.
 Strictly adhere to the following rules:
@@ -2487,11 +2487,12 @@ const handleAdminReplyAssistant = async (jid, senderPhone, msg, adminName) => {
                 'Suggested reply:\n' +
                 '[Your natural, high-vibe, human suggestion]';
             
-            let userPrompt = (msgText || '').replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
+            let userPrompt = (msgText || '').replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot|tessa)\b/i, '').trim();
             userPrompt = userPrompt.replace(/@tn connect super bot\.\./gi, '')
                                    .replace(/@tn connect super bot/gi, '')
                                    .replace(/tn connect super bot/gi, '')
                                    .replace(/super bot/gi, '')
+                                   .replace(/tessa/gi, '')
                                    .replace(/@\S+/g, '')
                                    .trim();
 
@@ -2541,7 +2542,7 @@ const callAIChat = async (senderPhone, userText, adminName) => {
     const history = adminChatHistories.get(senderPhone);
     if (history.length > 10) history.shift();
 
-    const systemPrompt = `You are the "TN Connect Super Bot", an ultra-smart, helpful, and friendly AI administrator assistant for TN Universities Connect.
+    const systemPrompt = `You are "Tessa", an ultra-smart, helpful, and friendly AI administrator assistant for TN Universities Connect.
 You are an expert in all fields of the world (including technology, business, cybersecurity, operations, marketing, and copywriting).
 Your personality is highly intelligent, expert, tech-savvy, helpful, and friendly.
 If you are asked about security, respond as an elite cyber security expert. If asked about technology or business, respond as a tech guru or business tycoon.
@@ -2637,7 +2638,7 @@ const callAISocialChat = async (senderPhone, contextText, adminName, groupSubjec
     
     if (customTopic) {
         brainName = `Custom Topic Brain (${customTopic}) 🎯`;
-        activeBrainPrompt = `You are TN Connect Super Bot, an absolute authority and highly engaging member of this WhatsApp group chat.
+        activeBrainPrompt = `You are Tessa, an absolute authority and highly engaging member of this WhatsApp group chat.
         
 CRITICAL CUSTOM TOPIC PERSONA RULES:
 1. WHO YOU ARE: A brilliant, supreme conversationalist who is highly knowledgeable about "${customTopic}". You lead, discuss, and offer witted insights on this topic.
@@ -2651,7 +2652,7 @@ CRITICAL CUSTOM TOPIC PERSONA RULES:
     }
     else if (isLeaderGroup) {
         brainName = 'Niche Leaders Administrator Brain 👑💼';
-        activeBrainPrompt = `You are TN Connect Super Bot, the supreme administrator, AI colleague, and key assistant to the student leaders of TN Universities Connect. You are in the Leaders WhatsApp group chat.
+        activeBrainPrompt = `You are Tessa, the supreme administrator, AI colleague, and key assistant to the student leaders of TN Universities Connect. You are in the Leaders WhatsApp group chat.
         
 CRITICAL LEADERS GROUP RULES:
 1. WHO YOU ARE: A supportive, highly capable co-administrator and peer. You provide smart, professional coordination tips, administrative suggestions, tech updates, and support for campus initiatives.
@@ -2663,7 +2664,7 @@ CRITICAL LEADERS GROUP RULES:
     }
     else if (isTechGroup(groupSubject)) {
         brainName = 'Tech Niche Boss Brain 💻🔒';
-        activeBrainPrompt = `You are TN Connect Super Bot, an absolute "BOSS OF TECH" and highly witted IT/Cybersecurity guru from Ghana. You are an active, organic member of this tech niche WhatsApp group chat.
+        activeBrainPrompt = `You are Tessa, an absolute "BOSS OF TECH" and highly witted IT/Cybersecurity guru from Ghana. You are an active, organic member of this tech niche WhatsApp group chat.
         
 CRITICAL TECH PERSONA RULES:
 1. WHO YOU ARE: A brilliant, supreme tech-head and cybersecurity expert. Flow with the conversation naturally. Blend tech/cybersecurity authority with fun, casual chat where appropriate.
@@ -2678,7 +2679,7 @@ CRITICAL TECH PERSONA RULES:
     } 
     else if (isAcademicGroup(groupSubject)) {
         brainName = 'Academic & Professional Mentor Brain 📚🎓';
-        activeBrainPrompt = `You are TN Connect Super Bot, a highly intelligent, encouraging, and bright university student in Ghana. You are an active member of this academic/professional niche WhatsApp group.
+        activeBrainPrompt = `You are Tessa, a highly intelligent, encouraging, and bright university student in Ghana. You are an active member of this academic/professional niche WhatsApp group.
         
 CRITICAL ACADEMIC RULES:
 1. WHO YOU ARE: A supportive, smart peer mentor. You provide useful study hacks, motivation, time management tips, and academic/career advice. ONLY complain about exams, mid-sems, or academic stress if the group is already actively discussing them. Otherwise, flow naturally with whatever topic they are discussing.
@@ -2691,7 +2692,7 @@ CRITICAL ACADEMIC RULES:
     } 
     else {
         brainName = 'Fun, Vibes & Social Lounge Brain 🎭🍿';
-        activeBrainPrompt = `You are TN Connect Super Bot, a highly funny, extremely social, and vibey Gen Z university student in Ghana. You are an active member of this general/fun WhatsApp group chat.
+        activeBrainPrompt = `You are Tessa, a highly funny, extremely social, and vibey Gen Z university student in Ghana. You are an active member of this general/fun WhatsApp group chat.
         
 CRITICAL FUN PERSONA RULES:
 1. WHO YOU ARE: The life of the chat! You talk about whatever topic is currently being discussed (sports, music, food, relationships, local trends). Do NOT force comments about student life, campus stress, exams, or gossip out of nowhere unless it perfectly fits the flow.
@@ -2905,8 +2906,26 @@ const saveLockedGroups = (jids) => {
 
 const LOCKED_GROUPS_DESC = 'locked_groups';
 
+const cleanBotPrefix = (text) => {
+    if (!text) return '';
+    let clean = text.trim().toLowerCase();
+    // Strip phone mentions like @123456789
+    clean = clean.replace(/@\d+/g, '').trim();
+    // Strip common bot prefixes/greetings
+    clean = clean.replace(/^(?:(?:hey|hi|hello|yo|please|dear|eh|eii|charley|chaley)\s+)?(?:bot|super\s*bot|gatekeeper|assistant|tessa)\b/i, '').trim();
+    clean = clean.replace(/@tn connect super bot\.\./gi, '')
+                 .replace(/@tn connect super bot/gi, '')
+                 .replace(/tn connect super bot/gi, '')
+                 .replace(/super bot/gi, '')
+                 .replace(/tessa/gi, '')
+                 .replace(/@\S+/g, '')
+                 .trim();
+    return clean;
+};
+
 const isGroupLockIntent = (lowerText) => {
-    const word = lowerText.trim().split(/\s+/)[0].toLowerCase();
+    const clean = cleanBotPrefix(lowerText);
+    const word = clean.trim().split(/\s+/)[0].toLowerCase();
     return word === 'lock' || word === 'unlock' || word === 'locks' || word === 'unlocks';
 };
 
@@ -4218,11 +4237,12 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
     // Strip bot mention if present
     cleanText = cleanText.replace(/@\d+/g, '').trim();
     // Strip common bot name starters
-    cleanText = cleanText.replace(/^(?:bot|gatekeeper|super bot)\b/i, '').trim();
+    cleanText = cleanText.replace(/^(?:bot|gatekeeper|super bot|tessa)\b/i, '').trim();
     cleanText = cleanText.replace(/@tn connect super bot\.\./gi, '')
                          .replace(/@tn connect super bot/gi, '')
                          .replace(/tn connect super bot/gi, '')
                          .replace(/super bot/gi, '')
+                         .replace(/tessa/gi, '')
                          .replace(/@\S+/g, '')
                          .trim();
                          
@@ -5291,14 +5311,14 @@ const isMessageAddressingBot = (msg, payload) => {
     }
     
     // 1. Check if it starts with bot name / prefix (e.g. "bot...", "super bot...", "gatekeeper...") with optional greeting prefixes
-    if (/^(?:(?:hey|hi|hello|yo|please|dear|eh|eii|charley|chaley)\s+)?(?:bot|super\s*bot|gatekeeper|assistant)\b/i.test(cleanText)) return true;
+    if (/^(?:(?:hey|hi|hello|yo|please|dear|eh|eii|charley|chaley)\s+)?(?:bot|super\s*bot|gatekeeper|assistant|tessa)\b/i.test(cleanText)) return true;
     
     // 2. Check if the bot's own number is tagged/mentioned
     const botPhone = client?.phoneNumber || (client?.sock?.user?.id ? senderPhoneFromJid(client.sock.user.id) : '');
     if (botPhone && cleanText.includes(botPhone)) return true;
     
     // 3. Check if it contains specific bot handles with '@' prefix
-    if (/@(tn\s*connect|super\s*bot|gatekeeper|assistant)\b/i.test(cleanText)) return true;
+    if (/@(tn\s*connect|super\s*bot|gatekeeper|assistant|tessa)\b/i.test(cleanText)) return true;
     
     // 4. Check if it's a quote reply to the bot's own message
     const quotedParticipant = contextInfo.participant || '';
@@ -5438,18 +5458,19 @@ async function processIncomingMessage(msg) {
         const isAddressing = isMessageAddressingBot(msg, payload);
         const { text: groupText, hasImage } = extractIncomingPayload(msg);
         const lower = (groupText || '').trim().toLowerCase();
+        const cleanLower = cleanBotPrefix(groupText);
 
         const isCommand = (
-            isBroadcastIntent(lower) ||
-            isGroupLockIntent(lower) ||
-            lower === 'add user' || lower === 'add member' || lower === 'add contact' || lower === 'add participant' ||
+            isBroadcastIntent(cleanLower) ||
+            isGroupLockIntent(cleanLower) ||
+            cleanLower === 'add user' || cleanLower === 'add member' || cleanLower === 'add contact' || cleanLower === 'add participant' ||
             adminAddUserStates.has(senderPhone) ||
             adminBroadcastStates.has(senderPhone) ||
             groupLockStates.has(senderPhone) ||
-            lower === 'join convo' || lower === 'join conversation' ||
-            lower === 'leave convo' || lower === 'leave conversation' ||
+            cleanLower === 'join convo' || cleanLower === 'join conversation' ||
+            cleanLower === 'leave convo' || cleanLower === 'leave conversation' ||
             socialWizardStates.has(senderPhone) ||
-            lower === 'filter' || lower === 'member filter'
+            cleanLower === 'filter' || cleanLower === 'member filter'
         );
 
         if (isAddressing) {
@@ -5502,11 +5523,12 @@ async function processIncomingMessage(msg) {
                         }
 
                         if (buffer && buffer.length > 100) {
-                            let cleanPrompt = (groupText || '').replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot|assistant)\b/i, '').trim();
+                            let cleanPrompt = (groupText || '').replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot|assistant|tessa)\b/i, '').trim();
                             cleanPrompt = cleanPrompt.replace(/@tn connect super bot\.\./gi, '')
                                                      .replace(/@tn connect super bot/gi, '')
                                                      .replace(/tn connect super bot/gi, '')
                                                      .replace(/super bot/gi, '')
+                                                     .replace(/tessa/gi, '')
                                                      .replace(/@\S+/g, '')
                                                      .trim();
                             
@@ -5532,11 +5554,12 @@ async function processIncomingMessage(msg) {
                     await sendAntiBanMessage(jid, { text: '⚠️ I tried to analyze the image/video, but I couldn\'t process the file. Please check the format.' });
                     return;
                 } else {
-                    let cleanPrompt = (groupText || '').replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot|assistant)\b/i, '').trim();
+                    let cleanPrompt = (groupText || '').replace(/@\d+/g, '').replace(/^(?:bot|gatekeeper|super bot|assistant|tessa)\b/i, '').trim();
                     cleanPrompt = cleanPrompt.replace(/@tn connect super bot\.\./gi, '')
                                              .replace(/@tn connect super bot/gi, '')
                                              .replace(/tn connect super bot/gi, '')
                                              .replace(/super bot/gi, '')
+                                             .replace(/tessa/gi, '')
                                              .replace(/@\S+/g, '')
                                              .trim();
                     if (cleanPrompt) {
@@ -5618,7 +5641,7 @@ async function processIncomingMessage(msg) {
                             for (const m of reversed) {
                                 const payload = extractIncomingPayload(m);
                                 const senderNumber = senderPhoneFromJid(m.key.participant || m.key.remoteJid);
-                                const name = m.key.fromMe ? 'TN Connect Bot' : senderNumber;
+                                const name = m.key.fromMe ? 'Tessa' : senderNumber;
                                 if (payload.text) {
                                     contextLines.push(`${name}: "${payload.text}"`);
                                 }
@@ -5741,7 +5764,7 @@ async function processIncomingMessage(msg) {
                         for (const m of reversed) {
                             const payload = extractIncomingPayload(m);
                             const senderNumber = senderPhoneFromJid(m.key.participant || m.key.remoteJid);
-                            const name = m.key.fromMe ? 'TN Connect Bot' : senderNumber;
+                            const name = m.key.fromMe ? 'Tessa' : senderNumber;
                             if (payload.text) {
                                 contextLines.push(`${name}: "${payload.text}"`);
                             }
@@ -6008,24 +6031,28 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). Keep all text plain
         if (handledReg) return;
     }
     if (isAdmin) {
-        const lower = (dmText || '').trim().toLowerCase();
-        const handledNatural = await handleNaturalLanguageCommand(jid, senderPhone, dmText, adminProfile, msg);
+        const hasLockWizard = groupLockStates.has(senderPhone);
+        const hasAddUserWizard = adminAddUserStates.has(senderPhone);
+        const hasBroadcastWizard = adminBroadcastStates.has(senderPhone);
+        const hasSocialWizard = socialWizardStates.has(senderPhone);
+        const hasWizard = hasLockWizard || hasAddUserWizard || hasBroadcastWizard || hasSocialWizard;
+
+        const cleanDmText = hasWizard ? dmText : cleanBotPrefix(dmText);
+        const lower = (cleanDmText || '').trim().toLowerCase();
+        const handledNatural = await handleNaturalLanguageCommand(jid, senderPhone, cleanDmText, adminProfile, msg);
         if (handledNatural) return;
 
-        const hasLockWizard = groupLockStates.has(senderPhone);
-        if (isGroupLockIntent(dmText) || hasLockWizard) {
-            const handledLock = await handleGroupLockDM(jid, senderPhone, dmText, adminProfile);
+        if (isGroupLockIntent(cleanDmText) || hasLockWizard) {
+            const handledLock = await handleGroupLockDM(jid, senderPhone, cleanDmText, adminProfile);
             if (handledLock) return;
         }
-        const hasAddUserWizard = adminAddUserStates.has(senderPhone);
         if (lower === 'add user' || lower === 'add member' || lower === 'add contact' || lower === 'add participant' || hasAddUserWizard) {
-            const handledAdd = await handleAdminAddUserDM(jid, senderPhone, dmText, adminProfile);
+            const handledAdd = await handleAdminAddUserDM(jid, senderPhone, cleanDmText, adminProfile);
             if (handledAdd) return;
         }
 
-        const hasBroadcastWizard = adminBroadcastStates.has(senderPhone);
-        if (dmText || hasBroadcastWizard) {
-            const handled = await handleAdminBroadcastDM(jid, senderPhone, dmText, adminProfile, sender, msg);
+        if (cleanDmText || hasBroadcastWizard) {
+            const handled = await handleAdminBroadcastDM(jid, senderPhone, cleanDmText, adminProfile, sender, msg);
             if (handled) return;
         }
 
