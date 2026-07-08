@@ -4905,33 +4905,110 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
     }
 
     // Command: Send message to an admin by name
-    const tellRegex = /^(?:send\s+a\s+message\s+to|send\s+message\s+to|tell|message)\s+([a-zA-Z0-9\s._\-\(\)]+?)\s+(?:telling\s+\S+\s+that|telling\s+\S+|that|to\s+tell\s+\S+\s+that|to\s+tell\s+\S+|to\s+tell|to\s+say|saying|to)\s+([\s\S]+)$/i;
-    const tellMatch = cleanText.match(tellRegex);
-    if (tellMatch) {
-        const targetName = tellMatch[1].trim();
-        const msgText = tellMatch[2].trim();
+    const starters = [
+        'send a message to',
+        'send message to',
+        'message',
+        'tell'
+    ];
+    
+    let matchedStarter = null;
+    for (const s of starters) {
+        if (lower.startsWith(s + ' ') || lower.startsWith(s + '\n')) {
+            matchedStarter = s;
+            break;
+        }
+    }
+    
+    if (matchedStarter) {
+        const rest = cleanText.substring(matchedStarter.length).trim();
+        const normRest = rest.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+        
+        const getCandidateKeysForName = (fullName) => {
+            const keys = new Set();
+            const normalized = fullName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+            if (!normalized) return [];
+            
+            keys.add(normalized);
+            
+            // Remove parentheses or brackets
+            const noBrackets = normalized.replace(/\s*[\(\[\{].*?[\)\]\}]\s*/g, ' ').trim().replace(/\s+/g, ' ');
+            if (noBrackets) keys.add(noBrackets);
+            
+            // Split by space and add individual words
+            const words = noBrackets.split(/\s+/).filter(w => w.length > 2);
+            for (const w of words) {
+                keys.add(w);
+            }
+            
+            // Split by dash/punctuation
+            const parts = noBrackets.split(/[\-\_]/).map(p => p.trim()).filter(p => p.length > 2);
+            for (const p of parts) {
+                keys.add(p);
+            }
+            
+            return Array.from(keys);
+        };
         
         const admins = await getAllAdmins();
-        const resolvedAdmin = findAdminByName(targetName, admins);
         
-        if (!resolvedAdmin) {
-            await sendAntiBanMessage(jid, { text: `❌ Could not find an admin matching the name *"${targetName}"*.\n\nType *list admins* to see all active admin names.` });
+        // Generate and sort candidate keys across all admins
+        const candidates = [];
+        for (const admin of admins) {
+            const keys = getCandidateKeysForName(admin.name);
+            for (const k of keys) {
+                candidates.push({ key: k, admin });
+            }
+        }
+        
+        // Sort candidates by key length descending
+        candidates.sort((a, b) => b.key.length - a.key.length);
+        
+        // Find matched candidate
+        let matchedCandidate = null;
+        for (const cand of candidates) {
+            if (normRest.startsWith(cand.key)) {
+                const nextChar = normRest.charAt(cand.key.length);
+                if (!nextChar || !/[a-z0-9]/i.test(nextChar)) {
+                    matchedCandidate = cand;
+                    break;
+                }
+            }
+        }
+        
+        if (matchedCandidate) {
+            let rawMsg = rest.substring(matchedCandidate.key.length).trim();
+            
+            // Clean leading punctuation
+            rawMsg = rawMsg.replace(/^[,\s.:;?!_\-\/]+/, '').trim();
+            
+            // Strip connector words at the beginning
+            const connectorRegex = /^(?:telling\s+\S+\s+that|telling\s+\S+|that|to\s+tell\s+\S+\s+that|to\s+tell\s+\S+|to\s+tell|to\s+say|saying|to)\s+/i;
+            rawMsg = rawMsg.replace(connectorRegex, '').trim();
+            
+            if (!rawMsg) {
+                await sendAntiBanMessage(jid, { text: `⚠️ Please specify a message to send to *${matchedCandidate.admin.name}*.\n\nExample: *tell ${matchedCandidate.admin.name} meeting is starting now*` });
+                return true;
+            }
+            
+            const resolvedAdmin = matchedCandidate.admin;
+            const targetJid = `${resolvedAdmin.phone}@s.whatsapp.net`;
+            const senderName = adminProfile?.name || 'Admin';
+            const senderDisplay = `+${senderPhone}`;
+            
+            const formattedMsg = `📩 *Message from ${senderName} (${senderDisplay}):*\n\n${rawMsg}\n\n— Sent via Tessa Bot`;
+            
+            try {
+                await sendAntiBanMessage(targetJid, { text: formattedMsg });
+                await sendAntiBanMessage(jid, { text: `✅ Message sent to *${resolvedAdmin.name}* (+${resolvedAdmin.phone}):\n\n"${rawMsg}"` });
+            } catch (e) {
+                await sendAntiBanMessage(jid, { text: `❌ Failed to send message to *${resolvedAdmin.name}*: ${e.message}` });
+            }
+            return true;
+        } else {
+            await sendAntiBanMessage(jid, { text: `❌ Could not find an admin matching that name.\n\nType *list admins* to see all active admin names.` });
             return true;
         }
-        
-        const targetJid = `${resolvedAdmin.phone}@s.whatsapp.net`;
-        const senderName = adminProfile?.name || 'Admin';
-        const senderDisplay = `+${senderPhone}`;
-        
-        const formattedMsg = `📩 *Message from ${senderName} (${senderDisplay}):*\n\n${msgText}\n\n— Sent via Tessa Bot`;
-        
-        try {
-            await sendAntiBanMessage(targetJid, { text: formattedMsg });
-            await sendAntiBanMessage(jid, { text: `✅ Message sent to *${resolvedAdmin.name}* (+${resolvedAdmin.phone}):\n\n"${msgText}"` });
-        } catch (e) {
-            await sendAntiBanMessage(jid, { text: `❌ Failed to send message to *${resolvedAdmin.name}*: ${e.message}` });
-        }
-        return true;
     }
 
     // 4. Anti-link toggle
