@@ -343,6 +343,7 @@ const adminBroadcastStates = new Map();
 const groupLockStates = new Map(); // lock/unlock wizard states per admin
 const registeredAdmins = new Map(); // local fallback cache of admins registered via WhatsApp DM
 const botAdminGroupCache = new Map(); // cache to track if the bot itself is an admin in groups
+let activeGroupOperation = null;
 
 const dbAdminCache = new Map();
 let lastDbAdminCacheTime = 0;
@@ -3152,6 +3153,9 @@ const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile,
     if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
         adminBroadcastStates.delete(senderPhone);
         adminRegistrationStates.delete(senderPhone);
+        if (activeGroupOperation && !activeGroupOperation.cancelled) {
+            activeGroupOperation.cancelled = true;
+        }
         await sendAntiBanMessage(jid, { text: '🚫 Broadcast cancelled.' });
         return true;
     }
@@ -3313,9 +3317,21 @@ const indices = lower.replace(/\./g, ',').split(',').map(s => parseInt(s.trim())
             : `"${broadcastText.substring(0, 100)}${broadcastText.length > 100 ? '...' : ''}"`;
         await sendAntiBanMessage(jid, { text: '📤 Sending broadcast to ' + state.selected.length + ' group(s)...\n\nSending: ' + summaryText });
 
+        if (activeGroupOperation && !activeGroupOperation.cancelled) {
+            await sendAntiBanMessage(jid, { text: `⚠️ An active operation (*${activeGroupOperation.type}*) is already running.\n\nType *cancel* or *stop* to stop it before running another command.` });
+            return true;
+        }
+
+        const currentOp = { id: Math.random().toString(), type: 'Broadcast to multiple groups', cancelled: false };
+        activeGroupOperation = currentOp;
+
         let sent = 0;
         let failed = 0;
         for (const group of state.selected) {
+            if (currentOp.cancelled) {
+                await sendAntiBanMessage(jid, { text: `🛑 *Broadcast Cancelled:* Stopped mid-execution. Sent: ${sent}/${state.selected.length}` });
+                break;
+            }
             console.log(' [Broadcast] Sending to ' + group.subject + ' (' + group.jid + ')');
             try {
                 if (mediaType) {
@@ -3349,14 +3365,23 @@ const indices = lower.replace(/\./g, ',').split(',').map(s => parseInt(s.trim())
                 }
                 console.log(' [Broadcast] Sent OK to ' + group.subject);
                 sent++;
-                await delay(Math.floor(Math.random() * 4000) + 3000);
+                if (state.selected.indexOf(group) < state.selected.length - 1) {
+                    await delay(Math.floor(Math.random() * 4000) + 3000);
+                }
             } catch (e) {
                 console.error(' [Broadcast] Failed to send to ' + group.subject + ':', e.message);
                 failed++;
             }
         }
+        
+        if (activeGroupOperation === currentOp) {
+            activeGroupOperation = null;
+        }
+        
         adminBroadcastStates.delete(senderPhone);
-        await sendAntiBanMessage(jid, { text: '✅ *Broadcast complete*\nSent: ' + sent + '/' + state.selected.length + '\nFailed: ' + failed });
+        if (!currentOp.cancelled) {
+            await sendAntiBanMessage(jid, { text: '✅ *Broadcast complete*\nSent: ' + sent + '/' + state.selected.length + '\nFailed: ' + failed });
+        }
         return true;
     }
     return false;
@@ -4250,6 +4275,15 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
     
     const lower = cleanText.toLowerCase();
     
+    // Cancellation handler for running background group operations (lock/unlock/broadcast)
+    if (lower === 'cancel' || lower === 'stop' || lower === 'abort') {
+        if (activeGroupOperation && !activeGroupOperation.cancelled) {
+            activeGroupOperation.cancelled = true;
+            await sendAntiBanMessage(jid, { text: `🛑 *Cancellation Requested:* Stopping the active operation (*${activeGroupOperation.type}*)...` });
+            return true;
+        }
+    }
+    
     // ==========================================================
     // Activation / Deactivation of Alerts and Commands
     // ==========================================================
@@ -4439,6 +4473,14 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             await sendAntiBanMessage(jid, { text: `❌ All groups were excluded by exception rule: "${exceptStr}".` });
             return true;
         }
+
+        if (activeGroupOperation && !activeGroupOperation.cancelled) {
+            await sendAntiBanMessage(jid, { text: `⚠️ An active operation (*${activeGroupOperation.type}*) is already running.\n\nType *cancel* or *stop* to stop it before running another command.` });
+            return true;
+        }
+
+        const currentOp = { id: Math.random().toString(), type: `${action === 'lock' ? 'Locking' : 'Unlocking'} all groups except specific ones`, cancelled: false };
+        activeGroupOperation = currentOp;
         
         const emoji = action === 'lock' ? '🔒' : '🔓';
         const actionWord = action === 'lock' ? 'Locking' : 'Unlocking';
@@ -4457,6 +4499,10 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         
         const results = [];
         for (let i = 0; i < targetGroups.length; i++) {
+            if (currentOp.cancelled) {
+                await sendAntiBanMessage(jid, { text: `🛑 *Operation Cancelled:* Group ${action}ing was stopped mid-execution. ${results.length} group(s) processed.` });
+                break;
+            }
             const g = targetGroups[i];
             try {
                 await client.setGroupAdminsOnly(g.jid, action === 'lock');
@@ -4471,6 +4517,10 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             }
         }
         
+        if (activeGroupOperation === currentOp) {
+            activeGroupOperation = null;
+        }
+        
         await sendAntiBanMessage(jid, { text: results.join('\n') + `\n\ncompleted ${action} all groups except ${exceptStr}` });
         return true;
     }
@@ -4482,6 +4532,15 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             await sendAntiBanMessage(jid, { text: '❌ No monitored groups available.' });
             return true;
         }
+
+        if (activeGroupOperation && !activeGroupOperation.cancelled) {
+            await sendAntiBanMessage(jid, { text: `⚠️ An active operation (*${activeGroupOperation.type}*) is already running.\n\nType *cancel* or *stop* to stop it before running another command.` });
+            return true;
+        }
+
+        const currentOp = { id: Math.random().toString(), type: 'Locking all groups', cancelled: false };
+        activeGroupOperation = currentOp;
+
         await sendAntiBanMessage(jid, { text: '🔒 *Locking all groups...*\nExecuting now with a safe, fast delay (3-6 seconds between groups).' });
         
         const locked = loadLockedGroups();
@@ -4490,6 +4549,10 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         
         const results = [];
         for (let i = 0; i < allGroups.length; i++) {
+            if (currentOp.cancelled) {
+                await sendAntiBanMessage(jid, { text: `🛑 *Operation Cancelled:* Locking all groups was stopped mid-execution. ${results.length} group(s) processed.` });
+                break;
+            }
             const g = allGroups[i];
             try {
                 await client.setGroupAdminsOnly(g.jid, true);
@@ -4503,6 +4566,11 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 await delay(delayMs);
             }
         }
+
+        if (activeGroupOperation === currentOp) {
+            activeGroupOperation = null;
+        }
+
         await sendAntiBanMessage(jid, { text: results.join('\n') + '\n\ncompleted lock all groups' });
         return true;
     }
@@ -4514,6 +4582,15 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             await sendAntiBanMessage(jid, { text: '❌ No monitored groups available.' });
             return true;
         }
+
+        if (activeGroupOperation && !activeGroupOperation.cancelled) {
+            await sendAntiBanMessage(jid, { text: `⚠️ An active operation (*${activeGroupOperation.type}*) is already running.\n\nType *cancel* or *stop* to stop it before running another command.` });
+            return true;
+        }
+
+        const currentOp = { id: Math.random().toString(), type: 'Unlocking all groups', cancelled: false };
+        activeGroupOperation = currentOp;
+
         await sendAntiBanMessage(jid, { text: '🔓 *Unlocking all groups...*\nExecuting now with a safe, fast delay (3-6 seconds between groups).' });
         
         const locked = loadLockedGroups();
@@ -4522,6 +4599,10 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         
         const results = [];
         for (let i = 0; i < allGroups.length; i++) {
+            if (currentOp.cancelled) {
+                await sendAntiBanMessage(jid, { text: `🛑 *Operation Cancelled:* Unlocking all groups was stopped mid-execution. ${results.length} group(s) processed.` });
+                break;
+            }
             const g = allGroups[i];
             try {
                 await client.setGroupAdminsOnly(g.jid, false);
@@ -4534,6 +4615,11 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 await delay(delayMs);
             }
         }
+
+        if (activeGroupOperation === currentOp) {
+            activeGroupOperation = null;
+        }
+
         await sendAntiBanMessage(jid, { text: results.join('\n') + '\n\ncompleted unlock all groups' });
         return true;
     }
@@ -4573,6 +4659,14 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             await sendAntiBanMessage(jid, { text: `❌ No monitored groups found matching role: *${roleType}*` });
             return true;
         }
+
+        if (activeGroupOperation && !activeGroupOperation.cancelled) {
+            await sendAntiBanMessage(jid, { text: `⚠️ An active operation (*${activeGroupOperation.type}*) is already running.\n\nType *cancel* or *stop* to stop it before running another command.` });
+            return true;
+        }
+
+        const currentOp = { id: Math.random().toString(), type: `${action === 'lock' ? 'Locking' : 'Unlocking'} all ${roleType} groups`, cancelled: false };
+        activeGroupOperation = currentOp;
         
         const actionWord = action === 'lock' ? 'Locking' : 'Unlocking';
         const actionEmoji = action === 'lock' ? '🔒' : '🔓';
@@ -4580,6 +4674,10 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         
         const results = [];
         for (let i = 0; i < targetGroups.length; i++) {
+            if (currentOp.cancelled) {
+                await sendAntiBanMessage(jid, { text: `🛑 *Operation Cancelled:* Role-specific group ${action}ing was stopped mid-execution. ${results.length} group(s) processed.` });
+                break;
+            }
             const g = targetGroups[i];
             try {
                 await client.setGroupAdminsOnly(g.jid, action === 'lock');
@@ -4593,6 +4691,10 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             }
         }
         
+        if (activeGroupOperation === currentOp) {
+            activeGroupOperation = null;
+        }
+
         await sendAntiBanMessage(jid, { text: results.join('\n') + `\n\ncompleted ${action} all ${roleType} groups` });
         return true;
     }
@@ -4627,11 +4729,23 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 await sendAntiBanMessage(jid, { text: `❌ Could not find any matching groups for: "${groupsStr}".` });
                 return true;
             }
+
+            if (activeGroupOperation && !activeGroupOperation.cancelled) {
+                await sendAntiBanMessage(jid, { text: `⚠️ An active operation (*${activeGroupOperation.type}*) is already running.\n\nType *cancel* or *stop* to stop it before running another command.` });
+                return true;
+            }
+
+            const currentOp = { id: Math.random().toString(), type: `Leaving group(s): ${groupsStr}`, cancelled: false };
+            activeGroupOperation = currentOp;
             
             await sendAntiBanMessage(jid, { text: `🚪 *Leaving ${uniqueMatched.length} matched group(s)...*\n${uniqueMatched.map(g => '• ' + g.subject).join('\n')}` });
             
             const results = [];
             for (let i = 0; i < uniqueMatched.length; i++) {
+                if (currentOp.cancelled) {
+                    await sendAntiBanMessage(jid, { text: `🛑 *Operation Cancelled:* Leaving groups was stopped mid-execution. ${results.length} group(s) processed.` });
+                    break;
+                }
                 const group = uniqueMatched[i];
                 try {
                     await client.leaveGroup(group.jid);
@@ -4647,6 +4761,10 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 if (i < uniqueMatched.length - 1) {
                     await delay(3000);
                 }
+            }
+
+            if (activeGroupOperation === currentOp) {
+                activeGroupOperation = null;
             }
             
             // Sync updated group list to Supabase to prevent showing exited groups in dashboard/broadcast lists
@@ -4715,6 +4833,15 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 await sendAntiBanMessage(jid, { text: `❌ Could not find any group matching "${name}".` });
                 return true;
             }
+
+            if (activeGroupOperation && !activeGroupOperation.cancelled) {
+                await sendAntiBanMessage(jid, { text: `⚠️ An active operation (*${activeGroupOperation.type}*) is already running.\n\nType *cancel* or *stop* to stop it before running another command.` });
+                return true;
+            }
+
+            const currentOp = { id: Math.random().toString(), type: `Locking group(s): ${name}`, cancelled: false };
+            activeGroupOperation = currentOp;
+
             await sendAntiBanMessage(jid, { text: `🔒 *Locking ${matched.length} matched group(s)...*\nMatching: ${name}` });
             
             const locked = loadLockedGroups();
@@ -4723,6 +4850,10 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             
             const results = [];
             for (let i = 0; i < matched.length; i++) {
+                if (currentOp.cancelled) {
+                    await sendAntiBanMessage(jid, { text: `🛑 *Operation Cancelled:* Locking groups was stopped mid-execution. ${results.length} group(s) processed.` });
+                    break;
+                }
                 const g = matched[i];
                 try {
                     await client.setGroupAdminsOnly(g.jid, true);
@@ -4735,6 +4866,11 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                     await delay(delayMs);
                 }
             }
+
+            if (activeGroupOperation === currentOp) {
+                activeGroupOperation = null;
+            }
+
             await sendAntiBanMessage(jid, { text: results.join('\n') + `\n\ncompleted lock group ${name}` });
             return true;
         }
@@ -4750,6 +4886,15 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 await sendAntiBanMessage(jid, { text: `❌ Could not find any group matching "${name}".` });
                 return true;
             }
+
+            if (activeGroupOperation && !activeGroupOperation.cancelled) {
+                await sendAntiBanMessage(jid, { text: `⚠️ An active operation (*${activeGroupOperation.type}*) is already running.\n\nType *cancel* or *stop* to stop it before running another command.` });
+                return true;
+            }
+
+            const currentOp = { id: Math.random().toString(), type: `Unlocking group(s): ${name}`, cancelled: false };
+            activeGroupOperation = currentOp;
+
             await sendAntiBanMessage(jid, { text: `🔓 *Unlocking ${matched.length} matched group(s)...*\nMatching: ${name}` });
             
             const locked = loadLockedGroups();
@@ -4758,6 +4903,10 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
             
             const results = [];
             for (let i = 0; i < matched.length; i++) {
+                if (currentOp.cancelled) {
+                    await sendAntiBanMessage(jid, { text: `🛑 *Operation Cancelled:* Unlocking groups was stopped mid-execution. ${results.length} group(s) processed.` });
+                    break;
+                }
                 const g = matched[i];
                 try {
                     await client.setGroupAdminsOnly(g.jid, false);
@@ -4770,6 +4919,11 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                     await delay(delayMs);
                 }
             }
+
+            if (activeGroupOperation === currentOp) {
+                activeGroupOperation = null;
+            }
+
             await sendAntiBanMessage(jid, { text: results.join('\n') + `\n\ncompleted unlock group ${name}` });
             return true;
         }
@@ -4813,12 +4967,24 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 const adminPhone = formatPhoneNumberGH(senderPhone);
                 const signature = '\n\n— ' + (adminProfile.name || 'Admin') + ', Admin\n' + adminPhone;
                 const msgText = rawMessage + signature;
+
+                if (activeGroupOperation && !activeGroupOperation.cancelled) {
+                    await sendAntiBanMessage(jid, { text: `⚠️ An active operation (*${activeGroupOperation.type}*) is already running.\n\nType *cancel* or *stop* to stop it before running another command.` });
+                    return true;
+                }
+
+                const currentOp = { id: Math.random().toString(), type: `Immediate Broadcast to: ${targetGroupsStr}`, cancelled: false };
+                activeGroupOperation = currentOp;
                 
                 await sendAntiBanMessage(jid, { text: `📤 *Broadcasting immediately to ${uniqueMatched.length} matched group(s)...*\n${uniqueMatched.map(g => '• ' + g.subject).join('\n')}` });
                 
                 let sent = 0;
                 let failed = 0;
                 for (let i = 0; i < uniqueMatched.length; i++) {
+                    if (currentOp.cancelled) {
+                        await sendAntiBanMessage(jid, { text: `🛑 *Operation Cancelled:* Immediate broadcast was stopped mid-execution. ${sent} group(s) sent.` });
+                        break;
+                    }
                     const group = uniqueMatched[i];
                     try {
                         await sendAntiBanMessage(group.jid, { text: msgText });
@@ -4831,7 +4997,14 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                         await delay(delayMs);
                     }
                 }
-                await sendAntiBanMessage(jid, { text: `✅ *Broadcast complete*\nSent: ${sent}/${uniqueMatched.length}\nFailed: ${failed}\n\ncompleted broadcast to ${targetGroupsStr}` });
+
+                if (activeGroupOperation === currentOp) {
+                    activeGroupOperation = null;
+                }
+
+                if (!currentOp.cancelled) {
+                    await sendAntiBanMessage(jid, { text: `✅ *Broadcast complete*\nSent: ${sent}/${uniqueMatched.length}\nFailed: ${failed}\n\ncompleted broadcast to ${targetGroupsStr}` });
+                }
                 return true;
             } else {
                 // No message body yet, trigger the wizard at CAPTURING_RAW_BODY step with groups pre-selected!
