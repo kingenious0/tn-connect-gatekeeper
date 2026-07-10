@@ -192,9 +192,72 @@ let antiban = null;
 const ACTIVE_CONVOS_FILE = './active_convos.json';
 const DEACTIVATED_ALERTS_FILE = './deactivated_alerts.json';
 const DEACTIVATED_COMMANDS_FILE = './deactivated_commands.json';
+const SCHEDULED_TASKS_FILE = './scheduled_tasks.json';
 
 const activeConvoGroups = new Set();
 const socialWizardStates = new Map();
+const adminScheduleStates = new Map();
+
+const loadScheduledTasks = () => {
+    if (!fs.existsSync(SCHEDULED_TASKS_FILE)) {
+        const defaultTasks = [
+            {
+                id: 'task_default_lock',
+                type: 'lock',
+                name: 'Daily Lock General Market Groups',
+                time: '22:00',
+                recurrence: 'daily',
+                target: 'general_market',
+                enabled: true,
+                lastRunDate: ''
+            },
+            {
+                id: 'task_default_unlock',
+                type: 'unlock',
+                name: 'Daily Unlock General Market Groups',
+                time: '06:00',
+                recurrence: 'daily',
+                target: 'general_market',
+                enabled: true,
+                lastRunDate: ''
+            }
+        ];
+        try {
+            fs.writeFileSync(SCHEDULED_TASKS_FILE, JSON.stringify(defaultTasks, null, 2));
+        } catch {}
+        return defaultTasks;
+    }
+    try {
+        const data = JSON.parse(fs.readFileSync(SCHEDULED_TASKS_FILE, 'utf-8'));
+        return Array.isArray(data) ? data : [];
+    } catch {
+        return [];
+    }
+};
+
+const saveScheduledTasks = (tasks) => {
+    try {
+        fs.writeFileSync(SCHEDULED_TASKS_FILE, JSON.stringify(tasks, null, 2));
+    } catch (e) {
+        console.error(' [Scheduler] Failed to save scheduled tasks:', e.message);
+    }
+    if (supabase) {
+        try {
+            supabase.from('gatekeeper_sessions').upsert({
+                phone: '_config_scheduled_tasks',
+                admin_name: 'config',
+                selected_groups: [],
+                discovered_groups: tasks,
+                files: [],
+                updated_at: new Date().toISOString()
+            }).then(() => {
+                console.log(` [Scheduler] Synchronized ${tasks.length} scheduled tasks to Supabase.`);
+            }).catch(se => {
+                console.warn(' [Scheduler] Failed to sync scheduled tasks to Supabase:', se.message);
+            });
+        } catch (_) {}
+    }
+};
 
 const deactivatedAlerts = new Set();
 const deactivatedCommands = new Set();
@@ -2692,6 +2755,13 @@ const callAIChat = async (senderPhone, userText, adminName) => {
     const admins = await getAllAdmins();
     const adminRosterStr = admins.map(a => `- ${a.name} (+${a.phone})`).join('\n');
 
+    const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const timetableLines = WEEKLY_TIMETABLE.map(item => {
+        const dayName = daysOfWeek[item.day];
+        const endStr = item.endTime ? ` to ${item.endTime}` : '';
+        return `- ${dayName} at ${item.time}${endStr}: ${item.activity} (${item.type})`;
+    }).join('\n');
+
     const systemPrompt = `You are "Tessa", an ultra-smart, helpful, and friendly AI administrator assistant for TN Universities Connect.
 You are an expert in all fields of the world (including technology, business, cybersecurity, operations, marketing, and copywriting).
 Your personality is highly intelligent, expert, tech-savvy, helpful, and friendly.
@@ -2713,6 +2783,10 @@ CRITICAL HUMAN & FORMATTING RULES:
 ADMINISTRATIVE ROSTER INFORMATION:
 You know the following administrators and their contact numbers. If the user asks for details about any admin, or mentions them, use this list:
 ${adminRosterStr}
+
+WEEKLY TIMETABLE INFORMATION:
+You monitor and execute the following automated weekly timetable. If the user asks about the schedule, timetable, or when events happen, use this configuration:
+${timetableLines}
 
 An admin named "${adminName}" is talking to you.`;
 
@@ -3018,6 +3092,23 @@ const loadDeactivatedCommandsFromSupabase = async () => {
     }
 };
 
+const loadScheduledTasksFromSupabase = async () => {
+    if (!supabase) return;
+    try {
+        const { data } = await supabase.from('gatekeeper_sessions').select('discovered_groups').eq('phone', '_config_scheduled_tasks').maybeSingle();
+        if (data?.discovered_groups && Array.isArray(data.discovered_groups)) {
+            fs.writeFileSync(SCHEDULED_TASKS_FILE, JSON.stringify(data.discovered_groups, null, 2));
+            console.log(' [Scheduler] Restored ' + data.discovered_groups.length + ' scheduled tasks from Supabase.');
+        } else {
+            const defaults = loadScheduledTasks();
+            saveScheduledTasks(defaults);
+        }
+    } catch (e) {
+        console.warn(' [Scheduler] Failed to restore scheduled tasks from Supabase:', e.message);
+        loadScheduledTasks();
+    }
+};
+
 const restoreSessionMetaFromSupabase = async () => {
     if (!supabase) return;
     try {
@@ -3288,6 +3379,380 @@ const handleAdminAddUserDM = async (jid, senderPhone, textInput, adminProfile) =
     return false;
 };
 
+
+const handleAdminScheduleDM = async (jid, senderPhone, textInput, adminProfile) => {
+    const activeState = adminScheduleStates.get(senderPhone);
+    const lower = (textInput || '').trim().toLowerCase();
+    
+    if (deactivatedCommands.has('schedule')) {
+        if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
+            adminScheduleStates.delete(senderPhone);
+            await sendAntiBanMessage(jid, { text: '🚫 Schedule configuration cancelled.' });
+            return true;
+        }
+        await sendAntiBanMessage(jid, { text: '❌ *Command Disabled:* The "schedule" command has been deactivated by administrators.' });
+        return true;
+    }
+
+    if (activeState && activeState.jid && activeState.jid !== jid) {
+        return false;
+    }
+
+    if (lower === 'cancel' || lower === 'abort' || lower === 'stop') {
+        adminScheduleStates.delete(senderPhone);
+        await sendAntiBanMessage(jid, { text: '🚫 Schedule configuration cancelled.' });
+        return true;
+    }
+
+    if (!activeState) {
+        const parts = lower.split(/\s+/);
+        const cmd = parts[0];
+        const sub = parts[1];
+        
+        if (sub === 'list' || cmd === 'schedules' || (parts.length === 1 && cmd === 'schedule')) {
+            if (parts.length === 1 && cmd === 'schedule') {
+                // Let it start wizard
+            } else {
+                const tasks = loadScheduledTasks();
+                if (tasks.length === 0) {
+                    await sendAntiBanMessage(jid, { text: '📅 *TN Connect Scheduler*\n\nThere are no scheduled tasks configured.' });
+                    return true;
+                }
+                const rows = tasks.map((t, idx) => {
+                    const status = t.enabled ? '✅ Enabled' : '❌ Disabled';
+                    const recurrence = t.recurrence === 'daily' ? 'Daily' : 'Once';
+                    const targetStr = t.target === 'all' ? 'All Groups' : t.target === 'general_market' ? 'General Market Groups' : 'Specific Group';
+                    return `${idx + 1}. *${t.name}* (ID: \`${t.id}\`)\n` +
+                           `   • Type: \`${t.type}\` | Recurrence: \`${recurrence}\` | Time: \`${t.time} UTC/GMT\`\n` +
+                           `   • Target: \`${targetStr}\` | Status: *${status}*` +
+                           (t.message ? `\n   • Msg: "_${t.message.substring(0, 50)}${t.message.length > 50 ? '...' : ''}_"` : '');
+                }).join('\n\n');
+                
+                const now = new Date();
+                const timeStr = now.toISOString().replace('T', ' ').substring(0, 19) + ' UTC/GMT';
+                await sendAntiBanMessage(jid, { text: `📅 *TN Connect Scheduled Tasks List*\n\n${rows}\n\n🕒 *Current Server Clock:* ${timeStr}\n\n*Manage schedules:*\n• *schedule enable [task_id]*\n• *schedule disable [task_id]*\n• *schedule remove [task_id]*\n• *schedule wizard* - create a new schedule` });
+                return true;
+            }
+        }
+        
+        if (sub === 'enable' || sub === 'activate' || sub === 'disable' || sub === 'deactivate') {
+            const taskId = parts.slice(2).join(' ').trim();
+            if (!taskId) {
+                await sendAntiBanMessage(jid, { text: '❌ Please specify the task ID. Example: *schedule enable task_default_lock*' });
+                return true;
+            }
+            const tasks = loadScheduledTasks();
+            const task = tasks.find(t => t.id === taskId);
+            if (!task) {
+                await sendAntiBanMessage(jid, { text: `❌ Task with ID \`${taskId}\` not found.` });
+                return true;
+            }
+            const isEnable = sub === 'enable' || sub === 'activate';
+            task.enabled = isEnable;
+            saveScheduledTasks(tasks);
+            await sendAntiBanMessage(jid, { text: `✅ Task *${task.name}* has been successfully *${isEnable ? 'ENABLED' : 'DISABLED'}*.` });
+            return true;
+        }
+        
+        if (sub === 'remove' || sub === 'delete' || sub === 'cancel') {
+            const taskId = parts.slice(2).join(' ').trim();
+            if (!taskId) {
+                await sendAntiBanMessage(jid, { text: '❌ Please specify the task ID. Example: *schedule remove task_default_lock*' });
+                return true;
+            }
+            let tasks = loadScheduledTasks();
+            const taskIndex = tasks.findIndex(t => t.id === taskId);
+            if (taskIndex === -1) {
+                await sendAntiBanMessage(jid, { text: `❌ Task with ID \`${taskId}\` not found.` });
+                return true;
+            }
+            const deletedName = tasks[taskIndex].name;
+            tasks.splice(taskIndex, 1);
+            saveScheduledTasks(tasks);
+            await sendAntiBanMessage(jid, { text: `✅ Task *${deletedName}* has been successfully removed.` });
+            return true;
+        }
+        
+        const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+        adminScheduleStates.set(senderPhone, {
+            step: 'CHOOSE_TYPE',
+            groups: allGroups,
+            data: {},
+            jid: jid
+        });
+        
+        await sendAntiBanMessage(jid, {
+            text: '📅 *TN Connect Scheduling Wizard*\n\nLet\'s create a scheduled task. Select the type of task by replying with the number:\n\n' +
+                  '1. 📢 *Broadcast Message* - send a message at a set time\n' +
+                  '2. 🔒 *Lock Group* - restrict messages to admin-only\n' +
+                  '3. 🔓 *Unlock Group* - allow all members to message\n\n' +
+                  'Type *cancel* to abort.'
+        });
+        return true;
+    }
+
+    const state = activeState;
+    if (state.step === 'CHOOSE_TYPE') {
+        if (lower === '1') {
+            state.data.type = 'broadcast';
+            state.data.name = 'Custom Broadcast';
+        } else if (lower === '2') {
+            state.data.type = 'lock';
+            state.data.name = 'Scheduled Group Lock';
+        } else if (lower === '3') {
+            state.data.type = 'unlock';
+            state.data.name = 'Scheduled Group Unlock';
+        } else {
+            await sendAntiBanMessage(jid, { text: '❌ Invalid choice. Reply with *1*, *2*, or *3*. (Or type *cancel*)' });
+            return true;
+        }
+        
+        state.step = 'CHOOSE_RECURRENCE';
+        await sendAntiBanMessage(jid, {
+            text: '📅 *Recurrence Rule*\n\nWhen should this run? Reply with the number:\n\n' +
+                  '1. 📅 *Daily* - runs every day at a specific time\n' +
+                  '2. ⏳ *Once* - runs one time at a specific date and time\n\n' +
+                  'Type *cancel* to abort.'
+        });
+        return true;
+    }
+
+    if (state.step === 'CHOOSE_RECURRENCE') {
+        if (lower === '1') {
+            state.data.recurrence = 'daily';
+            state.step = 'ENTER_TIME_DAILY';
+            await sendAntiBanMessage(jid, { text: '🕒 *Enter Execution Time*\n\nPlease reply with the daily execution time in 24-hour UTC/GMT format (e.g. *22:00* or *06:30*):' });
+        } else if (lower === '2') {
+            state.data.recurrence = 'once';
+            state.step = 'ENTER_TIME_ONCE';
+            await sendAntiBanMessage(jid, { text: '🕒 *Enter Execution Date & Time*\n\nPlease reply with the date and time in format: *YYYY-MM-DD HH:MM* (e.g. *2026-07-11 15:30* in UTC/GMT):' });
+        } else {
+            await sendAntiBanMessage(jid, { text: '❌ Invalid choice. Reply with *1* or *2*. (Or type *cancel*)' });
+        }
+        return true;
+    }
+
+    if (state.step === 'ENTER_TIME_DAILY') {
+        const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        if (!timeRegex.test(lower)) {
+            await sendAntiBanMessage(jid, { text: '❌ Invalid time format. Please use *HH:MM* in 24-hour format (e.g., *14:45*, *09:15*):' });
+            return true;
+        }
+        const [h, m] = lower.split(':');
+        const formattedTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        state.data.time = formattedTime;
+        
+        state.step = 'CHOOSE_TARGET';
+        const list = state.groups.map((g, i) => (i + 3) + '. ' + g.subject).join('\n');
+        await sendAntiBanMessage(jid, {
+            text: '🎯 *Select Target*\n\nWhich groups should this apply to? Reply with the number(s):\n\n' +
+                  '1. 🏪 *General Market Groups*\n' +
+                  '2. 🌍 *All Monitored Groups*\n' +
+                  list + '\n\n' +
+                  '(You can choose multiple numbers separated by commas, e.g. *1* or *3,5*)'
+        });
+        return true;
+    }
+
+    if (state.step === 'ENTER_TIME_ONCE') {
+        const datetimeRegex = /^\d{4}-\d{2}-\d{2}\s+([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        if (!datetimeRegex.test(textInput.trim())) {
+            await sendAntiBanMessage(jid, { text: '❌ Invalid date/time format. Please use *YYYY-MM-DD HH:MM* (e.g., *2026-07-11 15:30*):' });
+            return true;
+        }
+        const cleanedVal = textInput.trim();
+        const [datePart, timePart] = cleanedVal.split(/\s+/);
+        const [h, m] = timePart.split(':');
+        const formattedTime = `${datePart} ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        state.data.time = formattedTime;
+        
+        state.step = 'CHOOSE_TARGET';
+        const list = state.groups.map((g, i) => (i + 3) + '. ' + g.subject).join('\n');
+        await sendAntiBanMessage(jid, {
+            text: '🎯 *Select Target*\n\nWhich groups should this apply to? Reply with the number(s):\n\n' +
+                  '1. 🏪 *General Market Groups*\n' +
+                  '2. 🌍 *All Monitored Groups*\n' +
+                  list + '\n\n' +
+                  '(You can choose multiple numbers separated by commas, e.g. *1* or *3,5*)'
+        });
+        return true;
+    }
+
+    if (state.step === 'CHOOSE_TARGET') {
+        let target = '';
+        let targetName = '';
+        if (lower === '1') {
+            target = 'general_market';
+            targetName = 'General Market Groups';
+        } else if (lower === '2') {
+            target = 'all';
+            targetName = 'All Monitored Groups';
+        } else {
+            const indices = lower.split(/[,\s]+/).map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n >= 3 && n <= state.groups.length + 2);
+            if (!indices.length) {
+                await sendAntiBanMessage(jid, { text: '❌ Invalid selection. Reply with *1*, *2*, or numbers from the list (e.g. *3,4*):' });
+                return true;
+            }
+            const group = state.groups[indices[0] - 3];
+            target = group.jid;
+            targetName = group.subject;
+            if (indices.length > 1) {
+                await sendAntiBanMessage(jid, { text: `ℹ️ Scheduling for multiple specific groups will use the first selected group: *${targetName}*.` });
+            }
+        }
+        
+        state.data.target = target;
+        state.data.targetName = targetName;
+        
+        if (state.data.type === 'broadcast') {
+            state.step = 'ENTER_MESSAGE';
+            await sendAntiBanMessage(jid, { text: '📝 *Enter Broadcast Message*\n\nPlease reply with the text message you want to broadcast:' });
+            return true;
+        } else {
+            const id = 'task_' + Date.now();
+            state.data.id = id;
+            state.data.enabled = true;
+            state.data.lastRunDate = '';
+            
+            const actionWord = state.data.type === 'lock' ? 'Lock' : 'Unlock';
+            const recWord = state.data.recurrence === 'daily' ? 'Daily' : 'Once';
+            state.data.name = `${recWord} ${actionWord} ${targetName}`;
+            
+            const tasks = loadScheduledTasks();
+            tasks.push(state.data);
+            saveScheduledTasks(tasks);
+            
+            adminScheduleStates.delete(senderPhone);
+            await sendAntiBanMessage(jid, {
+                text: `✅ *Success! Task Scheduled Successfully!*\n\n` +
+                      `• *Task Name:* ${state.data.name}\n` +
+                      `• *ID:* \`${state.data.id}\`\n` +
+                      `• *Time:* ${state.data.time} UTC/GMT\n` +
+                      `• *Target:* ${targetName}\n` +
+                      `• *Status:* Active`
+            });
+            return true;
+        }
+    }
+
+    if (state.step === 'ENTER_MESSAGE') {
+        const msgText = textInput.trim();
+        if (!msgText) {
+            await sendAntiBanMessage(jid, { text: '❌ Message cannot be empty. Please type the message you want to broadcast:' });
+            return true;
+        }
+        
+        state.data.message = msgText;
+        const id = 'task_' + Date.now();
+        state.data.id = id;
+        state.data.enabled = true;
+        state.data.lastRunDate = '';
+        
+        const recWord = state.data.recurrence === 'daily' ? 'Daily' : 'Once';
+        state.data.name = `${recWord} Broadcast to ${state.data.targetName}`;
+        
+        const tasks = loadScheduledTasks();
+        tasks.push(state.data);
+        saveScheduledTasks(tasks);
+        
+        adminScheduleStates.delete(senderPhone);
+        await sendAntiBanMessage(jid, {
+            text: `✅ *Success! Broadcast Scheduled Successfully!*\n\n` +
+                  `• *Task Name:* ${state.data.name}\n` +
+                  `• *ID:* \`${state.data.id}\`\n` +
+                  `• *Time:* ${state.data.time} UTC/GMT\n` +
+                  `• *Message:* "_${msgText.substring(0, 100)}${msgText.length > 100 ? '...' : ''}_"\n\nI will run this task automatically at the scheduled time!`
+        });
+        return true;
+    }
+    
+    return false;
+};
+
+const handleVoiceNoteCommand = async (jid, text, isAdmin, msg) => {
+    const lower = (text || '').trim().toLowerCase();
+    
+    if (!lower.startsWith('vn ') && lower !== 'vn') {
+        return false;
+    }
+
+    if (deactivatedCommands.has('vn')) {
+        await sendAntiBanMessage(jid, { text: '❌ *Command Disabled:* The "vn" command has been deactivated by administrators.' });
+        return true;
+    }
+
+    const commandArg = (text || '').substring(2).trim();
+    const vnDir = path.join(__dirname, 'voice_notes');
+    
+    if (!fs.existsSync(vnDir)) {
+        try {
+            fs.mkdirSync(vnDir, { recursive: true });
+        } catch (e) {
+            console.error('Failed to create voice_notes directory:', e.message);
+        }
+    }
+
+    const supportedExts = ['.mp3', '.ogg', '.opus', '.m4a', '.wav', '.mp4'];
+
+    if (!commandArg || commandArg.toLowerCase() === 'list') {
+        try {
+            const files = fs.readdirSync(vnDir);
+            const vnFiles = files.filter(file => {
+                const ext = path.extname(file).toLowerCase();
+                return supportedExts.includes(ext);
+            });
+
+            if (vnFiles.length === 0) {
+                await sendAntiBanMessage(jid, { text: '🎵 *Voice Notes Roster*\n\nThere are no voice notes available in the `voice_notes` directory. Please upload audio files to use this command.' });
+                return true;
+            }
+
+            const rows = vnFiles.map((file, idx) => {
+                const name = path.basename(file, path.extname(file));
+                return `${idx + 1}. *${name}* (\`${path.extname(file)}\`)`;
+            }).join('\n');
+
+            await sendAntiBanMessage(jid, { text: `🎵 *TN Connect Voice Notes*\n\nHere are the available voice notes you can play using *vn [name]*:\n\n${rows}` });
+            return true;
+        } catch (e) {
+            await sendAntiBanMessage(jid, { text: `❌ Failed to list voice notes: ${e.message}` });
+            return true;
+        }
+    }
+
+    try {
+        const files = fs.readdirSync(vnDir);
+        let matchedFile = null;
+        
+        for (const file of files) {
+            const ext = path.extname(file).toLowerCase();
+            if (supportedExts.includes(ext)) {
+                const name = path.basename(file, path.extname(file)).toLowerCase();
+                if (name === commandArg.toLowerCase()) {
+                    matchedFile = file;
+                    break;
+                }
+            }
+        }
+
+        if (!matchedFile) {
+            await sendAntiBanMessage(jid, { text: `❌ Voice note *"${commandArg}"* not found. Type *vn list* to see available options.` });
+            return true;
+        }
+
+        const filePath = path.join(vnDir, matchedFile);
+        
+        await client.sendPresence(jid, 'recording');
+        await delay(2000 + Math.floor(Math.random() * 2000));
+        
+        await client.sendVoiceNote(jid, filePath, { quoted: msg });
+        return true;
+    } catch (e) {
+        console.error('Failed to send voice note:', e);
+        await sendAntiBanMessage(jid, { text: `❌ Error sending voice note: ${e.message}` });
+        return true;
+    }
+};
 
 const handleAdminBroadcastDM = async (jid, senderPhone, textInput, adminProfile, rawSender, originalMsg) => {
     const activeState = adminBroadcastStates.get(senderPhone);
@@ -3922,6 +4387,51 @@ const WEEKLY_TIMETABLE = [
 ];
 
 const sentTimetableAlerts = new Set();
+
+const formatWeeklyTimetable = () => {
+    const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const now = new Date();
+    const currentDay = now.getUTCDay();
+    
+    const grouped = {};
+    for (const item of WEEKLY_TIMETABLE) {
+        if (!grouped[item.day]) grouped[item.day] = [];
+        grouped[item.day].push(item);
+    }
+    
+    const scheduleRows = [];
+    for (let i = 0; i < 7; i++) {
+        const dayName = daysOfWeek[i];
+        const items = grouped[i] || [];
+        if (items.length === 0) continue;
+        
+        const isToday = i === currentDay;
+        const todayTag = isToday ? ' 👈 *[TODAY]*' : '';
+        
+        const itemLines = items.map(item => {
+            const endStr = item.endTime ? ` - ${item.endTime}` : '';
+            return `   • *${item.time}${endStr}*: ${item.activity} (${item.type === 'niche_market' ? 'Niche Market' : item.type === 'general_market' ? 'General Market' : item.type === 'niche_calls' ? 'WhatsApp Call' : 'Morning Reminders'})`;
+        }).join('\n');
+        
+        scheduleRows.push(`📅 *${dayName}*${todayTag}\n${itemLines}`);
+    }
+    
+    const timeStr = now.toISOString().replace('T', ' ').substring(0, 19) + ' UTC/GMT';
+    return `📋 *TN Connect Automated Weekly Timetable*\n\nHere is the full automated timetable configuration that I monitor and execute:\n\n${scheduleRows.join('\n\n')}\n\n🕒 *Current Server Clock:* ${timeStr}`;
+};
+
+const isTimetableRequest = (text) => {
+    if (!text) return false;
+    const lower = text.toLowerCase().trim();
+    const hasTimetable = lower.includes('timetable') || lower.includes('time-table') || lower.includes('schedule');
+    if (!hasTimetable) return false;
+    
+    const keywords = ['what', 'show', 'send', 'post', 'check', 'give', 'tell', 'view', 'get', 'please', 'pls', 'share', 'bot'];
+    const isDirectMatch = lower === 'timetable' || lower === 'schedule' || lower === 'weekly timetable' || lower === 'weekly schedule';
+    const hasKeyword = keywords.some(k => lower.includes(k));
+    return isDirectMatch || hasKeyword;
+};
+
 let pendingTakeoverState = null; // { activityName: "...", expiresAt: 0 }
 let activeTakeoverSession = null; // Stores confirmed takeover activity: { activityName, type, startTime, endTime }
 
@@ -4232,6 +4742,126 @@ const checkTimetableAlerts = async () => {
     }
 };
 
+const executeScheduledTask = async (task) => {
+    const allGroups = cachedGroups.length ? cachedGroups : await fetchLiveMonitoredGroups();
+    if (!allGroups.length) {
+        console.warn(' [Scheduler] No groups available for scheduled task execution.');
+        return;
+    }
+    
+    let targetJids = [];
+    if (task.target === 'all') {
+        const leaderJid = findLeaderGroupJid();
+        targetJids = allGroups.filter(g => g.jid !== leaderJid).map(g => g.jid);
+    } else if (task.target === 'general_market') {
+        targetJids = findGeneralMarketGroupJids();
+    } else {
+        targetJids = [task.target];
+    }
+    
+    if (task.type === 'broadcast') {
+        if (!task.message) return;
+        let sent = 0;
+        for (let i = 0; i < targetJids.length; i++) {
+            const jid = targetJids[i];
+            try {
+                await sendAntiBanMessage(jid, { text: task.message });
+                sent++;
+            } catch (e) {
+                console.error(` [Scheduler] Scheduled broadcast failed for ${jid}:`, e.message);
+            }
+            if (i < targetJids.length - 1) {
+                await delay(3000 + Math.floor(Math.random() * 3000));
+            }
+        }
+        console.log(` [Scheduler] Completed scheduled broadcast task. Sent: ${sent}/${targetJids.length}`);
+    } else if (task.type === 'lock' || task.type === 'unlock') {
+        const isLock = task.type === 'lock';
+        let processed = 0;
+        for (const jid of targetJids) {
+            try {
+                await client.setGroupAdminsOnly(jid, isLock);
+                processed++;
+            } catch (e) {
+                console.error(` [Scheduler] Scheduled ${task.type} failed for ${jid}:`, e.message);
+            }
+        }
+        
+        if (task.target === 'all' || task.target === 'general_market') {
+            const locked = loadLockedGroups();
+            let newLocked = [];
+            if (isLock) {
+                newLocked = [...new Set([...locked, ...targetJids])];
+            } else {
+                newLocked = locked.filter(jidVal => !targetJids.includes(jidVal));
+            }
+            saveLockedGroups(newLocked);
+        }
+        
+        console.log(` [Scheduler] Completed scheduled ${task.type} task. Processed ${processed}/${targetJids.length} groups.`);
+        
+        const leaderJid = findLeaderGroupJid();
+        if (leaderJid) {
+            const emoji = isLock ? '🔒' : '🔓';
+            const actionWord = isLock ? 'LOCKED' : 'UNLOCKED';
+            await sendAntiBanMessage(leaderJid, { text: `📅 *Scheduled Task Executed*\n\nTask: *${task.name}*\nAction: ${emoji} *${actionWord}*\nTarget: ${task.target === 'all' ? 'All Groups' : task.target === 'general_market' ? 'General Market Groups' : 'Specific Group'}\nProcessed: ${processed} group(s).` });
+        }
+    }
+};
+
+const checkScheduledTasks = async () => {
+    if (pausedUntil && Date.now() < pausedUntil) {
+        return;
+    }
+    const now = new Date();
+    const currentYear = now.getUTCFullYear();
+    const currentMonth = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const currentDate = String(now.getUTCDate()).padStart(2, '0');
+    const currentHour = String(now.getUTCHours()).padStart(2, '0');
+    const currentMinute = String(now.getUTCMinutes()).padStart(2, '0');
+    
+    const timeHHMM = `${currentHour}:${currentMinute}`;
+    const dateStr = `${currentYear}-${currentMonth}-${currentDate}`;
+    const datetimeStr = `${dateStr} ${timeHHMM}`;
+    
+    let tasks = loadScheduledTasks();
+    let updated = false;
+    
+    for (const task of tasks) {
+        if (!task.enabled) continue;
+        
+        let shouldExecute = false;
+        
+        if (task.recurrence === 'daily') {
+            if (task.time === timeHHMM && task.lastRunDate !== dateStr) {
+                shouldExecute = true;
+            }
+        } else if (task.recurrence === 'once') {
+            if (datetimeStr >= task.time && !task.lastRunDate) {
+                shouldExecute = true;
+            }
+        }
+        
+        if (shouldExecute) {
+            console.log(` [Scheduler] Executing scheduled task: ${task.name} (${task.type})`);
+            try {
+                await executeScheduledTask(task);
+                task.lastRunDate = dateStr;
+                if (task.recurrence === 'once') {
+                    task.enabled = false;
+                }
+                updated = true;
+            } catch (e) {
+                console.error(` [Scheduler] Failed to execute task ${task.id}:`, e.message);
+            }
+        }
+    }
+    
+    if (updated) {
+        saveScheduledTasks(tasks);
+    }
+};
+
 function schedulePeriodicTasks() {
     // Memory monitoring
     setInterval(() => {
@@ -4239,9 +4869,10 @@ function schedulePeriodicTasks() {
         console.log(' [Memory] RSS: ' + (m.rss / 1024 / 1024).toFixed(1) + 'MB | Heap: ' + (m.heapUsed / 1024 / 1024).toFixed(1) + 'MB');
     }, 60000);
 
-    // Weekly Timetable Alerts check loop (every 60 seconds)
+    // Weekly Timetable Alerts & Custom Scheduled Tasks check loop (every 60 seconds)
     setInterval(() => {
         checkTimetableAlerts().catch(err => console.error(' [Scheduler] Error in timetable tick:', err.message));
+        checkScheduledTasks().catch(err => console.error(' [Scheduler] Error in scheduled task tick:', err.message));
     }, 60000);
 
     // Group cache refresh
@@ -4476,7 +5107,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         'lock', 'unlock', 'broadcast', 'leave', 'promote', 'demote', 
         'filter', 'convo', 'join convo', 'leave convo', 'antilink', 
         'pause', 'resume', 'add user', 'add admin', 'remove admin',
-        'admins', 'tell', 'send message to'
+        'admins', 'tell', 'send message to', 'schedule'
     ];
 
     const toggleAlertRegex = /^(deactivate|disable|activate|enable)\s+alerts?\s+(.+)$/i;
@@ -4588,8 +5219,10 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         detectedCmd = 'add admin';
     } else if (lower.startsWith('remove admin') || lower.startsWith('delete admin') || lower.startsWith('remove from roster')) {
         detectedCmd = 'remove admin';
-    } else if (lower === 'timetable' || lower === 'schedule' || lower === 'weekly timetable' || lower === 'weekly schedule') {
+    } else if (lower === 'timetable' || lower === 'weekly timetable' || lower === 'weekly schedule') {
         detectedCmd = 'timetable';
+    } else if (lower.startsWith('schedule') || lower.startsWith('schedules')) {
+        detectedCmd = 'schedule';
     } else if (lower === 'group statuses' || lower === 'group status' || lower === 'check locks' || lower === 'lock status' || lower === 'locks') {
         detectedCmd = 'locks';
     } else if (lower === 'list groups' || lower === 'show groups' || lower === 'groups list' || lower === 'groups') {
@@ -5380,38 +6013,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         return true;
     }
 
-    // 6.1.8 Weekly Timetable Status Check (v1.6.2) - whitelisted for Admins
-    if (lower === 'timetable' || lower === 'schedule' || lower === 'weekly timetable' || lower === 'weekly schedule') {
-        const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        const now = new Date();
-        const currentDay = now.getUTCDay();
-        
-        // Group by day of week
-        const grouped = {};
-        for (const item of WEEKLY_TIMETABLE) {
-            if (!grouped[item.day]) grouped[item.day] = [];
-            grouped[item.day].push(item);
-        }
-        
-        const scheduleRows = [];
-        for (let i = 0; i < 7; i++) {
-            const dayName = daysOfWeek[i];
-            const items = grouped[i] || [];
-            if (items.length === 0) continue;
-            
-            const isToday = i === currentDay;
-            const todayTag = isToday ? ' 👈 *[TODAY]*' : '';
-            
-            const itemLines = items.map(item => {
-                const endStr = item.endTime ? ` - ${item.endTime}` : '';
-                return `   • *${item.time}${endStr}*: ${item.activity} (${item.type === 'niche_market' ? 'Niche Market' : item.type === 'general_market' ? 'General Market' : item.type === 'niche_calls' ? 'WhatsApp Call' : 'Morning Reminders'})`;
-            }).join('\n');
-            
-            scheduleRows.push(`📅 *${dayName}*${todayTag}\n${itemLines}`);
-        }
-        
-        const timeStr = now.toISOString().replace('T', ' ').substring(0, 19) + ' UTC/GMT';
-        const msgText = `📋 *TN Connect Automated Weekly Timetable*\n\nHere is the full automated timetable configuration that I monitor and execute:\n\n${scheduleRows.join('\n\n')}\n\n🕒 *Current Server Clock:* ${timeStr}`;
+    if (lower === 'timetable' || lower === 'weekly timetable' || lower === 'weekly schedule') {
+        const msgText = formatWeeklyTimetable();
         await sendAntiBanMessage(jid, { text: msgText });
         return true;
     }
@@ -5946,6 +6549,27 @@ async function processIncomingMessage(msg) {
             }
         }
 
+        // Intercept timetable queries in active conversation groups
+        if (activeConvoGroups.has(jid) && !msg.key.fromMe) {
+            const { text: groupText } = extractIncomingPayload(msg);
+            if (isTimetableRequest(groupText)) {
+                try { await client.sendPresence(jid, 'typing'); } catch (pe) {}
+                const timetableMsg = formatWeeklyTimetable();
+                await sendAntiBanMessage(jid, { text: timetableMsg, options: { quoted: msg } });
+                lastBotReplyTime.set(jid, Date.now());
+                return;
+            }
+            
+            const lowerGroupText = (groupText || '').trim().toLowerCase();
+            if (lowerGroupText.startsWith('vn ') || lowerGroupText === 'vn') {
+                const handledVN = await handleVoiceNoteCommand(jid, groupText, isAdmin, msg);
+                if (handledVN) {
+                    lastBotReplyTime.set(jid, Date.now());
+                    return;
+                }
+            }
+        }
+
         // 💬 Unified Message Handling for Group Chats (Direct Mentions & Spontaneous Banter)
         const isAddressing = isMessageAddressingBot(msg, payload);
         const { text: groupText, hasImage } = extractIncomingPayload(msg);
@@ -5962,7 +6586,9 @@ async function processIncomingMessage(msg) {
             cleanLower === 'join convo' || cleanLower === 'join conversation' ||
             cleanLower === 'leave convo' || cleanLower === 'leave conversation' ||
             socialWizardStates.has(senderPhone) ||
-            cleanLower === 'filter' || cleanLower === 'member filter'
+            cleanLower === 'filter' || cleanLower === 'member filter' ||
+            cleanLower.startsWith('vn') ||
+            cleanLower.startsWith('schedule')
         );
 
         if (isAddressing) {
@@ -6527,10 +7153,24 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). Keep all text plain
         const hasAddUserWizard = adminAddUserStates.has(senderPhone);
         const hasBroadcastWizard = adminBroadcastStates.has(senderPhone);
         const hasSocialWizard = socialWizardStates.has(senderPhone);
-        const hasWizard = hasLockWizard || hasAddUserWizard || hasBroadcastWizard || hasSocialWizard;
+        const hasScheduleWizard = adminScheduleStates.has(senderPhone);
+        const hasWizard = hasLockWizard || hasAddUserWizard || hasBroadcastWizard || hasSocialWizard || hasScheduleWizard;
 
         const cleanDmText = hasWizard ? dmText : cleanBotPrefix(dmText);
         const lower = (cleanDmText || '').trim().toLowerCase();
+        
+        // Handle voice note command
+        if (lower.startsWith('vn ') || lower === 'vn') {
+            const handledVN = await handleVoiceNoteCommand(jid, cleanDmText, isAdmin, msg);
+            if (handledVN) return;
+        }
+
+        // Handle schedule command before general natural language commands to avoid command conflicts
+        if (lower.startsWith('schedule') || lower.startsWith('schedules') || hasScheduleWizard) {
+            const handledSchedule = await handleAdminScheduleDM(jid, senderPhone, cleanDmText, adminProfile);
+            if (handledSchedule) return;
+        }
+
         const handledNatural = await handleNaturalLanguageCommand(jid, senderPhone, cleanDmText, adminProfile, msg);
         if (handledNatural) return;
 
@@ -7320,6 +7960,7 @@ server.listen(PORT, async () => {
     await loadActiveConvosFromSupabase();
     await loadDeactivatedAlertsFromSupabase();
     await loadDeactivatedCommandsFromSupabase();
+    await loadScheduledTasksFromSupabase();
     await loadWarnedMembers();
     antiLinkEnabled = loadAntiLink();
     pausedUntil = loadPauseState();

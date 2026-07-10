@@ -186,6 +186,30 @@ this.phoneNumber = rawId.split(':')[0].replace(/[^0-9]/g, '') || null;
         return this.sock.sendMessage(to, msg);
     }
 
+    async sendVoiceNote(to, audioBufferOrPath, options = {}) {
+        let audio;
+        if (Buffer.isBuffer(audioBufferOrPath)) {
+            audio = audioBufferOrPath;
+        } else if (typeof audioBufferOrPath === 'string') {
+            audio = fs.readFileSync(audioBufferOrPath);
+        } else {
+            throw new Error('Invalid audio data type passed to sendVoiceNote');
+        }
+        
+        const msg = {
+            audio: audio,
+            mimetype: options.mimetype || 'audio/mp4',
+            ptt: true
+        };
+        
+        const msgOptions = {};
+        if (options.quoted) {
+            msgOptions.quoted = options.quoted;
+        }
+        
+        return this.sock.sendMessage(to, msg, msgOptions);
+    }
+
     async setGroupAdminsOnly(groupId, value) {
         return this.sock.groupSettingUpdate(groupId, value ? 'announcement' : 'not_announcement');
     }
