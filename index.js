@@ -1698,12 +1698,32 @@ const detectAdminAlertsGroup = async () => {
         const groups = await client.fetchGroups();
         const allGroups = groups?.data || groups?.groups || groups?.results || (Array.isArray(groups) ? groups : []);
         const keyword = (process.env.ADMIN_ALERTS_GROUP_KEYWORD || 'admin alert').toLowerCase();
+        
+        let found = false;
         for (const g of Object.values(allGroups)) {
             const subject = ((g.subject || g.name || '') + '').toLowerCase();
             if (subject.includes('admin') && (subject.includes('alert') || subject.includes('broadcast') || subject.includes(keyword))) {
                 adminAlertsGroupJid = g.jid || g.id;
-                console.log(' [Alerts] Admin alerts group detected: ' + (g.subject || g.name));
+                console.log(' [Alerts] Admin alerts group detected: ' + (g.subject || g.name) + ' (' + adminAlertsGroupJid + ')');
+                found = true;
                 return;
+            }
+        }
+        
+        // Fallback to local session_meta cache if not found in live groups (e.g. during WhatsApp sync)
+        if (!found) {
+            const phone = activeSessionPhone || getBotAdminContext().phone;
+            if (phone) {
+                const meta = loadSessionMeta()[phone] || {};
+                const cachedDiscovered = meta.discoveredGroups || [];
+                for (const g of cachedDiscovered) {
+                    const subject = ((g.subject || g.name || '') + '').toLowerCase();
+                    if (subject.includes('admin') && (subject.includes('alert') || subject.includes('broadcast') || subject.includes(keyword))) {
+                        adminAlertsGroupJid = g.jid || g.id;
+                        console.log(' [Alerts] Admin alerts group JID resolved from cache: ' + (g.subject || g.name) + ' (' + adminAlertsGroupJid + ')');
+                        return;
+                    }
+                }
             }
         }
     } catch (e) {
@@ -1773,6 +1793,7 @@ const refreshDiscoveredGroups = async (phone) => {
         meta[phone] = { ...(meta[phone] || {}), discoveredGroups, updatedAt: new Date().toISOString() };
         saveSessionMeta(meta);
         triggerSessionBackup(phone, meta[phone].adminName || 'TN Connect Assistant', meta[phone].selectedGroups || [], discoveredGroups);
+        await detectAdminAlertsGroup();
         return discoveredGroups;
     } catch (e) {
         console.warn(' [Groups] Failed to refresh discovered groups:', e.message);
