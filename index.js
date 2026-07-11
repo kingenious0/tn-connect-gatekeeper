@@ -426,6 +426,34 @@ const saveVoiceMode = (val) => {
 };
 let adminVoiceTestMode = loadVoiceMode();
 
+const MODERATION_WARNINGS_FILE = './moderation_warnings.json';
+let silentDeleteEnabled = false;
+let userViolations = {};
+
+const loadModerationWarnings = () => {
+    if (!fs.existsSync(MODERATION_WARNINGS_FILE)) return;
+    try {
+        const data = JSON.parse(fs.readFileSync(MODERATION_WARNINGS_FILE, 'utf-8'));
+        silentDeleteEnabled = data.silentDeleteEnabled === true;
+        userViolations = data.userViolations || {};
+    } catch (e) {
+        console.error(' [Moderation] Failed to load warnings config:', e.message);
+    }
+};
+
+const saveModerationWarnings = () => {
+    try {
+        fs.writeFileSync(MODERATION_WARNINGS_FILE, JSON.stringify({
+            silentDeleteEnabled,
+            userViolations
+        }, null, 2));
+    } catch (e) {
+        console.error(' [Moderation] Failed to save warnings config:', e.message);
+    }
+};
+
+loadModerationWarnings();
+
 const dbAdminCache = new Map();
 let lastDbAdminCacheTime = 0;
 const groupWarningCooldowns = new Map();
@@ -2312,15 +2340,15 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
         // WhatsApp channel/group invites are ALWAYS restricted — never allowed
         if (lowerText.includes('whatsapp.com/channel/') || lowerText.includes('chat.whatsapp.com/')) {
             isLinkAllowed = false;
-            customLinkAlert = `⚠️ @${senderPhone} WhatsApp channel/group links not allowed — deleted`;
+            customLinkAlert = `WhatsApp channel/group links not allowed`;
         } else {
             const marketStatus = checkMarketDayWindow();
             if (marketStatus.active) {
                 isLinkAllowed = true;
             } else if (marketStatus.when === 'before') {
-                customLinkAlert = `⚠️ @${senderPhone} link sharing is not allowed yet! Please wait until the Market session begins at ${marketStatus.startTime} GMT! 🕒`;
+                customLinkAlert = `link sharing is not allowed yet! Please wait until the Market session begins at ${marketStatus.startTime} GMT! 🕒`;
             } else if (marketStatus.when === 'after') {
-                customLinkAlert = `⚠️ @${senderPhone} link sharing is restricted! The marketing period ended at ${marketStatus.endTime} GMT! 🕒`;
+                customLinkAlert = `link sharing is restricted! The marketing period ended at ${marketStatus.endTime} GMT! 🕒`;
             }
         }
     }
@@ -2347,13 +2375,6 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
             if (hasMedia) {
                 const marketStatus = checkMarketDayWindow();
                 if (!marketStatus.active) {
-                    // Build a human-friendly "next market" hint
-                    let hint = '';
-                    if (marketStatus.when === 'before') {
-                        hint = `The next Market session begins at *${marketStatus.startTime} GMT*.`;
-                    } else {
-                        hint = `The Market session ended at *${marketStatus.endTime} GMT*. Check the timetable for the next one.`;
-                    }
                     const humanDelay = 800 + Math.floor(Math.random() * 1500);
                     await delay(humanDelay);
                     try {
@@ -2362,50 +2383,11 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
                     } catch (de) {
                         try { fs.appendFileSync('_trace.log', 'ANTI_FLYER_DELETE_FAIL err=' + de.message.substring(0, 100) + '\n'); } catch (_) {}
                     }
-                    // Consolidated media warning batching (v1.6.8)
-                    let warningBuffer = groupMediaWarningBuffers.get(jid);
-                    if (!warningBuffer) {
-                        warningBuffer = {
-                            timer: null,
-                            senderPhones: new Set(),
-                            senders: new Set(),
-                            hint: hint
-                        };
-                        groupMediaWarningBuffers.set(jid, warningBuffer);
-                    }
-                    if (senderPhone) warningBuffer.senderPhones.add(senderPhone);
-                    warningBuffer.senders.add(sender);
-                    warningBuffer.hint = hint; // keep the latest hint
-
-                    if (!warningBuffer.timer) {
-                        warningBuffer.timer = setTimeout(async () => {
-                            try {
-                                const currentBuffer = groupMediaWarningBuffers.get(jid);
-                                if (!currentBuffer) return;
-                                groupMediaWarningBuffers.delete(jid);
-
-                                const phonesArray = Array.from(currentBuffer.senderPhones);
-                                const sendersArray = Array.from(currentBuffer.senders);
-
-                                if (phonesArray.length === 0) return;
-
-                                const mentionsTags = phonesArray.map(p => `@${p}`).join(' ');
-                                const warnText = `🚫 ${mentionsTags} Flyers, images & media are only allowed during active *Market Sessions*. ${currentBuffer.hint}`;
-
-                                const mentionsList = [...sendersArray];
-                                for (const phone of phonesArray) {
-                                    const jidString = phone + '@s.whatsapp.net';
-                                    if (!mentionsList.includes(jidString)) {
-                                        mentionsList.push(jidString);
-                                    }
-                                }
-
-                                await sendAntiBanMessage(jid, { text: warnText, options: { mentions: mentionsList } });
-                            } catch (err) {
-                                console.error(' [AntiFlyer] Error sending consolidated warning:', err.message);
-                            }
-                        }, 15000); // 15 seconds buffering window
-                    }
+                    
+                    const currentActivity = getCurrentTimetableActivity();
+                    const reason = `Market session isn't yet up. The current activity per the timetable is *${currentActivity}*`;
+                    await recordViolationAndCheckKick(jid, sender, senderPhone, reason);
+                    
                     const groupObj = cachedGroups.find(g => g.jid === jid);
                     const groupName = groupObj ? groupObj.subject : jid;
                     console.log(` [AntiFlyer] Removed out-of-market media from +${senderPhone} in ${groupName}`);
@@ -2434,30 +2416,13 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
             throw de;
         }
         
-        const alertText = isStatusMention
-            ? '⚠️ @' + senderPhone + ' status mentions not allowed — deleted'
+        const reason = isStatusMention
+            ? 'status mentions not allowed'
             : containsBadWord
-                ? '@' + senderPhone + ' 🚫 inappropriate language — deleted'
-                : customLinkAlert || '⚠️ @' + senderPhone + ' link sharing restricted — deleted';
+                ? 'inappropriate language is not allowed'
+                : customLinkAlert || 'link sharing restricted';
         
-        const mentionsList = [sender];
-        if (senderPhone) {
-            mentionsList.push(senderPhone + '@s.whatsapp.net');
-        }
-        
-        // Anti-Spam Public Warning Cooldown (v1.6.2) - At most 1 public warning every 30 seconds per group!
-        const now = Date.now();
-        const lastWarnTime = groupWarningCooldowns.get(jid) || 0;
-        if (now - lastWarnTime > 30000) {
-            await sendAntiBanMessage(jid, { text: alertText, options: { mentions: mentionsList } });
-            groupWarningCooldowns.set(jid, now);
-            try { fs.appendFileSync('_trace.log', 'MOD_ALERT_SENT\n'); } catch (e) { }
-        } else {
-            try { fs.appendFileSync('_trace.log', 'MOD_ALERT_SUPPRESSED_COOLDOWN\n'); } catch (e) { }
-            const groupObj = cachedGroups.find(g => g.jid === jid);
-            const groupName = groupObj ? groupObj.subject : jid;
-            console.log(` [Moderation] Public warning suppressed for ${groupName} due to 30s cooldown.`);
-        }
+        await recordViolationAndCheckKick(jid, sender, senderPhone, reason);
         
         const groupObj = cachedGroups.find(g => g.jid === jid);
         const groupName = groupObj ? groupObj.subject : jid;
@@ -4444,6 +4409,79 @@ function wireBaileysEvents() {
     };
 }
 
+const getCurrentTimetableActivity = () => {
+    const now = new Date();
+    const day = now.getUTCDay();
+    const hour = now.getUTCHours();
+    const minute = now.getUTCMinutes();
+    const currentTimeMs = (hour * 60 + minute) * 60000;
+    
+    for (const item of WEEKLY_TIMETABLE) {
+        if (item.day !== day) continue;
+        
+        if (item.endTime) {
+            const [startHour, startMin] = item.time.split(':').map(Number);
+            const [endHour, endMin] = item.endTime.split(':').map(Number);
+            const startTimeMs = (startHour * 60 + startMin) * 60000;
+            const endTimeMs = (endHour * 60 + endMin) * 60000;
+            
+            if (currentTimeMs >= startTimeMs && currentTimeMs < endTimeMs) {
+                return item.activity;
+            }
+        } else {
+            const [startHour, startMin] = item.time.split(':').map(Number);
+            const startTimeMs = (startHour * 60 + startMin) * 60000;
+            if (currentTimeMs >= startTimeMs) {
+                return item.activity;
+            }
+        }
+    }
+    return "Study & Discussion Period";
+};
+
+const recordViolationAndCheckKick = async (groupJid, senderJid, senderPhone, reasonText) => {
+    if (!senderPhone) return false;
+    
+    userViolations[senderPhone] = (userViolations[senderPhone] || 0) + 1;
+    saveModerationWarnings();
+    
+    const count = userViolations[senderPhone];
+    
+    if (count >= 4) {
+        try {
+            console.log(` [Moderation] Kicking +${senderPhone} from ${groupJid} due to ${count} violations.`);
+            await client.removeGroupParticipant(groupJid, [senderJid]);
+            
+            delete userViolations[senderPhone];
+            saveModerationWarnings();
+            
+            if (!silentDeleteEnabled) {
+                await sendAntiBanMessage(groupJid, {
+                    text: `🚷 @${senderPhone} has been removed from the group for violating the rules 4 times.`
+                });
+            }
+            return true;
+        } catch (err) {
+            console.error(` [Moderation] Failed to kick +${senderPhone}:`, err.message);
+        }
+    } else {
+        if (!silentDeleteEnabled) {
+            const remaining = 4 - count;
+            const warningText = `⚠️ @${senderPhone} ${reasonText}. If you violate the rules ${remaining} more time${remaining > 1 ? 's' : ''}, you will be removed from this group.`;
+            
+            const mentionsList = [senderJid, senderPhone + '@s.whatsapp.net'];
+            
+            const now = Date.now();
+            const lastWarnTime = groupWarningCooldowns.get(groupJid) || 0;
+            if (now - lastWarnTime > 30000) {
+                await sendAntiBanMessage(groupJid, { text: warningText, options: { mentions: mentionsList } });
+                groupWarningCooldowns.set(groupJid, now);
+            }
+        }
+    }
+    return false;
+};
+
 // ==========================================
 // 📅 AUTOMATED TIMETABLE NOTIFICATION ENGINE (v1.6.1)
 // ==========================================
@@ -5197,7 +5235,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         'lock', 'unlock', 'broadcast', 'leave', 'promote', 'demote', 
         'filter', 'convo', 'join convo', 'leave convo', 'antilink', 
         'pause', 'resume', 'add user', 'add admin', 'remove admin',
-        'admins', 'tell', 'send message to', 'schedule'
+        'admins', 'tell', 'send message to', 'schedule', 'silentdelete'
     ];
 
     const toggleAlertRegex = /^(deactivate|disable|activate|enable)\s+alerts?\s+(.+)$/i;
@@ -5299,6 +5337,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         detectedCmd = 'leave convo';
     } else if (lower.startsWith('anti link') || lower.startsWith('antilink')) {
         detectedCmd = 'antilink';
+    } else if (lower.startsWith('silent delete') || lower.startsWith('silentdelete')) {
+        detectedCmd = 'silentdelete';
     } else if (lower.startsWith('pause')) {
         detectedCmd = 'pause';
     } else if (lower.startsWith('resume')) {
@@ -5839,6 +5879,22 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         const emoji = antiLinkEnabled ? '✅' : '❌';
         await sendAntiBanMessage(jid, { text: `${emoji} Anti-link has been turned *${antiLinkEnabled ? 'ON' : 'OFF'}*.\n${antiLinkEnabled ? 'Links in all groups will be deleted.' : 'Links will no longer be deleted by the bot.'}` });
         addDebugLog(`[AntiLink] Toggle reply SENT to ${senderPhone}: now ${antiLinkEnabled}`);
+        return true;
+    }
+
+    // 4b. Silent-delete toggle
+    if (lower === 'silent delete on' || lower === 'silentdelete on' || lower === 'silent delete off' || lower === 'silentdelete off') {
+        const newVal = lower.endsWith('on');
+        addDebugLog(`[SilentDelete] Toggle from ${senderPhone}: ${lower} newVal=${newVal} current=${silentDeleteEnabled}`);
+        if (newVal === silentDeleteEnabled) {
+            await sendAntiBanMessage(jid, { text: `✅ Silent delete is already *${newVal ? 'ON' : 'OFF'}*. No change.` });
+            return true;
+        }
+        silentDeleteEnabled = newVal;
+        saveModerationWarnings();
+        const emoji = silentDeleteEnabled ? '🤫' : '🔊';
+        await sendAntiBanMessage(jid, { text: `${emoji} Silent delete has been turned *${silentDeleteEnabled ? 'ON' : 'OFF'}*.\n${silentDeleteEnabled ? 'Violations will be deleted silently without warning or tagging.' : 'Violations will be warned and tagged as normal.'}` });
+        addDebugLog(`[SilentDelete] Toggle reply SENT to ${senderPhone}: now ${silentDeleteEnabled}`);
         return true;
     }
 
