@@ -17,6 +17,7 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@hapi/boom": "^10.0.1",
+    "@lobehub/tts": "^5.1.2",
     "@supabase/supabase-js": "^2.106.0",
     "@whiskeysockets/baileys": "^7.0.0-rc13",
     "baileys-antiban": "^3.8.11",
@@ -26,7 +27,8 @@
     "openai": "^6.39.0",
     "pino": "^8.21.0",
     "qrcode": "^1.5.4",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode-terminal": "^0.12.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "localtunnel": "^2.0.2"

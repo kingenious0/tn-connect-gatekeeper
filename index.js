@@ -1,5 +1,9 @@
 require('dotenv').config();
 
+const { EdgeSpeechTTS } = require('@lobehub/tts');
+const ws = require('ws');
+global.WebSocket = ws;
+
 // ==========================================
 // 📋 IN-MEMORY DIAGNOSTIC LOG BUFFER
 // ==========================================
@@ -126,7 +130,6 @@ const path = require('path');
 const https = require('https');
 const http = require('http');
 const { createClient } = require('@supabase/supabase-js');
-const ws = require('ws');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const OpenAI = require('openai');
 const { generateChatScreenshot } = require('./chatScreenshot');
@@ -407,6 +410,7 @@ const groupLockStates = new Map(); // lock/unlock wizard states per admin
 const registeredAdmins = new Map(); // local fallback cache of admins registered via WhatsApp DM
 const botAdminGroupCache = new Map(); // cache to track if the bot itself is an admin in groups
 let activeGroupOperation = null;
+let adminVoiceTestMode = false;
 
 const dbAdminCache = new Map();
 let lastDbAdminCacheTime = 0;
@@ -1697,7 +1701,12 @@ const handleBusinessHubConversation = async (senderJid, textInput, bizHubRequest
         if (cleanResponse) {
             const readDelay = Math.floor(Math.random() * 2000) + 1500;
             await delay(readDelay);
-            await sendAntiBanMessage(senderJid, { text: cleanResponse });
+            const shouldSendVoice = (cleanResponse.length > 120) || (Math.random() < 0.30);
+            if (shouldSendVoice) {
+                await sendLiveVoiceNote(senderJid, cleanResponse, userPhone);
+            } else {
+                await sendAntiBanMessage(senderJid, { text: cleanResponse });
+            }
         }
         const sendAlertWithScreenshot = async (alertText) => {
             await sendAdminAlert(alertText);
@@ -1925,6 +1934,50 @@ async function sendAntiBanMessage(jid, content, retries = 3) {
         }
     }
 }
+
+const sendLiveVoiceNote = async (jid, textToSpeak, userPhone) => {
+    const sendJid = resolveJidForSend(jid);
+    const audioDir = path.join(__dirname, 'audio');
+    if (!fs.existsSync(audioDir)) {
+        try { fs.mkdirSync(audioDir, { recursive: true }); } catch (e) {}
+    }
+    const outputPath = path.join(audioDir, `live_${userPhone}_${Date.now()}.opus`);
+    try {
+        const tts = new EdgeSpeechTTS({ locale: 'en-GB' }); 
+        console.log(`🎙️ [Free Voice Engine] Requesting free neural stream from Edge endpoints...`);
+        
+        const response = await tts.create({
+            input: textToSpeak,
+            voice: 'en-GB-RyanNeural' // Clean, sharp, highly professional masculine neural voice
+        });
+
+        const buffer = Buffer.from(await response.arrayBuffer());
+        fs.writeFileSync(outputPath, buffer);
+
+        // Send visual native WhatsApp recording indicator
+        try { await client.sendPresence(sendJid, 'recording'); } catch (e) {}
+        
+        // Dynamic pacing delay based on word string length
+        const talkingDelay = Math.min(Math.max(textToSpeak.length * 65, 3000), 9000);
+        await delay(talkingDelay);
+        
+        try { await client.sendPresence(sendJid, 'composing'); } catch (e) {}
+
+        // Deliver the audio dynamically as a native blue-microphone voice note!
+        await client.sendVoiceNote(sendJid, outputPath);
+        console.log(`✅ [Free Voice Engine] Voice note delivered successfully to ${sendJid}`);
+    } catch (err) {
+        console.error("❌ Free voice engine execution exception:", err.message);
+        // Fallback to text if TTS fails
+        await sendAntiBanMessage(jid, { text: textToSpeak });
+    } finally {
+        // Clean up memory workspace footprint
+        if (fs.existsSync(outputPath)) {
+            try { fs.unlinkSync(outputPath); } catch (e) {}
+        }
+    }
+};
+
 
 const senderPhoneFromJid = (jid) => participantDigits(jid || '');
 
@@ -7186,6 +7239,17 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). Keep all text plain
         const hasScheduleWizard = adminScheduleStates.has(senderPhone);
         const hasWizard = hasLockWizard || hasAddUserWizard || hasBroadcastWizard || hasSocialWizard || hasScheduleWizard;
 
+        if (dmText && dmText.trim() === '!voicemode on') {
+            adminVoiceTestMode = true;
+            await sendAntiBanMessage(jid, { text: "🎯 *Voice Test Mode is now ACTIVE.* Every AI reply in this private DM will be sent strictly as a voice note." });
+            return;
+        }
+        if (dmText && dmText.trim() === '!voicemode off') {
+            adminVoiceTestMode = false;
+            await sendAntiBanMessage(jid, { text: "🚫 *Voice Test Mode is now DISABLED.* Returning to standard text/voice hybrid routing." });
+            return;
+        }
+
         const cleanDmText = hasWizard ? dmText : cleanBotPrefix(dmText);
         const lower = (cleanDmText || '').trim().toLowerCase();
         
@@ -7262,8 +7326,13 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). Keep all text plain
 
                         const aiResponse = await analyzeMediaWithProvider(buffer, mime, visionSystemPrompt, activePrompt);
                         if (aiResponse) {
-                            const cleanResponse = aiResponse.replace(/\*/g, '');
-                            await sendAntiBanMessage(jid, { text: cleanResponse });
+                            const cleanResponse = aiResponse.replace(/\*/g, '').trim();
+                            const shouldSendVoice = adminVoiceTestMode || (cleanResponse.length > 120) || (Math.random() < 0.30);
+                            if (shouldSendVoice) {
+                                await sendLiveVoiceNote(jid, cleanResponse, senderPhone);
+                            } else {
+                                await sendAntiBanMessage(jid, { text: cleanResponse });
+                            }
                             return;
                         }
                     }
@@ -7280,7 +7349,13 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). Keep all text plain
                 }
                 const aiResponse = await callAIChat(senderPhone, finalPrompt, adminProfile.name);
                 if (aiResponse) {
-                    await sendAntiBanMessage(jid, { text: aiResponse });
+                    const cleanResponse = aiResponse.replace(/\*/g, '').trim();
+                    const shouldSendVoice = adminVoiceTestMode || (cleanResponse.length > 120) || (Math.random() < 0.30);
+                    if (shouldSendVoice) {
+                        await sendLiveVoiceNote(jid, cleanResponse, senderPhone);
+                    } else {
+                        await sendAntiBanMessage(jid, { text: cleanResponse });
+                    }
                     return;
                 }
             }
