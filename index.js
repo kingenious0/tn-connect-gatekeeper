@@ -410,7 +410,21 @@ const groupLockStates = new Map(); // lock/unlock wizard states per admin
 const registeredAdmins = new Map(); // local fallback cache of admins registered via WhatsApp DM
 const botAdminGroupCache = new Map(); // cache to track if the bot itself is an admin in groups
 let activeGroupOperation = null;
-let adminVoiceTestMode = false;
+const VOICE_MODE_FILE = './voice_mode_config.json';
+const loadVoiceMode = () => {
+    if (!fs.existsSync(VOICE_MODE_FILE)) return false;
+    try {
+        return JSON.parse(fs.readFileSync(VOICE_MODE_FILE, 'utf-8')).enabled === true;
+    } catch {
+        return false;
+    }
+};
+const saveVoiceMode = (val) => {
+    try {
+        fs.writeFileSync(VOICE_MODE_FILE, JSON.stringify({ enabled: !!val }, null, 2));
+    } catch {}
+};
+let adminVoiceTestMode = loadVoiceMode();
 
 const dbAdminCache = new Map();
 let lastDbAdminCacheTime = 0;
@@ -2894,7 +2908,7 @@ An admin named "${adminName}" is talking to you.`;
     }
     if (geminiClient) {
         try {
-            const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash', systemInstruction: systemPrompt });
+            const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash-lite', systemInstruction: systemPrompt });
             const contents = history.map(h => ({
                 role: h.role === 'assistant' ? 'model' : 'user',
                 parts: [{ text: h.content }]
@@ -7241,11 +7255,13 @@ Keep it extremely short and raw (1 or 2 sentences maximum!). Keep all text plain
 
         if (dmText && dmText.trim() === '!voicemode on') {
             adminVoiceTestMode = true;
+            saveVoiceMode(true);
             await sendAntiBanMessage(jid, { text: "🎯 *Voice Test Mode is now ACTIVE.* Every AI reply in this private DM will be sent strictly as a voice note." });
             return;
         }
         if (dmText && dmText.trim() === '!voicemode off') {
             adminVoiceTestMode = false;
+            saveVoiceMode(false);
             await sendAntiBanMessage(jid, { text: "🚫 *Voice Test Mode is now DISABLED.* Returning to standard text/voice hybrid routing." });
             return;
         }
