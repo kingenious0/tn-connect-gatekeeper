@@ -1869,7 +1869,10 @@ const refreshDiscoveredGroups = async (phone) => {
 // ==========================================
 
 const resolveJidForSend = (jid) => {
-    // Keep LID JID as-is when sending back, because replying to the active LID JID ensures delivery in the active DM thread.
+    if (jid && jid.endsWith('@lid')) {
+        const phone = resolveLidToPhone(jid);
+        if (phone) return phone + '@s.whatsapp.net';
+    }
     return jid;
 };
 
@@ -1880,6 +1883,18 @@ async function sendAntiBanMessage(jid, content, retries = 3) {
         await delay(MIN_MESSAGE_INTERVAL_MS - sinceLast);
     }
     const textContent = (typeof content === 'string') ? content : (content.text || '');
+    const isAudio = !!(content && (content.audio || content.options?.ptt || (typeof content === 'object' && Object.keys(content).includes('audio'))));
+    const presenceType = isAudio ? 'recording' : 'typing';
+
+    if (textContent.length > 0 || isAudio) {
+        try {
+            await client.sendPresence(sendJid, presenceType);
+        } catch (pe) {}
+        // Dynamic humanized delay based on message length (capped at 4-6 seconds)
+        const typingDelay = Math.min(Math.max(textContent.length * 15, isAudio ? 2500 : 1000), 4500) + Math.floor(Math.random() * 1500);
+        await delay(typingDelay);
+    }
+
     addDebugLog(`[Send] Sending to ${sendJid.substring(0, 25)} (original: ${jid.substring(0, 20)}) len=${textContent.length}`);
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
@@ -4542,7 +4557,8 @@ const execute5MinBroadcast = async (activityName, isTest = false) => {
             console.error(` [Scheduler] Broadcast failed for ${group.subject}:`, e.message);
         }
         if (i < targetsFinal.length - 1) {
-            const pacingDelay = 3000 + Math.floor(Math.random() * 3000);
+            // Safe pacing delay to prevent ban: 15 to 35 seconds
+            const pacingDelay = 15000 + Math.floor(Math.random() * 20000);
             await delay(pacingDelay);
         }
     }
@@ -4591,7 +4607,8 @@ const executeMorningBroadcast = async (activityName) => {
             console.error(` [Scheduler] Morning broadcast failed for ${group.subject}:`, e.message);
         }
         if (i < targets.length - 1) {
-            const pacingDelay = 3000 + Math.floor(Math.random() * 3000);
+            // Safe pacing delay to prevent ban: 15 to 35 seconds
+            const pacingDelay = 15000 + Math.floor(Math.random() * 20000);
             await delay(pacingDelay);
         }
     }
@@ -4771,19 +4788,25 @@ const executeScheduledTask = async (task) => {
                 console.error(` [Scheduler] Scheduled broadcast failed for ${jid}:`, e.message);
             }
             if (i < targetJids.length - 1) {
-                await delay(3000 + Math.floor(Math.random() * 3000));
+                // Safe pacing delay to prevent ban: 15 to 35 seconds
+                await delay(15000 + Math.floor(Math.random() * 20000));
             }
         }
         console.log(` [Scheduler] Completed scheduled broadcast task. Sent: ${sent}/${targetJids.length}`);
     } else if (task.type === 'lock' || task.type === 'unlock') {
         const isLock = task.type === 'lock';
         let processed = 0;
-        for (const jid of targetJids) {
+        for (let i = 0; i < targetJids.length; i++) {
+            const jid = targetJids[i];
             try {
                 await client.setGroupAdminsOnly(jid, isLock);
                 processed++;
             } catch (e) {
                 console.error(` [Scheduler] Scheduled ${task.type} failed for ${jid}:`, e.message);
+            }
+            if (i < targetJids.length - 1) {
+                // Safe pacing delay to prevent ban: 15 to 35 seconds
+                await delay(15000 + Math.floor(Math.random() * 20000));
             }
         }
         
@@ -5281,7 +5304,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         const actionWord = action === 'lock' ? 'Locking' : 'Unlocking';
         
         let exText = excludedGroups.length > 0 ? `\nExcluded: ${excludedGroups.map(g => g.subject).join(', ')}` : '';
-        await sendAntiBanMessage(jid, { text: `${emoji} *${actionWord} all groups except specific ones...*${exText}\nExecuting on ${targetGroups.length} group(s) with a fast, human-paced delay (3-6 seconds between groups).` });
+        await sendAntiBanMessage(jid, { text: `${emoji} *${actionWord} all groups except specific ones...*${exText}\nExecuting on ${targetGroups.length} group(s) with a safe, human-paced delay (15-35 seconds between groups).` });
         
         const locked = loadLockedGroups();
         let newLocked = [];
@@ -5306,8 +5329,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
             }
             if (i < targetGroups.length - 1) {
-                // Humanized fast delay: 3 to 6 seconds
-                const delayMs = 3000 + Math.floor(Math.random() * 3000);
+                // Safe pacing delay to prevent ban: 15 to 35 seconds
+                const delayMs = 15000 + Math.floor(Math.random() * 20000);
                 await delay(delayMs);
             }
         }
@@ -5336,7 +5359,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         const currentOp = { id: Math.random().toString(), type: 'Locking all groups', cancelled: false };
         activeGroupOperation = currentOp;
 
-        await sendAntiBanMessage(jid, { text: '🔒 *Locking all groups...*\nExecuting now with a safe, fast delay (3-6 seconds between groups).' });
+        await sendAntiBanMessage(jid, { text: '🔒 *Locking all groups...*\nExecuting now with a safe, human-paced delay (15-35 seconds between groups).' });
         
         const locked = loadLockedGroups();
         const newLocked = [...new Set([...locked, ...allGroups.map(g => g.jid)])];
@@ -5356,8 +5379,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
             }
             if (i < allGroups.length - 1) {
-                // Fast delay: 3 to 6 seconds
-                const delayMs = 3000 + Math.floor(Math.random() * 3000);
+                // Safe pacing delay to prevent ban: 15 to 35 seconds
+                const delayMs = 15000 + Math.floor(Math.random() * 20000);
                 await delay(delayMs);
             }
         }
@@ -5386,7 +5409,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         const currentOp = { id: Math.random().toString(), type: 'Unlocking all groups', cancelled: false };
         activeGroupOperation = currentOp;
 
-        await sendAntiBanMessage(jid, { text: '🔓 *Unlocking all groups...*\nExecuting now with a safe, fast delay (3-6 seconds between groups).' });
+        await sendAntiBanMessage(jid, { text: '🔓 *Unlocking all groups...*\nExecuting now with a safe, human-paced delay (15-35 seconds between groups).' });
         
         const locked = loadLockedGroups();
         const newLocked = locked.filter(jidVal => !allGroups.some(g => g.jid === jidVal));
@@ -5406,7 +5429,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
             }
             if (i < allGroups.length - 1) {
-                const delayMs = 3000 + Math.floor(Math.random() * 3000);
+                // Safe pacing delay to prevent ban: 15 to 35 seconds
+                const delayMs = 15000 + Math.floor(Math.random() * 20000);
                 await delay(delayMs);
             }
         }
@@ -5465,7 +5489,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         
         const actionWord = action === 'lock' ? 'Locking' : 'Unlocking';
         const actionEmoji = action === 'lock' ? '🔒' : '🔓';
-        await sendAntiBanMessage(jid, { text: `${actionEmoji} *${actionWord} all ${roleType} groups...*\nExecuting now on ${targetGroups.length} group(s) with a safe, human-paced delay (3-6 seconds between groups).` });
+        await sendAntiBanMessage(jid, { text: `${actionEmoji} *${actionWord} all ${roleType} groups...*\nExecuting now on ${targetGroups.length} group(s) with a safe, human-paced delay (15-35 seconds between groups).` });
         
         const results = [];
         for (let i = 0; i < targetGroups.length; i++) {
@@ -5481,7 +5505,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                 results.push(`❌ ${g.subject} → ${e.message.substring(0, 60)}`);
             }
             if (i < targetGroups.length - 1) {
-                const delayMs = 3000 + Math.floor(Math.random() * 3000);
+                // Safe pacing delay to prevent ban: 15 to 35 seconds
+                const delayMs = 15000 + Math.floor(Math.random() * 20000);
                 await delay(delayMs);
             }
         }
@@ -5814,7 +5839,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                     results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
                 }
                 if (i < matched.length - 1) {
-                    const delayMs = 3000 + Math.floor(Math.random() * 3000);
+                    // Safe pacing delay to prevent ban: 15 to 35 seconds
+                    const delayMs = 15000 + Math.floor(Math.random() * 20000);
                     await delay(delayMs);
                 }
             }
@@ -5867,7 +5893,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                     results.push('❌ ' + g.subject + ' → ' + e.message.substring(0, 60));
                 }
                 if (i < matched.length - 1) {
-                    const delayMs = 3000 + Math.floor(Math.random() * 3000);
+                    // Safe pacing delay to prevent ban: 15 to 35 seconds
+                    const delayMs = 15000 + Math.floor(Math.random() * 20000);
                     await delay(delayMs);
                 }
             }
@@ -5945,7 +5972,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
                         failed++;
                     }
                     if (i < uniqueMatched.length - 1) {
-                        const delayMs = 3000 + Math.floor(Math.random() * 3000);
+                        // Safe pacing delay to prevent ban: 15 to 35 seconds
+                        const delayMs = 15000 + Math.floor(Math.random() * 20000);
                         await delay(delayMs);
                     }
                 }
@@ -6808,9 +6836,11 @@ async function processIncomingMessage(msg) {
             }
         }
 
-        // Rule: For group messages, only let it fall through to command handlers if an admin explicitly addressed the bot with a command.
+        // Rule: For group messages, only let it fall through to command handlers if an admin explicitly addressed the bot with a command
+        // OR if the message is in the dedicated admin alerts group (since it is a control group for admins).
         // In all other cases (e.g. general discussion, non-admins, or non-commands), we return immediately.
-        if (!isAdmin || !isAddressing || !isCommand) return;
+        const isAdminAlertsGroup = jid === adminAlertsGroupJid;
+        if (!isAdmin || (!isAddressing && !isAdminAlertsGroup) || !isCommand) return;
     }
     const { text: dmText } = extractIncomingPayload(msg);
     // Supreme Social Convo selection response
