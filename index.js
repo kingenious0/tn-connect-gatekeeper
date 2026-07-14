@@ -4319,8 +4319,7 @@ function wireBaileysEvents() {
                         await supabase.from('bot_auth').delete().eq('id', 'creds');
                         console.log(' [Auth] Wiped credentials from Supabase.');
                     }
-                    const authPath = path.join(AUTH_FOLDER, 'creds.json');
-                    if (fs.existsSync(authPath)) fs.rmSync(authPath, { force: true });
+                    if (fs.existsSync(AUTH_FOLDER)) fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
                     console.log(' [Auth] Wiped credentials from local disk and Supabase.');
                 } catch (clearErr) {
                     console.error(' [Auth] Failed to clear credentials:', clearErr.message);
