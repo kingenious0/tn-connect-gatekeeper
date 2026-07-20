@@ -3420,11 +3420,37 @@ const handleAdminAddUserDM = async (jid, senderPhone, textInput, adminProfile) =
             const gjid = selectedJids[i];
             const groupSubject = state.groupSubjects[state.groupJids.indexOf(gjid)] || gjid;
             try {
-                await client.addGroupParticipant(gjid, state.phone);
-                results.push(`✅ Added to *${groupSubject}*`);
-                successCount++;
+                const response = await client.addGroupParticipant(gjid, state.phone);
+                const participantResult = response && response[0];
+                const status = participantResult ? String(participantResult.status) : 'unknown';
+
+                if (status === '200') {
+                    results.push(`✅ Added to *${groupSubject}*`);
+                    successCount++;
+                } else if (status === '409') {
+                    results.push(`ℹ️ Already in *${groupSubject}* (No action needed)`);
+                    successCount++;
+                } else if (status === '403') {
+                    let inviteLink = '';
+                    try {
+                        const invite = await client.fetchGroupInviteCode(gjid);
+                        if (invite && invite.code) {
+                            inviteLink = `\n   👉 Invite: https://chat.whatsapp.com/${invite.code}`;
+                        }
+                    } catch (inviteErr) {
+                        console.warn('Failed to fetch group invite code:', inviteErr.message);
+                    }
+                    results.push(`❌ Privacy Blocked for *${groupSubject}*${inviteLink}`);
+                    failedCount++;
+                } else if (status === '408') {
+                    results.push(`❌ Left recently from *${groupSubject}* (Cannot add back yet)`);
+                    failedCount++;
+                } else {
+                    results.push(`❌ Failed for *${groupSubject}* (Code: ${status})`);
+                    failedCount++;
+                }
             } catch (e) {
-                results.push(`❌ Failed for *${groupSubject}*: ${e.message.substring(0, 60)}`);
+                results.push(`❌ Connection Failed for *${groupSubject}*: ${e.message.substring(0, 60)}`);
                 failedCount++;
             }
             if (i < selectedJids.length - 1) {
