@@ -456,6 +456,7 @@ loadModerationWarnings();
 
 const dbAdminCache = new Map();
 let lastDbAdminCacheTime = 0;
+let isRefreshingAdminCache = false;
 const groupWarningCooldowns = new Map();
 const groupConvoTracker = new Map(); // groupJid -> { silentCount, currentChance }
 const lastGroupActivityTime = new Map();
@@ -463,6 +464,8 @@ const lastBotReplyTime = new Map();
 
 const refreshDbAdminCache = async () => {
     if (!supabase) return;
+    if (isRefreshingAdminCache) return; // prevent concurrent fetches
+    isRefreshingAdminCache = true;
     try {
         const { data, error } = await supabase.from('gatekeeper_sessions')
             .select('phone, admin_name, role').neq('role', 'core_gatekeeper_bot');
@@ -480,6 +483,8 @@ const refreshDbAdminCache = async () => {
         console.log(` [AdminCache] Loaded ${dbAdminCache.size} admin sessions from Supabase.`);
     } catch (e) {
         console.warn(' [AdminCache] Failed to refresh admin cache:', e.message);
+    } finally {
+        isRefreshingAdminCache = false;
     }
 };
 
@@ -2061,8 +2066,15 @@ const lookupBroadcastAdmin = async (senderPhone, rawJid) => {
     if (rosterMatch) return { phone: rosterMatch.phone, name: resolveAdminDisplayName(rosterMatch.admin_name) };
     if (supabase) {
         const now = Date.now();
-        if (dbAdminCache.size === 0 || (now - lastDbAdminCacheTime > 120000)) {
-            refreshDbAdminCache().catch(() => {});
+        const cacheStale = dbAdminCache.size === 0 || (now - lastDbAdminCacheTime > 120000);
+        if (cacheStale) {
+            if (dbAdminCache.size === 0) {
+                // Cache is cold — await so we don't read empty data
+                await refreshDbAdminCache().catch(() => {});
+            } else {
+                // Cache is warm but TTL expired — refresh in background, serve stale
+                refreshDbAdminCache().catch(() => {});
+            }
         }
         const cached = dbAdminCache.get(senderPhone);
         if (cached && cached.role !== 'core_gatekeeper_bot' && isBroadcastAdminRole(cached.role)) {
