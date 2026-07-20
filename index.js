@@ -166,6 +166,16 @@ const saveAntiLink = (val) => {
     try { fs.writeFileSync(ANTI_LINK_FILE, JSON.stringify({ enabled: !!val }, null, 2)); } catch {}
 };
 
+const ANTI_BADWORDS_FILE = './antibadwords_config.json';
+let antiBadWordsEnabled = true;
+const loadAntiBadWords = () => {
+    if (!fs.existsSync(ANTI_BADWORDS_FILE)) return true;
+    try { return JSON.parse(fs.readFileSync(ANTI_BADWORDS_FILE, 'utf-8')).enabled !== false; } catch { return true; }
+};
+const saveAntiBadWords = (val) => {
+    try { fs.writeFileSync(ANTI_BADWORDS_FILE, JSON.stringify({ enabled: !!val }, null, 2)); } catch {}
+};
+
 const loadPauseState = () => {
     if (!fs.existsSync(PAUSE_FILE)) return null;
     try {
@@ -514,11 +524,10 @@ const BANNED_KEYWORDS = [
     'bitch', 'b!tch', 'bich', 'bitches', 'son of a bitch', 'sonofabitch',
     'bastard', 'bastards',
     'cock', 'dick', 'd1ck', 'd!ck', 'dickhead',
-    'pussy', 'puss', 'pussi',
-    'whore', 'hoe', 'hoes',
+    'pussy', 'pussi',
+    'whore',
     'slut', 'sluts',
     'damn', 'damm', 'goddamn', 'goddamm',
-    'bloody',
     'nigga', 'nigger', 'niggas',
     'retard', 'retarded', 'r3tard',
     'idiot', 'idiots', 'idiotic',
@@ -541,7 +550,7 @@ const BANNED_KEYWORDS = [
     'cunt',
     'piss off', 'pissoff',
     'shitshow', 'clusterfuck', 'cluster fuck',
-    'scam', 'crypto investment', 'betting tips', 'giveaway', 'ponzi', 'mlm',
+    'crypto investment', 'betting tips', 'ponzi', 'mlm',
     'kwasia', 'kawasia', 'kwasia penin', 'kwasia panin', 'wo ye kwasi',
     'gyimi', 'gyimii', 'gyimiii', 'gimi pa pa', 'wagimi papa', 'agyimi dodo',
     'ogyimifoo', 'ogyimifoɔ',
@@ -552,27 +561,23 @@ const BANNED_KEYWORDS = [
     'adwenebɔne', 'adwenebone',
     'wo tiri ye', 'wo tiri yɛ',
     'okwaseaba',
-    'nkwaseadee', 'nkwaseadeɛ',
-    'aboa', 'ahbwah', 'aboa kɔkɔɔ', 'aboa kokoo', 'aboa onipa',
-    'kraman',
-    'prako', 'prakon', 'preko',
-    'akoko nan', 'akokɔ nan',
-    'opuro',
-    'woti se kraman', 'woti sɛ kraman',
-    'kusie',
+    'nkwaseadee', 'nkwaseade\u025b',
+    'aboa', 'ahbwah', 'aboa k\u0254k\u0254\u0254', 'aboa kokoo', 'aboa onipa',
+    'akoko nan', 'akok\u0254 nan',
+    'woti se kraman', 'woti s\u025b kraman',
     'aponkye ti',
     'nantwi kotodwe',
-    'wu tu bin', 'wo tu bon', 'wo tu bɔn',
-    'hwɛ w anim', 'hwe w anim', 'hwɛ w\'anim',
-    'wanim se', 'w\'anim sɛ',
-    'me bo w asom', 'me bɔ w\'asom',
-    'wo ho bon', 'wo ho bɔn',
-    'wano bon', 'w\'ano bɔn',
+    'wu tu bin', 'wo tu bon', 'wo tu b\u0254n',
+    'hw\u025b w anim', 'hwe w anim', 'hw\u025b w\'anim',
+    'wanim se', 'w\'anim s\u025b',
+    'me bo w asom', 'me b\u0254 w\'asom',
+    'wo ho bon', 'wo ho b\u0254n',
+    'wano bon', 'w\'ano b\u0254n',
     'wo tiri se cla mine', 'wu ti se cla mine',
-    'wo ntɔhwɛ', 'wo nt)hw3',
-    'ashawo', 'ashawoah',
+    'wo nt\u0254hw\u025b', 'wo nt)hw3',
+    'ashawp', 'ashawo', 'ashawoah',
     'beyfu',
-    'koti', 'kotih', 'cote', 'kototi',
+    'koti', 'kotih', 'kototi',
     'tchwe', 'tchwaasini',
     'ohem',
     'nkrasinii', 'nkraseni',
@@ -588,8 +593,8 @@ const BANNED_KEYWORDS = [
     'trumu',
     'wo ye hwan',
     'wabo dam', 'wa bo dam',
-    'en fa me ho', 'ɛn fa me hɔ',
-    'nkwaseasem', 'nkwaseasɛm',
+    'en fa me ho', '\u025bn fa me h\u0254',
+    'nkwaseasem', 'nkwaseas\u025bm',
     'abotchrewa',
     'afenfri',
     'ayanta',
@@ -2367,7 +2372,7 @@ const handleGroupModeration = async (msg, jid, sender, senderPhone, isAdmin) => 
     
     const activeContainsLink = containsLink && !isLinkAllowed && antiLinkEnabled;
     
-    const containsBadWord = BANNED_KEYWORDS.some(word => {
+    const containsBadWord = antiBadWordsEnabled && BANNED_KEYWORDS.some(word => {
         if (word.includes(' ')) return lowerText.includes(word);
         const re = new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
         return re.test(lowerText);
@@ -5246,7 +5251,7 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         'lock', 'unlock', 'broadcast', 'leave', 'promote', 'demote', 
         'filter', 'convo', 'join convo', 'leave convo', 'antilink', 
         'pause', 'resume', 'add user', 'add admin', 'remove admin',
-        'admins', 'tell', 'send message to', 'schedule', 'silentdelete'
+        'admins', 'tell', 'send message to', 'schedule', 'silentdelete', 'antibadwords'
     ];
 
     const toggleAlertRegex = /^(deactivate|disable|activate|enable)\s+alerts?\s+(.+)$/i;
@@ -5348,6 +5353,8 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         detectedCmd = 'leave convo';
     } else if (lower.startsWith('anti link') || lower.startsWith('antilink')) {
         detectedCmd = 'antilink';
+    } else if (lower.startsWith('anti badwords') || lower.startsWith('antibadwords') || lower.startsWith('anti badword') || lower.startsWith('antibadword')) {
+        detectedCmd = 'antibadwords';
     } else if (lower.startsWith('silent delete') || lower.startsWith('silentdelete')) {
         detectedCmd = 'silentdelete';
     } else if (lower.startsWith('pause')) {
@@ -5890,6 +5897,25 @@ const handleNaturalLanguageCommand = async (jid, senderPhone, textInput, adminPr
         const emoji = antiLinkEnabled ? '✅' : '❌';
         await sendAntiBanMessage(jid, { text: `${emoji} Anti-link has been turned *${antiLinkEnabled ? 'ON' : 'OFF'}*.\n${antiLinkEnabled ? 'Links in all groups will be deleted.' : 'Links will no longer be deleted by the bot.'}` });
         addDebugLog(`[AntiLink] Toggle reply SENT to ${senderPhone}: now ${antiLinkEnabled}`);
+        return true;
+    }
+
+    // 4a. Anti-badwords toggle
+    if (
+        lower === 'anti badwords on' || lower === 'antibadwords on' || lower === 'anti badword on' || lower === 'antibadword on' ||
+        lower === 'anti badwords off' || lower === 'antibadwords off' || lower === 'anti badword off' || lower === 'antibadword off'
+    ) {
+        const newVal = lower.endsWith('on');
+        addDebugLog(`[AntiBadwords] Toggle from ${senderPhone}: ${lower} newVal=${newVal} current=${antiBadWordsEnabled}`);
+        if (newVal === antiBadWordsEnabled) {
+            await sendAntiBanMessage(jid, { text: `✅ Anti-badwords is already *${newVal ? 'ON' : 'OFF'}*. No change.` });
+            return true;
+        }
+        antiBadWordsEnabled = newVal;
+        saveAntiBadWords(antiBadWordsEnabled);
+        const emoji = antiBadWordsEnabled ? '✅' : '❌';
+        await sendAntiBanMessage(jid, { text: `${emoji} Anti-badwords has been turned *${antiBadWordsEnabled ? 'ON' : 'OFF'}*.\n${antiBadWordsEnabled ? 'Profanity and bad words will be deleted.' : 'Bad words will no longer be deleted by the bot.'}` });
+        addDebugLog(`[AntiBadwords] Toggle reply SENT to ${senderPhone}: now ${antiBadWordsEnabled}`);
         return true;
     }
 
