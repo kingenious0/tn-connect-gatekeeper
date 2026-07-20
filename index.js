@@ -2001,7 +2001,7 @@ const sendLiveVoiceNote = async (jid, textToSpeak, userPhone) => {
         const response = await tts.create({
             input: textToSpeak,
             voice: 'en-GB-RyanNeural' // Clean, sharp, highly professional masculine neural voice
-        });
+        }, {});
 
         const buffer = Buffer.from(await response.arrayBuffer());
         fs.writeFileSync(outputPath, buffer);
